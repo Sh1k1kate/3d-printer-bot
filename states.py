@@ -11,4 +11,7 @@ class EditModel(StatesGroup):
 class CreateOrder(StatesGroup):
     waiting_for_model = State()
     waiting_for_quantity = State()
-    waiting_for_deadline = State()
+    waiting_for_deadline = State()   # вызов календаря
+
+class EditOrder(StatesGroup):
+    waiting_for_new_printed = State()
