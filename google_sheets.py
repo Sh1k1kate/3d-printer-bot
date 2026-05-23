@@ -50,38 +50,30 @@ class SheetManager:
                     per_unit = int(float(row[3])) if row[3] else 0
                 except:
                     per_unit = 0
+                # Время теперь хранится в минутах (число)
                 try:
-                    print_time = float(row[4]) if row[4] else 0.0
+                    print_time = int(float(row[4])) if row[4] else 0
                 except:
-                    print_time = 0.0
+                    print_time = 0
                 details.append((det_name, on_pallet, per_unit, print_time))
         return details
 
     def add_model(self, model_name, details):
-        """
-        Добавляет новую модель в конец таблицы.
-        Название модели ставится только в первой строке для этой модели,
-        в следующих строках столбец A оставляется пустым (без вызова API).
-        """
-        # Определяем строку, с которой начинать добавление
+        """details: list of tuples (det_name, on_pallet, per_unit, print_time_min)"""
         all_rows = self.sheet.get_all_values()
         start_row = len(all_rows) + 1
 
-        # Собираем все данные для batch-обновления
-        # Каждая новая строка будет представлена списком из 5 элементов
         rows_to_add = []
-        for i, (det_name, on_pallet, per_unit, print_time) in enumerate(details):
-            row = [""] * 5  # пустые ячейки A..E
+        for i, (det_name, on_pallet, per_unit, print_time_min) in enumerate(details):
+            row = [""] * 5
             if i == 0:
-                row[0] = model_name  # только первая строка получает название модели
+                row[0] = model_name
             row[1] = det_name
             row[2] = on_pallet
             row[3] = per_unit
-            row[4] = print_time
+            row[4] = print_time_min   # сохраняем минуты как число
             rows_to_add.append(row)
 
-        # Используем batch_update для эффективного добавления строк
-        # Диапазон: от A{start_row} до E{start_row + len(rows_to_add) - 1}
         end_row = start_row + len(rows_to_add) - 1
         cell_range = f"A{start_row}:E{end_row}"
         self.sheet.update(cell_range, rows_to_add, value_input_option="USER_ENTERED")
