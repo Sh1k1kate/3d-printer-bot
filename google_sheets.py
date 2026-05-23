@@ -11,7 +11,7 @@ class SheetManager:
         self.sheet_models = self.client.open_by_key(SPREADSHEET_ID).worksheet("Время печати")
         self.sheet_orders = self.client.open_by_key(SPREADSHEET_ID).worksheet("Заказы")
 
-    # ---------- Работа с листом "Время печати" (модели) ----------
+    # ---------- Модели ----------
     def _normalize_rows_with_index(self):
         records = self.sheet_models.get_all_values()
         if len(records) <= 1:
@@ -109,14 +109,12 @@ class SheetManager:
         if not self.sheet_models.get_all_values():
             headers = ["Название", "Детали", "Кол-во на палете", "Нужно на шт.", "Время палета (мин)", "Грамм на палет"]
             self.sheet_models.append_row(headers)
-        # Проверим, есть ли лист "Заказы" с заголовками
         if not self.sheet_orders.get_all_values():
             order_headers = ["Номер заказа", "Позиция", "Кол-во заказано", "Кол-во напечатано", "Срок заказа", "Дата последнего изменения", "Выполнен"]
             self.sheet_orders.append_row(order_headers)
 
-    # ---------- Работа с листом "Заказы" ----------
+    # ---------- Заказы ----------
     def get_next_order_number(self):
-        """Возвращает следующий номер заказа (максимальный + 1)"""
         records = self.sheet_orders.get_all_values()
         if len(records) <= 1:
             return 1
@@ -131,10 +129,6 @@ class SheetManager:
         return max_num + 1
 
     def add_order(self, model_name, quantity, deadline_str):
-        """
-        Добавляет заказ одной строкой.
-        deadline_str - строка с датой (пользователь вводит в формате ГГГГ-ММ-ДД)
-        """
         order_num = self.get_next_order_number()
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         row = [order_num, model_name, quantity, 0, deadline_str, now_str, "Нет"]
@@ -142,8 +136,32 @@ class SheetManager:
         return order_num
 
     def get_user_orders(self):
-        """Возвращает все заказы (для простоты пока все, без фильтрации по пользователю)"""
         records = self.sheet_orders.get_all_values()
         if len(records) <= 1:
             return []
-        return records[1:]  # список строк
+        return records[1:]
+
+    def get_order_by_number(self, order_num):
+        cell = self.sheet_orders.find(str(order_num), in_column=1)
+        if cell:
+            row = self.sheet_orders.row_values(cell.row)
+            return row
+        return None
+
+    def update_order_printed(self, order_num, printed_qty):
+        cell = self.sheet_orders.find(str(order_num), in_column=1)
+        if cell:
+            self.sheet_orders.update_cell(cell.row, 4, printed_qty)
+            now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            self.sheet_orders.update_cell(cell.row, 6, now_str)
+            return True
+        return False
+
+    def mark_order_completed(self, order_num):
+        cell = self.sheet_orders.find(str(order_num), in_column=1)
+        if cell:
+            self.sheet_orders.update_cell(cell.row, 7, "Да")
+            now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            self.sheet_orders.update_cell(cell.row, 6, now_str)
+            return True
+        return False
