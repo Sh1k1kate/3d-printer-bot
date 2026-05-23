@@ -1,4 +1,4 @@
-﻿from aiogram import Router, F
+from aiogram import Router, F
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery
@@ -24,11 +24,11 @@ def format_model_info(model_name, details):
 async def cmd_start(message: Message):
     sheet.init_sheet()
     await message.answer(
-        "👋 Привет! Я помогу рассчитать необходимое количество палет для 3D-печати.\n\n"
-        "Используй кнопки ниже 👇",
+        "👋 Привет! Я помогу рассчитать необходимое количество палет для 3D-печати.\n\nИспользуй кнопки ниже 👇",
         reply_markup=main_menu
     )
 
+# ---------- Добавление модели ----------
 @router.message(F.text == "➕ Добавить модель")
 async def add_model_start(message: Message, state: FSMContext):
     await state.clear()
@@ -63,7 +63,7 @@ async def ask_next_detail(message: Message, state: FSMContext):
         await message.answer(
             f"📌 *Деталь {current+1} из {total}*\n\n"
             "Введите данные через запятую:\n"
-            "`Название, количество на палете, количество на единицу модели, время печати (в минутах)`\n\n"
+            "`Название, количество на палете, количество на единицу модели, время печати (минут)`\n\n"
             "Пример: `Голова, 16, 1, 120`",
             reply_markup=cancel_keyboard
         )
@@ -71,10 +71,7 @@ async def ask_next_detail(message: Message, state: FSMContext):
         model_name = data["model_name"]
         details_list = data["details_list"]
         sheet.add_model(model_name, details_list)
-        await message.answer(
-            f"✅ Модель *{model_name}* успешно добавлена!",
-            reply_markup=main_menu
-        )
+        await message.answer(f"✅ Модель *{model_name}* успешно добавлена!", reply_markup=main_menu)
         await state.clear()
 
 @router.message(AddModel.waiting_for_detail, F.text != "❌ Отмена")
@@ -83,8 +80,7 @@ async def process_detail(message: Message, state: FSMContext):
     if len(parts) != 4:
         await message.answer(
             "❌ Неверный формат. Нужно 4 значения через запятую:\n"
-            "`Название, количество на палете, количество на единицу, время печати (мин)`\n"
-            "Попробуйте ещё раз:"
+            "`Название, кол-во на палете, кол-во на единицу, время печати (мин)`\nПопробуйте ещё раз:"
         )
         return
     name = parts[0]
@@ -102,6 +98,7 @@ async def process_detail(message: Message, state: FSMContext):
     await state.update_data(details_list=details_list, current_detail=data["current_detail"] + 1)
     await ask_next_detail(message, state)
 
+# ---------- Список моделей ----------
 @router.message(F.text == "📋 Список моделей")
 async def list_models(message: Message):
     models = sheet.get_all_models()
@@ -118,25 +115,19 @@ async def show_model_details(callback: CallbackQuery):
         await callback.answer("Модель не найдена", show_alert=True)
         return
     text = format_model_info(model_name, details)
-    await callback.message.edit_text(
-        text,
-        parse_mode="Markdown",
-        reply_markup=model_action_keyboard(model_name)
-    )
+    await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=model_action_keyboard(model_name))
     await callback.answer()
 
 @router.callback_query(F.data == "back_to_models")
 async def back_to_models(callback: CallbackQuery):
     models = sheet.get_all_models()
     if models:
-        await callback.message.edit_text(
-            "Выберите модель из списка:",
-            reply_markup=models_inline_keyboard(models)
-        )
+        await callback.message.edit_text("Выберите модель из списка:", reply_markup=models_inline_keyboard(models))
     else:
         await callback.message.edit_text("Список моделей пуст.")
     await callback.answer()
 
+# ---------- Расчёт ----------
 @router.callback_query(F.data.startswith("calc_"))
 async def start_calculation(callback: CallbackQuery, state: FSMContext):
     model_name = callback.data[5:]
@@ -174,10 +165,7 @@ async def process_quantity(message: Message, state: FSMContext):
             continue
         total_required = per_unit * quantity
         pallets_needed = (total_required + on_pallet - 1) // on_pallet
-        result_text += f"🔸 *{det_name}*:\n"
-        result_text += f"   Нужно всего: {total_required} шт.\n"
-        result_text += f"   В одном палете: {on_pallet} шт.\n"
-        result_text += f"   ➤ Потребуется *{pallets_needed}* палет(а)\n\n"
+        result_text += f"🔸 *{det_name}*:\n   Нужно всего: {total_required} шт.\n   В одном палете: {on_pallet} шт.\n   ➤ Потребуется *{pallets_needed}* палет(а)\n\n"
 
     await message.answer(result_text, parse_mode="Markdown", reply_markup=main_menu)
     await state.clear()
