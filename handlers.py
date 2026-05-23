@@ -23,18 +23,19 @@ def format_time(minutes: int) -> str:
 
 def format_model_info(model_name, details):
     text = f"📦 *{model_name}*\n\n"
-    for i, (det_name, on_pallet, per_unit, print_time_min) in enumerate(details, 1):
+    for i, (det_name, on_pallet, per_unit, time_pp, grams_pp) in enumerate(details, 1):
         text += f"🔹 *Деталь {i}:* {det_name}\n"
         text += f"   └ На палете: {on_pallet} шт.\n"
         text += f"   └ Нужно на единицу модели: {per_unit} шт.\n"
-        text += f"   └ Время печати: {format_time(print_time_min)}\n\n"
+        text += f"   └ Время печати 1 палета: {format_time(time_pp)}\n"
+        text += f"   └ Грамм на 1 палет: {grams_pp} г\n\n"
     return text
 
 @router.message(Command("start"))
 async def cmd_start(message: Message):
     sheet.init_sheet()
     await message.answer(
-        "👋 Привет! Я помогу рассчитать необходимое количество палет для 3D-печати.\n\n"
+        "👋 Привет! Я помогу рассчитать необходимое количество палет, время и граммовку для 3D-печати.\n\n"
         "Используй кнопки ниже 👇",
         reply_markup=main_menu
     )
@@ -56,7 +57,7 @@ async def process_model_name(message: Message, state: FSMContext):
 @router.message(AddModel.waiting_for_details_count, F.text != "❌ Отмена")
 async def process_details_count(message: Message, state: FSMContext):
     if not message.text.isdigit():
-        await message.answer("Пожалуйста, введите целое число (количество деталей):")
+        await message.answer("Введите целое число (количество деталей):")
         return
     count = int(message.text)
     if count <= 0:
@@ -74,8 +75,8 @@ async def ask_next_detail(message: Message, state: FSMContext):
         await message.answer(
             f"📌 *Деталь {current+1} из {total}*\n\n"
             "Введите данные через *пробел*:\n"
-            "`Название количество_на_палете количество_на_единицу часы минуты`\n\n"
-            "Пример: `Голова 16 1 8 47`",
+            "`Название кол-во_на_палете кол-во_на_единицу часы_палета минуты_палета грамм_на_палет`\n\n"
+            "Пример: `Голова 16 1 8 47 200`",
             reply_markup=cancel_keyboard
         )
     else:
@@ -88,11 +89,11 @@ async def ask_next_detail(message: Message, state: FSMContext):
 @router.message(AddModel.waiting_for_detail, F.text != "❌ Отмена")
 async def process_detail(message: Message, state: FSMContext):
     parts = message.text.split()
-    if len(parts) != 5:
+    if len(parts) != 6:
         await message.answer(
-            "❌ Неверный формат. Нужно 5 значений через пробел:\n"
-            "`Название кол-во_на_палете кол-во_на_единицу часы минуты`\n"
-            "Пример: `Голова 16 1 8 47`\nПопробуйте ещё раз:"
+            "❌ Неверный формат. Нужно 6 значений через пробел:\n"
+            "`Название кол-во_на_палете кол-во_на_единицу часы минуты граммы`\n"
+            "Пример: `Голова 16 1 8 47 200`\nПопробуйте ещё раз:"
         )
         return
     name = parts[0]
@@ -101,14 +102,15 @@ async def process_detail(message: Message, state: FSMContext):
         per_unit = int(parts[2])
         hours = int(parts[3])
         minutes = int(parts[4])
-        print_time_min = hours * 60 + minutes
+        grams = int(parts[5])
+        time_pp = hours * 60 + minutes
     except ValueError:
         await message.answer("❌ Все значения должны быть числами. Попробуйте снова:")
         return
 
     data = await state.get_data()
     details_list = data.get("details_list", [])
-    details_list.append((name, on_pallet, per_unit, print_time_min))
+    details_list.append((name, on_pallet, per_unit, time_pp, grams))
     await state.update_data(details_list=details_list, current_detail=data["current_detail"] + 1)
     await ask_next_detail(message, state)
 
@@ -141,7 +143,7 @@ async def back_to_models(callback: CallbackQuery):
         await callback.message.edit_text("Список моделей пуст.")
     await callback.answer()
 
-# ------------------- Редактирование модели -------------------
+# ------------------- Редактирование -------------------
 @router.callback_query(F.data.startswith("edit_model_"))
 async def edit_model_parts(callback: CallbackQuery):
     model_name = callback.data[len("edit_model_"):]
@@ -149,7 +151,7 @@ async def edit_model_parts(callback: CallbackQuery):
     if not details_with_rows:
         await callback.answer("Нет деталей для редактирования", show_alert=True)
         return
-    parts_list = [det_name for (_, det_name, _, _, _) in details_with_rows]
+    parts_list = [det_name for (_, det_name, _, _, _, _) in details_with_rows]
     await callback.message.edit_text(
         f"✏️ Редактирование модели *{model_name}*\nВыберите деталь:",
         parse_mode="Markdown",
@@ -193,7 +195,7 @@ async def edit_param_start(callback: CallbackQuery, state: FSMContext):
     if not part_info:
         await callback.answer("Деталь не найдена", show_alert=True)
         return
-    row_idx, on_pallet, per_unit, print_time = part_info
+    row_idx, on_pallet, per_unit, time_pp, grams_pp = part_info
 
     if param == "name":
         current_value = det_name
@@ -205,8 +207,11 @@ async def edit_param_start(callback: CallbackQuery, state: FSMContext):
         current_value = str(per_unit)
         prompt = "Введите новое *количество на единицу модели* (целое число):"
     elif param == "time":
-        current_value = format_time(print_time)
-        prompt = "Введите новое *время печати* в формате `часы минуты`\nПример: `8 47`"
+        current_value = format_time(time_pp)
+        prompt = "Введите новое *время печати одного палета* в формате `часы минуты`\nПример: `8 47`"
+    elif param == "grams":
+        current_value = f"{grams_pp} г"
+        prompt = "Введите новый *расход граммов на один палет* (целое число):"
     else:
         await callback.answer("Неизвестный параметр")
         return
@@ -244,7 +249,7 @@ async def edit_param_process(message: Message, state: FSMContext):
     try:
         if param == "name":
             existing = sheet.get_model_details_with_rows(model_name)
-            for (_, dname, _, _, _) in existing:
+            for (_, dname, _, _, _, _) in existing:
                 if dname == new_text:
                     await message.answer("❌ Деталь с таким именем уже существует. Введите другое название.")
                     return
@@ -276,7 +281,14 @@ async def edit_param_process(message: Message, state: FSMContext):
                 return
             new_minutes = hours * 60 + minutes
             sheet.update_part_field(row_idx, 'time', new_minutes)
-            await message.answer(f"✅ Время печати обновлено: *{format_time(new_minutes)}*", parse_mode="Markdown")
+            await message.answer(f"✅ Время печати палета обновлено: *{format_time(new_minutes)}*", parse_mode="Markdown")
+        elif param == "grams":
+            new_int = int(new_text)
+            if new_int < 0:
+                await message.answer("❌ Граммовка не может быть отрицательной.")
+                return
+            sheet.update_part_field(row_idx, 'grams', new_int)
+            await message.answer(f"✅ Расход граммов на палет обновлён: *{new_int}* г", parse_mode="Markdown")
         else:
             await message.answer("❌ Неизвестный параметр")
             await state.clear()
@@ -333,21 +345,28 @@ async def process_quantity(message: Message, state: FSMContext):
 
     result_text = f"📐 *Результат для {quantity} шт. модели {model_name}:*\n\n"
     max_print_time = 0
-    for det_name, on_pallet, per_unit, print_time_min in details:
+    total_grams = 0
+
+    for det_name, on_pallet, per_unit, time_pp, grams_pp in details:
         if on_pallet <= 0 or per_unit <= 0:
             result_text += f"⚠️ *{det_name}*: не заполнено кол-во на палете или на единицу. Расчёт невозможен.\n\n"
             continue
         total_required = per_unit * quantity
         pallets_needed = (total_required + on_pallet - 1) // on_pallet
+        part_time = time_pp * pallets_needed
+        part_grams = grams_pp * pallets_needed
+        total_grams += part_grams
         result_text += f"🔸 *{det_name}*:\n"
         result_text += f"   Нужно всего: {total_required} шт.\n"
         result_text += f"   В одном палете: {on_pallet} шт.\n"
         result_text += f"   ➤ Потребуется *{pallets_needed}* палет(а)\n"
-        result_text += f"   ⏱ Время печати детали: {format_time(print_time_min)}\n\n"
-        if print_time_min > max_print_time:
-            max_print_time = print_time_min
+        result_text += f"   ⏱ Время печати детали: {format_time(part_time)}\n"
+        result_text += f"   ⚖️ Расход граммов: {part_grams} г\n\n"
+        if part_time > max_print_time:
+            max_print_time = part_time
 
     result_text += f"⏳ *Общее время печати модели (параллельная печать всех деталей):* {format_time(max_print_time)}\n"
+    result_text += f"⚖️ *Общий расход граммов:* {total_grams} г"
     await message.answer(result_text, parse_mode="Markdown", reply_markup=main_menu)
     await state.clear()
 
