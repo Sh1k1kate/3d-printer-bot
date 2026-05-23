@@ -31,12 +31,12 @@ def parts_inline_keyboard(model_name, parts_list):
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 def part_parameters_keyboard(model_name, det_name):
-    """Клавиатура выбора параметра для редактирования"""
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📝 Название детали", callback_data=f"edit_param_{model_name}_{det_name}_name")],
         [InlineKeyboardButton(text="📦 Кол-во на палете", callback_data=f"edit_param_{model_name}_{det_name}_on_pallet")],
         [InlineKeyboardButton(text="🔢 Кол-во на единицу модели", callback_data=f"edit_param_{model_name}_{det_name}_per_unit")],
-        [InlineKeyboardButton(text="⏱ Время печати (часы минуты)", callback_data=f"edit_param_{model_name}_{det_name}_time")],
+        [InlineKeyboardButton(text="⏱ Время палета (часы минуты)", callback_data=f"edit_param_{model_name}_{det_name}_time")],
+        [InlineKeyboardButton(text="⚖️ Грамм на палет", callback_data=f"edit_param_{model_name}_{det_name}_grams")],
         [InlineKeyboardButton(text="🔙 Назад к деталям", callback_data=f"edit_model_{model_name}")]
     ])
 
