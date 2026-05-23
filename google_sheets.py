@@ -58,15 +58,33 @@ class SheetManager:
         return details
 
     def add_model(self, model_name, details):
+        """
+        Добавляет новую модель в конец таблицы.
+        Название модели ставится только в первой строке для этой модели,
+        в следующих строках столбец A оставляется пустым (без вызова API).
+        """
+        # Определяем строку, с которой начинать добавление
         all_rows = self.sheet.get_all_values()
-        next_row = len(all_rows) + 1
+        start_row = len(all_rows) + 1
+
+        # Собираем все данные для batch-обновления
+        # Каждая новая строка будет представлена списком из 5 элементов
+        rows_to_add = []
         for i, (det_name, on_pallet, per_unit, print_time) in enumerate(details):
-            model_cell = model_name if i == 0 else ""
-            self.sheet.update(f"A{next_row + i}", model_cell)
-            self.sheet.update(f"B{next_row + i}", det_name)
-            self.sheet.update(f"C{next_row + i}", on_pallet)
-            self.sheet.update(f"D{next_row + i}", per_unit)
-            self.sheet.update(f"E{next_row + i}", print_time)
+            row = [""] * 5  # пустые ячейки A..E
+            if i == 0:
+                row[0] = model_name  # только первая строка получает название модели
+            row[1] = det_name
+            row[2] = on_pallet
+            row[3] = per_unit
+            row[4] = print_time
+            rows_to_add.append(row)
+
+        # Используем batch_update для эффективного добавления строк
+        # Диапазон: от A{start_row} до E{start_row + len(rows_to_add) - 1}
+        end_row = start_row + len(rows_to_add) - 1
+        cell_range = f"A{start_row}:E{end_row}"
+        self.sheet.update(cell_range, rows_to_add, value_input_option="USER_ENTERED")
 
     def init_sheet(self):
         if not self.sheet.get_all_values():
