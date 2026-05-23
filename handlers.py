@@ -39,7 +39,7 @@ async def cmd_start(message: Message):
         reply_markup=main_menu
     )
 
-# ------------------- Добавление модели (без изменений) -------------------
+# ------------------- Добавление модели -------------------
 @router.message(F.text == "➕ Добавить модель")
 async def add_model_start(message: Message, state: FSMContext):
     await state.clear()
@@ -112,7 +112,7 @@ async def process_detail(message: Message, state: FSMContext):
     await state.update_data(details_list=details_list, current_detail=data["current_detail"] + 1)
     await ask_next_detail(message, state)
 
-# ------------------- Список моделей и просмотр -------------------
+# ------------------- Список моделей -------------------
 @router.message(F.text == "📋 Список моделей")
 async def list_models(message: Message):
     models = sheet.get_all_models()
@@ -149,7 +149,6 @@ async def edit_model_parts(callback: CallbackQuery):
     if not details_with_rows:
         await callback.answer("Нет деталей для редактирования", show_alert=True)
         return
-    # Получаем список названий деталей
     parts_list = [det_name for (_, det_name, _, _, _) in details_with_rows]
     await callback.message.edit_text(
         f"✏️ Редактирование модели *{model_name}*\nВыберите деталь:",
@@ -160,11 +159,7 @@ async def edit_model_parts(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("edit_part_"))
 async def edit_part_parameters(callback: CallbackQuery):
-    # Формат: edit_part_{model_name}_{det_name}
     data = callback.data[len("edit_part_"):]
-    # Разделяем по первому подчёркиванию? Название модели может содержать подчёркивания? Допустим нет.
-    # Проще: разделить по первому вхождению '_' после префикса. Но модель может содержать '_'.
-    # Используем более надёжный способ: ищем последнее вхождение '_'
     last_underscore = data.rfind('_')
     if last_underscore == -1:
         await callback.answer("Ошибка формата")
@@ -180,40 +175,26 @@ async def edit_part_parameters(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("edit_param_"))
 async def edit_param_start(callback: CallbackQuery, state: FSMContext):
-    # Формат: edit_param_{model_name}_{det_name}_{param}
-    # Опять разбираем, но параметр всегда последний: name, on_pallet, per_unit, time
     data = callback.data[len("edit_param_"):]
-    parts = data.split('_')
-    param = parts[-1]
-    # Восстанавливаем модель и деталь: всё кроме последнего элемента
-    rest = '_'.join(parts[:-1])
-    # Последний элемент после последнего подчёркивания? Могут быть подчёркивания в названии детали.
-    # Лучше: найти последнее вхождение '_' в data
     last_underscore = data.rfind('_')
     if last_underscore == -1:
         await callback.answer("Ошибка формата")
         return
     param = data[last_underscore+1:]
-    rest = data[:last_underscore]  # model_det
-    # В rest может быть несколько подчёркиваний, но последний разделяет модель и деталь
-    # Найдём разделение модель/деталь: отделяем по первому подчёркиванию? Неправильно.
-    # Используем метод: model_name - до первого подчёркивания, остальное - det_name? Тоже плохо.
-    # Более просто: пусть названия моделей и деталей не содержат '_'. Тогда можно split('_') и взять первый как модель, второй как деталь.
-    # Мы будем считать, что названия не содержат '_'. Это упрощает.
-    # Поэтому:
+    rest = data[:last_underscore]
     parts = rest.split('_')
     if len(parts) < 2:
         await callback.answer("Ошибка формата")
         return
     model_name = parts[0]
-    det_name = '_'.join(parts[1:])   # на случай если в детали есть '_'
-    # Получаем текущее значение параметра для подсказки
+    det_name = '_'.join(parts[1:])
+
     part_info = sheet.get_part_row_and_data(model_name, det_name)
     if not part_info:
         await callback.answer("Деталь не найдена", show_alert=True)
         return
     row_idx, on_pallet, per_unit, print_time = part_info
-    current_value = ""
+
     if param == "name":
         current_value = det_name
         prompt = "Введите новое *название детали*:"
@@ -230,7 +211,6 @@ async def edit_param_start(callback: CallbackQuery, state: FSMContext):
         await callback.answer("Неизвестный параметр")
         return
 
-    # Сохраняем в FSM данные для последующего обновления
     await state.update_data(
         edit_row_idx=row_idx,
         edit_param=param,
@@ -253,19 +233,23 @@ async def edit_param_process(message: Message, state: FSMContext):
     param = data.get("edit_param")
     model_name = data.get("edit_model_name")
     det_name = data.get("edit_det_name")
+
+    if None in (row_idx, param, model_name, det_name):
+        await message.answer("❌ Ошибка: данные потеряны. Попробуйте ещё раз.", reply_markup=main_menu)
+        await state.clear()
+        return
+
     new_text = message.text.strip()
 
     try:
         if param == "name":
-            # Проверяем, нет ли уже такой детали в этой модели
             existing = sheet.get_model_details_with_rows(model_name)
             for (_, dname, _, _, _) in existing:
                 if dname == new_text:
-                    await message.answer("❌ Деталь с таким именем уже существует в этой модели. Введите другое название.")
+                    await message.answer("❌ Деталь с таким именем уже существует. Введите другое название.")
                     return
-            new_value = new_text
-            sheet.update_part_field(row_idx, 'name', new_value)
-            await message.answer(f"✅ Название детали изменено на *{new_value}*", parse_mode="Markdown")
+            sheet.update_part_field(row_idx, 'name', new_text)
+            await message.answer(f"✅ Название детали изменено на *{new_text}*", parse_mode="Markdown")
         elif param == "on_pallet":
             new_int = int(new_text)
             if new_int <= 0:
@@ -288,35 +272,35 @@ async def edit_param_process(message: Message, state: FSMContext):
             hours = int(parts[0])
             minutes = int(parts[1])
             if hours < 0 or minutes < 0 or minutes >= 60:
-                await message.answer("❌ Часы должны быть >=0, минуты от 0 до 59.")
+                await message.answer("❌ Часы >=0, минуты 0-59.")
                 return
-            new_minutes = hours*60 + minutes
+            new_minutes = hours * 60 + minutes
             sheet.update_part_field(row_idx, 'time', new_minutes)
             await message.answer(f"✅ Время печати обновлено: *{format_time(new_minutes)}*", parse_mode="Markdown")
         else:
-            await message.answer("Неизвестный параметр")
+            await message.answer("❌ Неизвестный параметр")
             await state.clear()
             return
     except ValueError:
         await message.answer("❌ Ошибка: введите корректное числовое значение.")
         return
+    except Exception as e:
+        await message.answer(f"❌ Ошибка при обновлении: {e}")
+        await state.clear()
+        return
 
-    # После успешного обновления возвращаемся к модели
     await state.clear()
-    # Обновляем сообщение с деталями модели (опционально)
     details = sheet.get_model_details(model_name)
     text = format_model_info(model_name, details)
-    # Пытаемся отредактировать последнее сообщение бота (но сейчас у нас новое сообщение)
-    # Просто отправим новое сообщение с информацией о модели и кнопками
     await message.answer(text, parse_mode="Markdown", reply_markup=model_action_keyboard(model_name))
-    await message.answer("Вы можете продолжить редактирование или вернуться в меню.", reply_markup=main_menu)
+    await message.answer("Вы можете продолжить редактирование или выбрать другое действие.", reply_markup=main_menu)
 
 @router.message(StateFilter(EditModel.waiting_for_new_value), F.text == "❌ Отмена")
 async def cancel_edit(message: Message, state: FSMContext):
     await state.clear()
     await message.answer("Редактирование отменено.", reply_markup=main_menu)
 
-# ------------------- Расчёт (без изменений) -------------------
+# ------------------- Расчёт -------------------
 @router.callback_query(F.data.startswith("calc_"))
 async def start_calculation(callback: CallbackQuery, state: FSMContext):
     model_name = callback.data[5:]
