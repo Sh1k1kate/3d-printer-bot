@@ -15,7 +15,7 @@ from datetime import datetime
 router = Router()
 sheet = SheetManager()
 
-# ---------- Функции форматирования ----------
+# ---------- Форматирование ----------
 def format_time(minutes: int) -> str:
     if minutes <= 0:
         return "—"
@@ -35,7 +35,7 @@ def format_model_info(model_name, details):
         text += f"   └ Грамм на 1 палет: {grams_pp} г\n\n"
     return text
 
-# ---------- Установка команд ----------
+# ---------- Команды ----------
 async def set_commands(bot):
     commands = [
         BotCommand(command="start", description="Запустить бота"),
@@ -93,7 +93,7 @@ async def cmd_new_order(message: Message, state: FSMContext):
 async def cmd_my_orders(message: Message):
     await show_my_orders(message)
 
-# ---------- Обработка текстовых кнопок ----------
+# ---------- Кнопки ----------
 @router.message(F.text == "❓ Помощь")
 async def help_button(message: Message):
     await cmd_help(message)
@@ -222,14 +222,14 @@ async def back_to_models(callback: CallbackQuery):
         await callback.message.edit_text("Список моделей пуст.")
     await callback.answer()
 
-# ---------- Заказ из карточки модели (исправлено) ----------
+# ---------- Заказ из карточки модели ----------
 @router.callback_query(F.data.startswith("order_model_"))
 async def order_this_model(callback: CallbackQuery, state: FSMContext):
     model_name = callback.data[len("order_model_"):]
     await state.update_data(order_model=model_name)
     await state.set_state(CreateOrder.waiting_for_quantity)
-    await callback.answer()  # закрываем уведомление
-    await callback.message.answer(   # новое сообщение, не редактируем
+    await callback.answer()
+    await callback.message.answer(
         f"🛒 Заказ модели *{model_name}*\nВведите количество (целое число):",
         parse_mode="Markdown",
         reply_markup=cancel_keyboard
@@ -323,7 +323,8 @@ async def calendar_day(callback: CallbackQuery, state: FSMContext):
         return
     try:
         order_num = sheet.add_order(model_name, quantity, selected_date)
-        await callback.message.edit_text(
+        # Отправляем новое сообщение с подтверждением
+        await callback.message.answer(
             f"✅ Заказ №{order_num} создан!\n\n"
             f"Модель: {model_name}\n"
             f"Количество: {quantity} шт.\n"
@@ -331,8 +332,10 @@ async def calendar_day(callback: CallbackQuery, state: FSMContext):
             f"Статус: в работе",
             reply_markup=main_menu
         )
+        # Удаляем сообщение с календарём, чтобы не было путаницы
+        await callback.message.delete()
     except Exception as e:
-        await callback.message.edit_text(f"❌ Ошибка: {e}")
+        await callback.message.answer(f"❌ Ошибка: {e}")
     await state.clear()
     await callback.answer()
 
@@ -340,7 +343,7 @@ async def calendar_day(callback: CallbackQuery, state: FSMContext):
 async def ignore_callback(callback: CallbackQuery):
     await callback.answer()
 
-# ---------- Редактирование модели (без изменений) ----------
+# ---------- Редактирование модели ----------
 @router.callback_query(F.data.startswith("edit_model_"))
 async def edit_model_parts(callback: CallbackQuery):
     model_name = callback.data[len("edit_model_"):]
