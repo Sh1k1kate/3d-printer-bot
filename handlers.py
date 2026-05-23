@@ -2,18 +2,21 @@ from aiogram import Router, F
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery, BotCommand, BotCommandScopeDefault
-from keyboards import (
-    main_menu, models_inline_keyboard, model_action_keyboard,
-    parts_inline_keyboard, part_parameters_keyboard, cancel_keyboard
-)
-from states import AddModel, EditModel, CreateOrder
-from google_sheets import SheetManager
+from datetime import datetime
 import re
+
+from keyboards import (
+    main_menu, cancel_keyboard, models_inline_keyboard, model_action_keyboard,
+    parts_inline_keyboard, part_parameters_keyboard,
+    my_orders_inline_keyboard, edit_order_keyboard, calendar_keyboard
+)
+from states import AddModel, EditModel, CreateOrder, EditOrder
+from google_sheets import SheetManager
 
 router = Router()
 sheet = SheetManager()
 
-# ---------- Функции форматирования ----------
+# ---------- Форматирование ----------
 def format_time(minutes: int) -> str:
     if minutes <= 0:
         return "—"
@@ -75,29 +78,20 @@ async def cmd_help(message: Message):
         "• Создать заказ – выбор модели и количества\n"
         "• Мои заказы – статус заказов\n"
         "• Помощь – эта справка\n\n"
-        "🛠 *В группах* – бот отвечает на команды, упомяните его через @имя_бота"
+        "🛠 *В группах* – бот отвечает на команды, упомяните его через @имя_бота или просто используйте команду."
     )
     await message.answer(help_text, parse_mode="Markdown")
 
 @router.message(Command("models"))
 async def cmd_models(message: Message):
-    await list_models(message)
+    models = sheet.get_all_models()
+    if not models:
+        await message.answer("Пока нет ни одной модели. Добавьте её через кнопку ➕.")
+        return
+    await message.answer("Выберите модель из списка:", reply_markup=models_inline_keyboard(models))
 
 @router.message(Command("new_order"))
 async def cmd_new_order(message: Message, state: FSMContext):
-    await create_order_start(message, state)
-
-@router.message(Command("my_orders"))
-async def cmd_my_orders(message: Message):
-    await show_my_orders(message)
-
-# ---------- Обработка текстовых кнопок ----------
-@router.message(F.text == "❓ Помощь")
-async def help_button(message: Message):
-    await cmd_help(message)
-
-@router.message(F.text == "🛒 Создать заказ")
-async def create_order_start(message: Message, state: FSMContext):
     models = sheet.get_all_models()
     if not models:
         await message.answer("❌ Нет ни одной модели. Сначала добавьте модель через кнопку ➕.")
@@ -109,27 +103,32 @@ async def create_order_start(message: Message, state: FSMContext):
         reply_markup=models_inline_keyboard(models)
     )
 
-@router.message(F.text == "📦 Мои заказы")
-async def show_my_orders(message: Message):
+@router.message(Command("my_orders"))
+async def cmd_my_orders(message: Message):
     orders = sheet.get_user_orders()
     if not orders:
-        await message.answer("📭 У вас пока нет заказов. Создайте новый через кнопку 'Создать заказ'.")
+        await message.answer("📭 У вас пока нет заказов. Создайте новый через кнопку 'Создать заказ' или /new_order.")
         return
-    text = "📋 *Ваши заказы:*\n\n"
-    for order in orders:
-        # order: [номер, позиция, кол-во заказано, напечатано, срок, дата изменения, выполнен]
-        if len(order) < 7:
-            continue
-        num, model, qty, printed, deadline, modified, status = order[:7]
-        text += f"🔹 *Заказ №{num}*\n"
-        text += f"   Модель: {model}\n"
-        text += f"   Заказано: {qty} шт.\n"
-        text += f"   Напечатано: {printed} шт.\n"
-        text += f"   Срок: {deadline}\n"
-        text += f"   Статус: {'✅ Выполнен' if status.lower() == 'да' else '⏳ В работе'}\n\n"
-    await message.answer(text, parse_mode="Markdown")
+    await message.answer("Выберите заказ для просмотра или редактирования:", reply_markup=my_orders_inline_keyboard(orders))
 
-# ---------- Добавление модели (без изменений, но с 6 параметрами) ----------
+# ---------- Обработка текстовых кнопок ----------
+@router.message(F.text == "❓ Помощь")
+async def help_button(message: Message):
+    await cmd_help(message)
+
+@router.message(F.text == "🛒 Создать заказ")
+async def create_order_start(message: Message, state: FSMContext):
+    await cmd_new_order(message, state)
+
+@router.message(F.text == "📦 Мои заказы")
+async def my_orders_button(message: Message):
+    await cmd_my_orders(message)
+
+@router.message(F.text == "📋 Список моделей")
+async def list_models_button(message: Message):
+    await cmd_models(message)
+
+# ---------- Добавление модели (FSM) ----------
 @router.message(F.text == "➕ Добавить модель")
 async def add_model_start(message: Message, state: FSMContext):
     await state.clear()
@@ -203,15 +202,7 @@ async def process_detail(message: Message, state: FSMContext):
     await state.update_data(details_list=details_list, current_detail=data["current_detail"] + 1)
     await ask_next_detail(message, state)
 
-# ---------- Список моделей ----------
-@router.message(F.text == "📋 Список моделей")
-async def list_models(message: Message):
-    models = sheet.get_all_models()
-    if not models:
-        await message.answer("Пока нет ни одной модели. Добавьте её через кнопку ➕.")
-        return
-    await message.answer("Выберите модель из списка:", reply_markup=models_inline_keyboard(models))
-
+# ---------- Просмотр модели ----------
 @router.callback_query(F.data.startswith("model_"))
 async def show_model_details(callback: CallbackQuery):
     model_name = callback.data[6:]
@@ -232,89 +223,7 @@ async def back_to_models(callback: CallbackQuery):
         await callback.message.edit_text("Список моделей пуст.")
     await callback.answer()
 
-# ---------- Заказ из карточки модели ----------
-@router.callback_query(F.data.startswith("order_model_"))
-async def order_this_model(callback: CallbackQuery, state: FSMContext):
-    model_name = callback.data[len("order_model_"):]
-    await state.update_data(order_model=model_name)
-    await state.set_state(CreateOrder.waiting_for_quantity)
-    await callback.message.answer(
-        f"🛒 Заказ модели *{model_name}*\nВведите количество (целое число):",
-        parse_mode="Markdown",
-        reply_markup=cancel_keyboard
-    )
-    await callback.answer()
-
-# ---------- Создание заказа (FSM) ----------
-@router.callback_query(CreateOrder.waiting_for_model, F.data.startswith("model_"))
-async def process_order_model_from_callback(callback: CallbackQuery, state: FSMContext):
-    model_name = callback.data[6:]
-    await state.update_data(order_model=model_name)
-    await state.set_state(CreateOrder.waiting_for_quantity)
-    await callback.message.answer(
-        f"🛒 Заказ модели *{model_name}*\nВведите количество (целое число):",
-        parse_mode="Markdown",
-        reply_markup=cancel_keyboard
-    )
-    await callback.answer()
-
-@router.message(CreateOrder.waiting_for_model, F.text != "❌ Отмена")
-async def process_order_model_text(message: Message, state: FSMContext):
-    model_name = message.text.strip()
-    models = sheet.get_all_models()
-    if model_name not in models:
-        await message.answer("❌ Модель не найдена. Введите точное название из списка.")
-        return
-    await state.update_data(order_model=model_name)
-    await state.set_state(CreateOrder.waiting_for_quantity)
-    await message.answer(
-        f"🛒 Заказ модели *{model_name}*\nВведите количество (целое число):",
-        parse_mode="Markdown",
-        reply_markup=cancel_keyboard
-    )
-
-@router.message(CreateOrder.waiting_for_quantity, F.text != "❌ Отмена")
-async def process_order_quantity(message: Message, state: FSMContext):
-    if not message.text.isdigit():
-        await message.answer("Введите целое положительное число.")
-        return
-    quantity = int(message.text)
-    if quantity <= 0:
-        await message.answer("Количество должно быть больше 0.")
-        return
-    await state.update_data(order_quantity=quantity)
-    await state.set_state(CreateOrder.waiting_for_deadline)
-    await message.answer(
-        "Введите *срок заказа* в формате `ГГГГ-ММ-ДД`\nПример: `2025-12-31`",
-        parse_mode="Markdown"
-    )
-
-@router.message(CreateOrder.waiting_for_deadline, F.text != "❌ Отмена")
-async def process_order_deadline(message: Message, state: FSMContext):
-    deadline_str = message.text.strip()
-    # Простая проверка формата ГГГГ-ММ-ДД
-    if not re.match(r'^\d{4}-\d{2}-\d{2}$', deadline_str):
-        await message.answer("❌ Неверный формат. Используйте ГГГГ-ММ-ДД, например 2025-12-31")
-        return
-    data = await state.get_data()
-    model_name = data["order_model"]
-    quantity = data["order_quantity"]
-    try:
-        order_num = sheet.add_order(model_name, quantity, deadline_str)
-        await message.answer(
-            f"✅ Заказ №{order_num} создан!\n\n"
-            f"Модель: {model_name}\n"
-            f"Количество: {quantity} шт.\n"
-            f"Срок: {deadline_str}\n"
-            f"Статус: в работе",
-            reply_markup=main_menu
-        )
-    except Exception as e:
-        await message.answer(f"❌ Ошибка при создании заказа: {e}")
-    finally:
-        await state.clear()
-
-# ---------- Редактирование модели (без изменений, только названия переменных) ----------
+# ---------- Редактирование модели ----------
 @router.callback_query(F.data.startswith("edit_model_"))
 async def edit_model_parts(callback: CallbackQuery):
     model_name = callback.data[len("edit_model_"):]
@@ -483,7 +392,193 @@ async def cancel_edit(message: Message, state: FSMContext):
     await state.clear()
     await message.answer("Редактирование отменено.", reply_markup=main_menu)
 
-# ---------- Расчёт ----------
+# ---------- Заказы: создание через календарь ----------
+@router.callback_query(CreateOrder.waiting_for_model, F.data.startswith("model_"))
+async def process_order_model_from_callback(callback: CallbackQuery, state: FSMContext):
+    model_name = callback.data[6:]
+    await state.update_data(order_model=model_name)
+    await state.set_state(CreateOrder.waiting_for_quantity)
+    await callback.message.answer(
+        f"🛒 Заказ модели *{model_name}*\nВведите количество (целое число):",
+        parse_mode="Markdown",
+        reply_markup=cancel_keyboard
+    )
+    await callback.answer()
+
+@router.message(CreateOrder.waiting_for_model, F.text != "❌ Отмена")
+async def process_order_model_text(message: Message, state: FSMContext):
+    model_name = message.text.strip()
+    models = sheet.get_all_models()
+    if model_name not in models:
+        await message.answer("❌ Модель не найдена. Введите точное название из списка.")
+        return
+    await state.update_data(order_model=model_name)
+    await state.set_state(CreateOrder.waiting_for_quantity)
+    await message.answer(
+        f"🛒 Заказ модели *{model_name}*\nВведите количество (целое число):",
+        parse_mode="Markdown",
+        reply_markup=cancel_keyboard
+    )
+
+@router.message(CreateOrder.waiting_for_quantity, F.text != "❌ Отмена")
+async def process_order_quantity(message: Message, state: FSMContext):
+    if not message.text.isdigit():
+        await message.answer("Введите целое положительное число.")
+        return
+    quantity = int(message.text)
+    if quantity <= 0:
+        await message.answer("Количество должно быть больше 0.")
+        return
+    await state.update_data(order_quantity=quantity)
+    await state.set_state(CreateOrder.waiting_for_deadline)
+    # Отправляем календарь с текущей датой
+    now = datetime.now()
+    await message.answer("Выберите срок заказа на календаре:", reply_markup=calendar_keyboard(now.year, now.month))
+
+# Календарь: навигация
+@router.callback_query(F.data.startswith("cal_prev_"))
+async def calendar_prev(callback: CallbackQuery):
+    data = callback.data.split("_")
+    year = int(data[2])
+    month = int(data[3])
+    if month == 1:
+        month = 12
+        year -= 1
+    else:
+        month -= 1
+    await callback.message.edit_reply_markup(reply_markup=calendar_keyboard(year, month))
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("cal_next_"))
+async def calendar_next(callback: CallbackQuery):
+    data = callback.data.split("_")
+    year = int(data[2])
+    month = int(data[3])
+    if month == 12:
+        month = 1
+        year += 1
+    else:
+        month += 1
+    await callback.message.edit_reply_markup(reply_markup=calendar_keyboard(year, month))
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("cal_day_"))
+async def calendar_day(callback: CallbackQuery, state: FSMContext):
+    data = callback.data.split("_")
+    year = int(data[2])
+    month = int(data[3])
+    day = int(data[4])
+    selected_date = datetime(year, month, day).strftime("%Y-%m-%d")
+    user_data = await state.get_data()
+    model_name = user_data.get("order_model")
+    quantity = user_data.get("order_quantity")
+    if not model_name or not quantity:
+        await callback.answer("Ошибка: данные заказа потеряны. Начните заново.", show_alert=True)
+        await state.clear()
+        return
+    try:
+        order_num = sheet.add_order(model_name, quantity, selected_date)
+        await callback.message.edit_text(
+            f"✅ Заказ №{order_num} создан!\n\n"
+            f"Модель: {model_name}\n"
+            f"Количество: {quantity} шт.\n"
+            f"Срок: {selected_date}\n"
+            f"Статус: в работе",
+            reply_markup=main_menu
+        )
+    except Exception as e:
+        await callback.message.edit_text(f"❌ Ошибка: {e}")
+    await state.clear()
+    await callback.answer()
+
+@router.callback_query(F.data == "ignore")
+async def ignore_callback(callback: CallbackQuery):
+    await callback.answer()
+
+# ---------- Просмотр и редактирование заказов ----------
+@router.callback_query(F.data.startswith("view_order_"))
+async def view_order(callback: CallbackQuery):
+    order_num = callback.data.split("_")[-1]
+    order = sheet.get_order_by_number(order_num)
+    if not order:
+        await callback.answer("Заказ не найден", show_alert=True)
+        return
+    num, model, qty, printed, deadline, modified, status = order[:7]
+    text = f"📄 *Заказ №{num}*\n"
+    text += f"Модель: {model}\n"
+    text += f"Заказано: {qty} шт.\n"
+    text += f"Напечатано: {printed} шт.\n"
+    text += f"Осталось: {int(qty)-int(printed)} шт.\n"
+    text += f"Срок: {deadline}\n"
+    text += f"Статус: {'✅ Выполнен' if status.lower() == 'да' else '⏳ В работе'}"
+    await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=edit_order_keyboard(num))
+    await callback.answer()
+
+@router.callback_query(F.data == "back_to_orders")
+async def back_to_orders(callback: CallbackQuery):
+    orders = sheet.get_user_orders()
+    if orders:
+        await callback.message.edit_text("Выберите заказ:", reply_markup=my_orders_inline_keyboard(orders))
+    else:
+        await callback.message.edit_text("Заказов нет.", reply_markup=main_menu)
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("printed_"))
+async def start_edit_printed(callback: CallbackQuery, state: FSMContext):
+    order_num = callback.data.split("_")[-1]
+    await state.update_data(edit_order_num=order_num)
+    await callback.message.answer("Введите новое количество напечатанных экземпляров (целое число):", reply_markup=cancel_keyboard)
+    await state.set_state(EditOrder.waiting_for_new_printed)
+    await callback.answer()
+
+@router.message(EditOrder.waiting_for_new_printed, F.text != "❌ Отмена")
+async def process_edit_printed(message: Message, state: FSMContext):
+    if not message.text.isdigit():
+        await message.answer("Введите целое число.")
+        return
+    new_printed = int(message.text)
+    data = await state.get_data()
+    order_num = data.get("edit_order_num")
+    if not order_num:
+        await message.answer("Ошибка: данные потеряны.")
+        await state.clear()
+        return
+    order = sheet.get_order_by_number(order_num)
+    if not order:
+        await message.answer("Заказ не найден.")
+        await state.clear()
+        return
+    max_qty = int(order[2])
+    if new_printed > max_qty:
+        await message.answer(f"❌ Нельзя напечатать больше, чем заказано ({max_qty}).")
+        return
+    sheet.update_order_printed(order_num, new_printed)
+    await message.answer(f"✅ Для заказа №{order_num} напечатанное количество обновлено: {new_printed} шт.", reply_markup=main_menu)
+    await state.clear()
+
+@router.callback_query(F.data.startswith("complete_"))
+async def mark_completed(callback: CallbackQuery):
+    order_num = callback.data.split("_")[-1]
+    sheet.mark_order_completed(order_num)
+    await callback.answer("Заказ отмечен выполненным!", show_alert=True)
+    order = sheet.get_order_by_number(order_num)
+    if order:
+        num, model, qty, printed, deadline, modified, status = order[:7]
+        text = f"📄 *Заказ №{num}*\n"
+        text += f"Модель: {model}\n"
+        text += f"Заказано: {qty} шт.\n"
+        text += f"Напечатано: {printed} шт.\n"
+        text += f"Срок: {deadline}\n"
+        text += f"Статус: ✅ Выполнен"
+        await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=edit_order_keyboard(num))
+    await callback.answer()
+
+@router.callback_query(F.data == "main_menu")
+async def main_menu_callback(callback: CallbackQuery):
+    await callback.message.edit_text("Главное меню:", reply_markup=main_menu)
+    await callback.answer()
+
+# ---------- Расчёт количества ----------
 @router.callback_query(F.data.startswith("calc_"))
 async def start_calculation(callback: CallbackQuery, state: FSMContext):
     model_name = callback.data[5:]
@@ -540,6 +635,19 @@ async def process_quantity(message: Message, state: FSMContext):
     result_text += f"⚖️ *Общий расход граммов:* {total_grams} г"
     await message.answer(result_text, parse_mode="Markdown", reply_markup=main_menu)
     await state.clear()
+
+# ---------- Заказ из карточки модели ----------
+@router.callback_query(F.data.startswith("order_model_"))
+async def order_this_model(callback: CallbackQuery, state: FSMContext):
+    model_name = callback.data[len("order_model_"):]
+    await state.update_data(order_model=model_name)
+    await state.set_state(CreateOrder.waiting_for_quantity)
+    await callback.message.answer(
+        f"🛒 Заказ модели *{model_name}*\nВведите количество (целое число):",
+        parse_mode="Markdown",
+        reply_markup=cancel_keyboard
+    )
+    await callback.answer()
 
 # ---------- Отмена ----------
 @router.message(F.text == "❌ Отмена")
