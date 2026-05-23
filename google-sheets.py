@@ -10,7 +10,7 @@ class SheetManager:
         self.sheet = self.client.open_by_key(SPREADSHEET_ID).sheet1
 
     def _normalize_rows(self):
-        """Превращает группированную таблицу в плоские строки с названием модели"""
+        """РџСЂРµРІСЂР°С‰Р°РµС‚ РіСЂСѓРїРїРёСЂРѕРІР°РЅРЅСѓСЋ С‚Р°Р±Р»РёС†Сѓ (РїСѓСЃС‚С‹Рµ A) РІ РїР»РѕСЃРєРёР№ СЃРїРёСЃРѕРє СЃ РїРѕРІС‚РѕСЂС‘РЅРЅС‹РјРё РЅР°Р·РІР°РЅРёСЏРјРё РјРѕРґРµР»РµР№."""
         records = self.sheet.get_all_values()
         if len(records) <= 1:
             return []
@@ -70,5 +70,5 @@ class SheetManager:
 
     def init_sheet(self):
         if not self.sheet.get_all_values():
-            headers = ["Название", "Детали", "Кол-во на палете", "Нужно на шт.", "Время печати (мин.)"]
+            headers = ["РќР°Р·РІР°РЅРёРµ", "Р”РµС‚Р°Р»Рё", "РљРѕР»-РІРѕ РЅР° РїР°Р»РµС‚Рµ", "РќСѓР¶РЅРѕ РЅР° С€С‚.", "Р’СЂРµРјСЏ РїРµС‡Р°С‚Рё (РјРёРЅ.)"]
             self.sheet.append_row(headers)
