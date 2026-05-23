@@ -6,5 +6,9 @@ class AddModel(StatesGroup):
     waiting_for_detail = State()
 
 class EditModel(StatesGroup):
-    waiting_for_new_value = State()   # общее состояние для ввода нового значения параметра
-    # в data будем хранить: model_name, det_name, param, current_value
+    waiting_for_new_value = State()
+
+class CreateOrder(StatesGroup):
+    waiting_for_model = State()
+    waiting_for_quantity = State()
+    waiting_for_deadline = State()
