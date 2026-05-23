@@ -1,10 +1,5 @@
 import os
 
-# Токен бота – будет передан через переменную окружения на Render
 BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
-
-# ID вашей Google Sheets таблицы
-SPREADSHEET_ID = "142fAjnM3n7tzNz1WAokl_YV7LPg11STFjYyJ1ea66LM"
-
-# Путь к файлу сервисного аккаунта (на Render – абсолютный путь, но можно хранить как переменную)
-CREDENTIALS_FILE = "credentials.json"  # в корне проекта
+SPREADSHEET_ID = "142fAjnM3n7tzNz1WAokl_YV7LPg11STFjYyJ1ea66LM"  # РІР°С€ ID
+CREDENTIALS_FILE = "credentials.json"
