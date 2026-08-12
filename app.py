@@ -6,8 +6,8 @@ from aiogram.types import Update
 from aiogram.fsm.storage.memory import MemoryStorage
 from handlers import router
 from config import BOT_TOKEN
-from google_sheets import SheetManager
-from datetime import datetime
+from google_sheets import SheetManager, moscow_now
+from datetime import datetime, timezone, timedelta
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=BOT_TOKEN)
@@ -35,7 +35,7 @@ async def root():
 async def check_tasks():
     sheet = SheetManager()
     tasks = sheet.get_tasks_for_notification()
-    now = datetime.now()
+    now = moscow_now()  # московское время
     notified_count = 0
     for task in tasks:
         deadline_dt = task["deadline_dt"]
@@ -74,7 +74,7 @@ async def check_tasks():
                         notified_count += 1
                     except Exception as e:
                         logging.error(f"Ошибка отправки уведомления за {minutes} минут: {e}")
-            # Если разница меньше -0.5 (уже позже), и уведомление не отправлено – отметить как отправленное, чтобы не спамить
+            # Если разница меньше -0.5 (уже позже), и уведомление не отправлено – отметить как отправленное
             elif diff_minutes < -0.5 and task[field] == "0":
                 sheet.update_task_notification(task_id, field, '1')
 
