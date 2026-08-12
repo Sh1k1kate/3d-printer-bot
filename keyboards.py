@@ -148,3 +148,36 @@ def calendar_keyboard(year, month):
             row.append(InlineKeyboardButton(text=" ", callback_data="ignore"))
         buttons.append(row)
     return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+# ---------- Клавиатуры для задач ----------
+def task_actions_keyboard(task_id):
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="👤 Взять задачу", callback_data=f"take_task_{task_id}")],
+        [InlineKeyboardButton(text="✅ Отметить выполненной", callback_data=f"complete_task_{task_id}")],
+        [InlineKeyboardButton(text="🔙 Назад к списку", callback_data="back_to_tasks")]
+    ])
+
+def tasks_list_keyboard(tasks, page=0, per_page=5):
+    """
+    tasks: список задач в виде списка словарей или кортежей.
+    Возвращает клавиатуру с кнопками задач и пагинацией.
+    """
+    buttons = []
+    start = page * per_page
+    end = min(start + per_page, len(tasks))
+    for task in tasks[start:end]:
+        # task: (task_id, title, deadline, assignee, status)
+        task_id, title, deadline, assignee, status = task
+        text = f"{title} (до {deadline})"
+        if assignee:
+            text += f" 👤{assignee}"
+        buttons.append([InlineKeyboardButton(text=text, callback_data=f"view_task_{task_id}")])
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton(text="◀️", callback_data=f"tasks_page_{page-1}"))
+    if end < len(tasks):
+        nav.append(InlineKeyboardButton(text="▶️", callback_data=f"tasks_page_{page+1}"))
+    if nav:
+        buttons.append(nav)
+    buttons.append([InlineKeyboardButton(text="➕ Создать задачу", callback_data="create_task")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
