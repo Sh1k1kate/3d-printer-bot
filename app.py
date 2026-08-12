@@ -57,24 +57,30 @@ async def check_tasks():
                 task_id = task["id"]
                 title = task["title"]
 
-                # Проверка типа исполнителя
-                if assignee and not str(assignee).isdigit():
-                    logger.warning(f"Задача {task_id}: исполнитель не является числом: {assignee}")
-                    continue
+                # Определяем получателей
+                recipients = []
+                if assignee and str(assignee).isdigit():
+                    recipients = [int(assignee)]
+                else:
+                    # Общая задача – отправляем всем подписчикам
+                    recipients = sheet.get_all_subscribers()
+                    if not recipients:
+                        logger.warning(f"Нет подписчиков для общей задачи {task_id}")
+                        continue
 
                 # Утреннее уведомление в 9:00
                 if now.hour == 9 and now.minute == 0 and task["notified_morning"] == "0":
-                    if assignee and str(assignee).isdigit():
+                    for recipient in recipients:
                         try:
                             await bot.send_message(
-                                int(assignee),
+                                recipient,
                                 f"🌅 Напоминание: сегодня задача '{title}' должна быть выполнена до {deadline_dt.strftime('%H:%M')}!"
                             )
-                            sheet.update_task_notification(task_id, 'notified_morning', '1')
                             notified_count += 1
-                            logger.info(f"Отправлено утреннее уведомление для задачи {task_id}")
                         except Exception as e:
-                            logger.error(f"Ошибка отправки утреннего уведомления для задачи {task_id}: {e}")
+                            logger.error(f"Ошибка отправки утреннего уведомления пользователю {recipient}: {e}")
+                    sheet.update_task_notification(task_id, 'notified_morning', '1')
+                    logger.info(f"Отправлено утреннее уведомление для задачи {task_id}")
 
                 # Уведомления за 60, 30, 15, 0 минут
                 notifications = [
@@ -85,20 +91,20 @@ async def check_tasks():
                 ]
                 for minutes, field in notifications:
                     if abs(diff_minutes - minutes) < 0.5 and task[field] == "0":
-                        if assignee and str(assignee).isdigit():
+                        for recipient in recipients:
                             try:
                                 if minutes == 0:
                                     text = f"🔔 Срок выполнения задачи '{title}' истёк (до {deadline_dt.strftime('%H:%M')})!"
                                 else:
                                     text = f"⏰ Через {minutes} минут задача '{title}' должна быть выполнена (до {deadline_dt.strftime('%H:%M')})!"
-                                await bot.send_message(int(assignee), text)
-                                sheet.update_task_notification(task_id, field, '1')
+                                await bot.send_message(recipient, text)
                                 notified_count += 1
-                                logger.info(f"Отправлено уведомление за {minutes} минут для задачи {task_id}")
                             except Exception as e:
-                                logger.error(f"Ошибка отправки уведомления за {minutes} минут для задачи {task_id}: {e}")
+                                logger.error(f"Ошибка отправки уведомления за {minutes} минут пользователю {recipient}: {e}")
+                        sheet.update_task_notification(task_id, field, '1')
+                        logger.info(f"Отправлено уведомление за {minutes} минут для задачи {task_id}")
                     elif diff_minutes < -0.5 and task[field] == "0":
-                        # Если время уже прошло, помечаем как отправленное, чтобы не спамить
+                        # Если время уже прошло, помечаем как отправленное
                         sheet.update_task_notification(task_id, field, '1')
                         logger.info(f"Задача {task_id}: пропущено уведомление {field}, т.к. время прошло")
             except Exception as e:
