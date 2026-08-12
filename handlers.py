@@ -1,5 +1,3 @@
-from keyboards import tasks_list_keyboard, task_actions_keyboard
-from states import CreateTask
 from aiogram import Router, F
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
@@ -9,9 +7,10 @@ from keyboards import (
     parts_inline_keyboard, part_parameters_keyboard, cancel_keyboard,
     calendar_keyboard, my_orders_inline_keyboard, edit_order_keyboard,
     kit_action_keyboard, kit_parameters_keyboard,
-    select_model_keyboard, show_current_items_keyboard
+    select_model_keyboard, show_current_items_keyboard,
+    tasks_list_keyboard, task_actions_keyboard
 )
-from states import AddModel, EditModel, CreateOrder, EditOrder, AddKit, EditKit
+from states import AddModel, EditModel, CreateOrder, EditOrder, AddKit, EditKit, CreateTask
 from google_sheets import SheetManager
 import re
 from datetime import datetime
@@ -57,6 +56,9 @@ async def set_commands(bot):
         BotCommand(command="new_order", description="Создать новый заказ"),
         BotCommand(command="my_orders", description="Мои заказы"),
         BotCommand(command="items", description="Список моделей и наборов"),
+        BotCommand(command="tasks", description="Список задач"),
+        BotCommand(command="new_task", description="Создать новую задачу"),
+        BotCommand(command="id", description="Ваш Telegram ID"),
     ]
     await bot.set_my_commands(commands, scope=BotCommandScopeDefault())
 
@@ -64,12 +66,13 @@ async def set_commands(bot):
 async def cmd_start(message: Message):
     sheet.init_sheet()
     await message.answer(
-        "👋 Привет! Я бот для управления 3D-печатью.\n\n"
+        "👋 Привет! Я бот для управления 3D-печатью и задачами.\n\n"
         "📌 Основные возможности:\n"
         "• Просмотр моделей и наборов\n"
         "• Добавление новых моделей и наборов\n"
         "• Расчёт палет, времени и граммовки\n"
-        "• Создание заказов (модель или набор)\n\n"
+        "• Создание заказов (модель или набор)\n"
+        "• Управление задачами (создание, назначение, уведомления)\n\n"
         "Используй кнопки меню или команды:\n"
         "/help - подробная справка",
         reply_markup=main_menu
@@ -84,12 +87,16 @@ async def cmd_help(message: Message):
         "/help - эта справка\n"
         "/items - список моделей и наборов\n"
         "/new_order - создать новый заказ\n"
-        "/my_orders - просмотреть свои заказы\n\n"
+        "/my_orders - просмотреть свои заказы\n"
+        "/tasks - список задач\n"
+        "/new_task - создать новую задачу\n"
+        "/id - ваш Telegram ID (для назначения задач)\n\n"
         "📌 *Кнопки меню*\n"
         "• Список моделей и наборов – просмотр, расчёт, редактирование\n"
         "• Добавить модель – создание новой модели\n"
         "• Добавить набор – создание нового набора\n"
         "• Создать заказ – выбор модели или набора и количества\n"
+        "• Задачи – просмотр активных задач\n"
         "• Мои заказы – статус заказов\n"
         "• Помощь – эта справка\n\n"
         "🛠 *В группах* – бот отвечает на команды, упомяните его через @имя_бота"
@@ -107,6 +114,18 @@ async def cmd_new_order(message: Message, state: FSMContext):
 @router.message(Command("my_orders"))
 async def cmd_my_orders(message: Message):
     await show_my_orders(message)
+
+@router.message(Command("tasks"))
+async def cmd_tasks(message: Message):
+    await list_tasks(message)
+
+@router.message(Command("new_task"))
+async def cmd_new_task(message: Message, state: FSMContext):
+    await create_task_start(message, state)
+
+@router.message(Command("id"))
+async def cmd_id(message: Message):
+    await message.answer(f"Ваш Telegram ID: `{message.from_user.id}`", parse_mode="Markdown")
 
 # ---------- Кнопки ----------
 @router.message(F.text == "❓ Помощь")
@@ -134,7 +153,11 @@ async def list_items(message: Message):
         return
     await message.answer("Выберите элемент:", reply_markup=items_inline_keyboard(models, kits))
 
-# ---------- Добавление модели (полностью) ----------
+@router.message(F.text == "📋 Задачи")
+async def tasks_menu(message: Message):
+    await list_tasks(message)
+
+# ---------- Добавление модели ----------
 @router.message(F.text == "➕ Добавить модель")
 async def add_model_start(message: Message, state: FSMContext):
     await state.clear()
@@ -240,7 +263,7 @@ async def back_to_items(callback: CallbackQuery):
         await callback.message.edit_text("Ничего нет.")
     await callback.answer()
 
-# ---------- Добавление набора (с выбором моделей) ----------
+# ---------- Добавление набора ----------
 @router.message(F.text == "➕ Добавить набор")
 async def add_kit_start(message: Message, state: FSMContext):
     await state.clear()
@@ -269,7 +292,7 @@ async def process_kit_name(message: Message, state: FSMContext):
 
 @router.callback_query(AddKit.waiting_for_item, F.data.startswith("add_kit_model_"))
 async def add_kit_select_model(callback: CallbackQuery, state: FSMContext):
-    data = callback.data[15:]  # убираем "add_kit_model_"
+    data = callback.data[15:]
     if data.startswith("page_"):
         page = int(data.split('_')[1])
         models = sheet.get_all_models()
@@ -1016,15 +1039,8 @@ async def mark_completed(callback: CallbackQuery):
 async def main_menu_callback(callback: CallbackQuery):
     await callback.message.edit_text("Главное меню:", reply_markup=main_menu)
     await callback.answer()
+
 # ---------- Задачи ----------
-@router.message(Command("tasks"))
-async def cmd_tasks(message: Message):
-    await list_tasks(message)
-
-@router.message(F.text == "📋 Задачи")
-async def tasks_menu(message: Message):
-    await list_tasks(message)
-
 async def list_tasks(message: Message):
     user_id = message.from_user.id
     tasks = sheet.get_active_tasks(user_id)
@@ -1032,15 +1048,6 @@ async def list_tasks(message: Message):
         await message.answer("У вас нет активных задач. Создайте новую командой /new_task или кнопкой.")
         return
     await message.answer("Ваши задачи:", reply_markup=tasks_list_keyboard(tasks))
-
-@router.message(Command("new_task"))
-async def cmd_new_task(message: Message, state: FSMContext):
-    await create_task_start(message, state)
-
-@router.callback_query(F.data == "create_task")
-async def create_task_callback(callback: CallbackQuery, state: FSMContext):
-    await create_task_start(callback.message, state)
-    await callback.answer()
 
 async def create_task_start(message: Message, state: FSMContext):
     await state.clear()
@@ -1064,8 +1071,8 @@ async def process_task_deadline(callback: CallbackQuery, state: FSMContext):
     await state.update_data(task_deadline=deadline)
     await callback.message.answer("Введите *исполнителя*:\n"
                                   "• `общая` – для всех пользователей\n"
-                                  "• `@username` – конкретному пользователю\n"
-                                  "• или оставьте пустым (отправить как общую)",
+                                  "• `число` – Telegram ID конкретного пользователя (можно узнать через /id)\n"
+                                  "• или оставьте пустым (общая)",
                                   parse_mode="Markdown", reply_markup=cancel_keyboard)
     await state.set_state(CreateTask.waiting_for_assignee)
     await callback.answer()
@@ -1074,18 +1081,15 @@ async def process_task_deadline(callback: CallbackQuery, state: FSMContext):
 async def process_task_assignee(message: Message, state: FSMContext):
     assignee_text = message.text.strip()
     assignee_user_id = None
-    if assignee_text.lower() == "общая":
+    if assignee_text.lower() == "общая" or assignee_text == "":
         assignee_user_id = None
-    elif assignee_text.startswith("@"):
-        # пытаемся найти пользователя по username (сложно без базы), оставим как текст
-        # можно сохранить username как строку
-        assignee_user_id = assignee_text  # сохраним как строку (позже можно доработать)
+    elif assignee_text.isdigit():
+        assignee_user_id = int(assignee_text)
     else:
-        assignee_user_id = None  # если пусто – общая
+        assignee_user_id = assignee_text
     data = await state.get_data()
     title = data["task_title"]
     deadline = data["task_deadline"]
-    # Если assignee – строка (username), сохраним как строку
     sheet.add_task(title, deadline, assignee_user_id)
     await message.answer("✅ Задача создана!", reply_markup=main_menu)
     await state.clear()
@@ -1112,14 +1116,11 @@ async def take_task(callback: CallbackQuery):
     if not task or task['status'] != 'active':
         await callback.answer("Задача неактивна или не найдена", show_alert=True)
         return
-    # Если задача уже имеет исполнителя
-    if task['assignee'] and task['assignee'] != user_id:
+    if task['assignee'] and str(task['assignee']).isdigit() and int(task['assignee']) != user_id:
         await callback.answer("Эта задача уже назначена другому пользователю", show_alert=True)
         return
-    # Назначаем текущего пользователя
     sheet.update_task_field(task_id, 'assignee', user_id)
     await callback.answer("Вы стали исполнителем задачи!", show_alert=True)
-    # Обновить сообщение
     task = sheet.get_task_by_id(task_id)
     text = f"📌 *{task['title']}*\n📅 Срок: {task['deadline']}\n👤 Исполнитель: {user_id}\nСтатус: ⏳ Активна"
     await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=task_actions_keyboard(task_id))
@@ -1134,14 +1135,12 @@ async def complete_task(callback: CallbackQuery):
     if task['status'] != 'active':
         await callback.answer("Задача уже выполнена", show_alert=True)
         return
-    # Проверяем, что пользователь является исполнителем или задача общая
     user_id = callback.from_user.id
-    if task['assignee'] and task['assignee'] != user_id:
+    if task['assignee'] and str(task['assignee']).isdigit() and int(task['assignee']) != user_id:
         await callback.answer("Вы не являетесь исполнителем этой задачи", show_alert=True)
         return
     sheet.update_task_field(task_id, 'status', 'completed')
     await callback.answer("Задача отмечена выполненной!", show_alert=True)
-    # Обновить сообщение
     task = sheet.get_task_by_id(task_id)
     text = f"📌 *{task['title']}*\n📅 Срок: {task['deadline']}\n👤 Исполнитель: {task['assignee'] if task['assignee'] else 'Общая'}\nСтатус: ✅ Выполнена"
     await callback.message.edit_text(text, parse_mode="Markdown")
@@ -1161,6 +1160,7 @@ async def tasks_page(callback: CallbackQuery):
         return
     await callback.message.edit_reply_markup(reply_markup=tasks_list_keyboard(tasks, page))
     await callback.answer()
+
 # ---------- Отмена ----------
 @router.message(F.text == "❌ Отмена")
 async def cancel_handler(message: Message, state: FSMContext):
