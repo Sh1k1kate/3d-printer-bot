@@ -15,103 +15,8 @@ class SheetManager:
         except gspread.exceptions.WorksheetNotFound:
             self.sheet_kits = self.client.open_by_key(SPREADSHEET_ID).add_worksheet(title="Наборы", rows=100, cols=4)
             self.sheet_kits.append_row(["Название", "Состав", "Цена", "Описание"])
-        # Инициализируем лист "Задачи" (будет создан при первом вызове init_tasks_sheet)
-        self.sheet_tasks = None
         self.init_tasks_sheet()
-def init_tasks_sheet(self):
-    try:
-        self.sheet_tasks = self.client.open_by_key(SPREADSHEET_ID).worksheet("Задачи")
-    except gspread.exceptions.WorksheetNotFound:
-        self.sheet_tasks = self.client.open_by_key(SPREADSHEET_ID).add_worksheet(title="Задачи", rows=1000, cols=13)
-        headers = ["ID", "Название", "Срок", "Время", "Исполнитель (user_id)", "Статус", "Создана",
-                   "notified_60", "notified_30", "notified_15", "notified_0", "notified_morning", "notified_day"]
-        self.sheet_tasks.append_row(headers)
 
-def add_task(self, title, deadline, time_str, assignee_user_id=None):
-    task_id = self.get_next_task_id()
-    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    status = "active"
-    row = [task_id, title, deadline, time_str, assignee_user_id if assignee_user_id else "", status, now_str,
-           "0", "0", "0", "0", "0", "0"]
-    self.sheet_tasks.append_row(row)
-    return task_id
-
-def get_task_by_id(self, task_id):
-    cell = self.sheet_tasks.find(str(task_id), in_column=1)
-    if not cell:
-        return None
-    row = self.sheet_tasks.row_values(cell.row)
-    return {
-        "id": int(row[0]),
-        "title": row[1],
-        "deadline": row[2],
-        "time": row[3],
-        "assignee": row[4] if row[4] else None,
-        "status": row[5],
-        "created": row[6],
-        "notified_60": row[7] if len(row) > 7 else "0",
-        "notified_30": row[8] if len(row) > 8 else "0",
-        "notified_15": row[9] if len(row) > 9 else "0",
-        "notified_0": row[10] if len(row) > 10 else "0",
-        "notified_morning": row[11] if len(row) > 11 else "0",
-        "notified_day": row[12] if len(row) > 12 else "0"
-    }
-
-def get_tasks_for_notification(self):
-    """Возвращает все активные задачи для проверки уведомлений."""
-    records = self.sheet_tasks.get_all_values()
-    if len(records) <= 1:
-        return []
-    tasks = []
-    for row in records[1:]:
-        if len(row) < 13:
-            continue
-        if row[5] != "active":  # статус
-            continue
-        deadline_date = row[2]
-        deadline_time = row[3]
-        assignee = row[4] if row[4] else None
-        notified_60 = row[7] if len(row) > 7 else "0"
-        notified_30 = row[8] if len(row) > 8 else "0"
-        notified_15 = row[9] if len(row) > 9 else "0"
-        notified_0 = row[10] if len(row) > 10 else "0"
-        notified_morning = row[11] if len(row) > 11 else "0"
-        notified_day = row[12] if len(row) > 12 else "0"
-        try:
-            deadline_dt = datetime.strptime(f"{deadline_date} {deadline_time}", "%Y-%m-%d %H:%M")
-        except:
-            continue
-        tasks.append({
-            "id": int(row[0]),
-            "title": row[1],
-            "deadline_dt": deadline_dt,
-            "assignee": assignee,
-            "notified_60": notified_60,
-            "notified_30": notified_30,
-            "notified_15": notified_15,
-            "notified_0": notified_0,
-            "notified_morning": notified_morning,
-            "notified_day": notified_day
-        })
-    return tasks
-
-def update_task_notification(self, task_id, field, value):
-    col_map = {
-        'notified_60': 8,
-        'notified_30': 9,
-        'notified_15': 10,
-        'notified_0': 11,
-        'notified_morning': 12,
-        'notified_day': 13
-    }
-    col = col_map.get(field)
-    if not col:
-        return False
-    cell = self.sheet_tasks.find(str(task_id), in_column=1)
-    if not cell:
-        return False
-    self.sheet_tasks.update_cell(cell.row, col, str(value))
-    return True
     # ---------- Модели ----------
     def _normalize_rows_with_index(self):
         records = self.sheet_models.get_all_values()
@@ -331,13 +236,14 @@ def update_task_notification(self, task_id, field, value):
             return row
         return None
 
-    # ---------- Задачи (новое) ----------
+    # ---------- Задачи ----------
     def init_tasks_sheet(self):
         try:
             self.sheet_tasks = self.client.open_by_key(SPREADSHEET_ID).worksheet("Задачи")
         except gspread.exceptions.WorksheetNotFound:
-            self.sheet_tasks = self.client.open_by_key(SPREADSHEET_ID).add_worksheet(title="Задачи", rows=1000, cols=7)
-            headers = ["ID", "Название", "Срок", "Исполнитель (user_id)", "Статус", "Создана", "Уведомление отправлено"]
+            self.sheet_tasks = self.client.open_by_key(SPREADSHEET_ID).add_worksheet(title="Задачи", rows=1000, cols=13)
+            headers = ["ID", "Название", "Срок", "Время", "Исполнитель (user_id)", "Статус", "Создана",
+                       "notified_60", "notified_30", "notified_15", "notified_0", "notified_morning", "notified_day"]
             self.sheet_tasks.append_row(headers)
 
     def get_next_task_id(self):
@@ -354,12 +260,12 @@ def update_task_notification(self, task_id, field, value):
                 continue
         return max_id + 1
 
-    def add_task(self, title, deadline, assignee_user_id=None):
+    def add_task(self, title, deadline, time_str, assignee_user_id=None):
         task_id = self.get_next_task_id()
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         status = "active"
-        notified = "0"
-        row = [task_id, title, deadline, assignee_user_id if assignee_user_id else "", status, now_str, notified]
+        row = [task_id, title, deadline, time_str, assignee_user_id if assignee_user_id else "", status, now_str,
+               "0", "0", "0", "0", "0", "0"]
         self.sheet_tasks.append_row(row)
         return task_id
 
@@ -377,18 +283,18 @@ def update_task_notification(self, task_id, field, value):
                 continue
             title = row[1]
             deadline = row[2]
-            assignee = row[3] if row[3] else None
-            status = row[4]
+            time_str = row[3] if len(row) > 3 else ""
+            assignee = row[4] if row[4] else None
+            status = row[5]
             if status != "active":
                 continue
             if user_id is not None:
                 if assignee is not None and assignee.isdigit() and int(assignee) == user_id:
-                    tasks.append((task_id, title, deadline, assignee, status))
+                    tasks.append((task_id, title, deadline, assignee, status, time_str))
                 elif assignee is None:
-                    tasks.append((task_id, title, deadline, assignee, status))
-                # Если assignee – строка (username), не показываем, так как не можем привязать к user_id
+                    tasks.append((task_id, title, deadline, assignee, status, time_str))
             else:
-                tasks.append((task_id, title, deadline, assignee, status))
+                tasks.append((task_id, title, deadline, assignee, status, time_str))
         return tasks
 
     def get_task_by_id(self, task_id):
@@ -400,14 +306,65 @@ def update_task_notification(self, task_id, field, value):
             "id": int(row[0]),
             "title": row[1],
             "deadline": row[2],
-            "assignee": row[3] if row[3] else None,
-            "status": row[4],
-            "created": row[5],
-            "notified": row[6] if len(row) > 6 else "0"
+            "time": row[3] if len(row) > 3 else "",
+            "assignee": row[4] if row[4] else None,
+            "status": row[5],
+            "created": row[6],
+            "notified_60": row[7] if len(row) > 7 else "0",
+            "notified_30": row[8] if len(row) > 8 else "0",
+            "notified_15": row[9] if len(row) > 9 else "0",
+            "notified_0": row[10] if len(row) > 10 else "0",
+            "notified_morning": row[11] if len(row) > 11 else "0",
+            "notified_day": row[12] if len(row) > 12 else "0"
         }
 
-    def update_task_field(self, task_id, field, value):
-        col_map = {'assignee': 4, 'status': 5, 'notified': 7}
+    def get_tasks_for_notification(self):
+        """Возвращает все активные задачи для проверки уведомлений."""
+        records = self.sheet_tasks.get_all_values()
+        if len(records) <= 1:
+            return []
+        tasks = []
+        for row in records[1:]:
+            if len(row) < 13:
+                continue
+            if row[5] != "active":
+                continue
+            deadline_date = row[2]
+            deadline_time = row[3]
+            assignee = row[4] if row[4] else None
+            notified_60 = row[7] if len(row) > 7 else "0"
+            notified_30 = row[8] if len(row) > 8 else "0"
+            notified_15 = row[9] if len(row) > 9 else "0"
+            notified_0 = row[10] if len(row) > 10 else "0"
+            notified_morning = row[11] if len(row) > 11 else "0"
+            notified_day = row[12] if len(row) > 12 else "0"
+            try:
+                deadline_dt = datetime.strptime(f"{deadline_date} {deadline_time}", "%Y-%m-%d %H:%M")
+            except:
+                continue
+            tasks.append({
+                "id": int(row[0]),
+                "title": row[1],
+                "deadline_dt": deadline_dt,
+                "assignee": assignee,
+                "notified_60": notified_60,
+                "notified_30": notified_30,
+                "notified_15": notified_15,
+                "notified_0": notified_0,
+                "notified_morning": notified_morning,
+                "notified_day": notified_day
+            })
+        return tasks
+
+    def update_task_notification(self, task_id, field, value):
+        col_map = {
+            'notified_60': 8,
+            'notified_30': 9,
+            'notified_15': 10,
+            'notified_0': 11,
+            'notified_morning': 12,
+            'notified_day': 13
+        }
         col = col_map.get(field)
         if not col:
             return False
@@ -417,36 +374,16 @@ def update_task_notification(self, task_id, field, value):
         self.sheet_tasks.update_cell(cell.row, col, str(value))
         return True
 
-    def get_tasks_due_today(self):
-        """Возвращает активные задачи, срок которых сегодня или просрочены, и уведомление ещё не отправлено."""
-        today = datetime.now().date()
-        records = self.sheet_tasks.get_all_values()
-        if len(records) <= 1:
-            return []
-        tasks = []
-        for row in records[1:]:
-            if len(row) < 7:
-                continue
-            status = row[4]
-            if status != "active":
-                continue
-            notified = row[6] if len(row) > 6 else "0"
-            if notified == "1":
-                continue
-            deadline_str = row[2]
-            try:
-                deadline_date = datetime.strptime(deadline_str, "%Y-%m-%d").date()
-            except:
-                continue
-            if deadline_date <= today:
-                tasks.append({
-                    "id": int(row[0]),
-                    "title": row[1],
-                    "deadline": deadline_str,
-                    "assignee": row[3] if row[3] else None,
-                    "row_index": cell.row  # не используется, обновляем по id
-                })
-        return tasks
+    def update_task_field(self, task_id, field, value):
+        col_map = {'assignee': 5, 'status': 6}
+        col = col_map.get(field)
+        if not col:
+            return False
+        cell = self.sheet_tasks.find(str(task_id), in_column=1)
+        if not cell:
+            return False
+        self.sheet_tasks.update_cell(cell.row, col, str(value))
+        return True
 
     # ---------- Общие ----------
     def get_all_items(self):
