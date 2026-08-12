@@ -27,3 +27,9 @@ class EditKit(StatesGroup):
     waiting_for_new_value = State()                # для name, price, desc
     waiting_for_item_edit = State()                # редактирование состава (выбор действия)
     waiting_for_quantity_edit = State()            # ввод количества при добавлении модели
+
+# Добавить в конец файла
+class CreateTask(StatesGroup):
+    waiting_for_title = State()
+    waiting_for_deadline = State()
+    waiting_for_assignee = State()
