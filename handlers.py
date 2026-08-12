@@ -830,38 +830,43 @@ async def process_order_quantity(message: Message, state: FSMContext):
     now = datetime.now()
     await message.answer(
         "Выберите срок заказа на календаре:",
-        reply_markup=calendar_keyboard(now.year, now.month)
+        reply_markup=calendar_keyboard(now.year, now.month, prefix="cal_order")
     )
 
-# ---------- Календарь ----------
-@router.callback_query(F.data.startswith("cal_prev_"))
-async def calendar_prev(callback: CallbackQuery):
+# ---------- Календарь для заказов ----------
+@router.callback_query(F.data.startswith("cal_order_prev_"))
+async def calendar_order_prev(callback: CallbackQuery):
     data = callback.data.split("_")
-    year = int(data[2])
-    month = int(data[3])
+    year = int(data[3])
+    month = int(data[4])
     if month == 1:
         month = 12
         year -= 1
     else:
         month -= 1
-    await callback.message.edit_reply_markup(reply_markup=calendar_keyboard(year, month))
+    await callback.message.edit_reply_markup(reply_markup=calendar_keyboard(year, month, prefix="cal_order"))
     await callback.answer()
 
-@router.callback_query(F.data.startswith("cal_next_"))
-async def calendar_next(callback: CallbackQuery):
+@router.callback_query(F.data.startswith("cal_order_next_"))
+async def calendar_order_next(callback: CallbackQuery):
     data = callback.data.split("_")
-    year = int(data[2])
-    month = int(data[3])
+    year = int(data[3])
+    month = int(data[4])
     if month == 12:
         month = 1
         year += 1
     else:
         month += 1
-    await callback.message.edit_reply_markup(reply_markup=calendar_keyboard(year, month))
+    await callback.message.edit_reply_markup(reply_markup=calendar_keyboard(year, month, prefix="cal_order"))
     await callback.answer()
 
-@router.callback_query(F.data.startswith("cal_day_"))
-async def calendar_day(callback: CallbackQuery, state: FSMContext):
+@router.callback_query(F.data.startswith("cal_order_"))
+async def calendar_order_day(callback: CallbackQuery, state: FSMContext):
+    # Проверяем, что мы в состоянии заказа
+    current_state = await state.get_state()
+    if current_state != CreateOrder.waiting_for_deadline:
+        await callback.answer("Ошибка: неверное состояние", show_alert=True)
+        return
     data = callback.data.split("_")
     year = int(data[2])
     month = int(data[3])
@@ -892,8 +897,57 @@ async def calendar_day(callback: CallbackQuery, state: FSMContext):
     await state.clear()
     await callback.answer()
 
-@router.callback_query(F.data == "ignore")
-async def ignore_callback(callback: CallbackQuery):
+# ---------- Календарь для задач ----------
+@router.callback_query(F.data.startswith("cal_task_prev_"))
+async def calendar_task_prev(callback: CallbackQuery):
+    data = callback.data.split("_")
+    year = int(data[3])
+    month = int(data[4])
+    if month == 1:
+        month = 12
+        year -= 1
+    else:
+        month -= 1
+    await callback.message.edit_reply_markup(reply_markup=calendar_keyboard(year, month, prefix="cal_task"))
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("cal_task_next_"))
+async def calendar_task_next(callback: CallbackQuery):
+    data = callback.data.split("_")
+    year = int(data[3])
+    month = int(data[4])
+    if month == 12:
+        month = 1
+        year += 1
+    else:
+        month += 1
+    await callback.message.edit_reply_markup(reply_markup=calendar_keyboard(year, month, prefix="cal_task"))
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("cal_task_"))
+async def calendar_task_day(callback: CallbackQuery, state: FSMContext):
+    # Проверяем, что мы в состоянии задачи
+    current_state = await state.get_state()
+    if current_state != CreateTask.waiting_for_deadline:
+        await callback.answer("Ошибка: неверное состояние", show_alert=True)
+        return
+    data = callback.data.split("_")
+    year = int(data[2])
+    month = int(data[3])
+    day = int(data[4])
+    selected_date = datetime(year, month, day).strftime("%Y-%m-%d")
+    await state.update_data(task_deadline=selected_date)
+    # Теперь запрашиваем исполнителя
+    await callback.message.answer(
+        "Введите *исполнителя*:\n"
+        "• `общая` – для всех пользователей\n"
+        "• `число` – Telegram ID конкретного пользователя (можно узнать через /id)\n"
+        "• или оставьте пустым (общая)",
+        parse_mode="Markdown",
+        reply_markup=cancel_keyboard
+    )
+    await state.set_state(CreateTask.waiting_for_assignee)
+    await callback.message.delete()  # удаляем сообщение с календарём
     await callback.answer()
 
 # ---------- Расчёт ----------
@@ -1058,42 +1112,15 @@ async def create_task_start(message: Message, state: FSMContext):
 async def process_task_title(message: Message, state: FSMContext):
     title = message.text.strip()
     await state.update_data(task_title=title)
-    await message.answer("Выберите *срок выполнения* на календаре:", parse_mode="Markdown", reply_markup=calendar_keyboard(datetime.now().year, datetime.now().month))
+    await message.answer("Выберите *срок выполнения* на календаре:", parse_mode="Markdown", reply_markup=calendar_keyboard(datetime.now().year, datetime.now().month, prefix="cal_task"))
     await state.set_state(CreateTask.waiting_for_deadline)
 
-@router.callback_query(CreateTask.waiting_for_deadline, F.data.startswith("cal_day_"))
+@router.callback_query(CreateTask.waiting_for_deadline, F.data.startswith("cal_task_"))
 async def process_task_deadline(callback: CallbackQuery, state: FSMContext):
-    data = callback.data.split("_")
-    year = int(data[2])
-    month = int(data[3])
-    day = int(data[4])
-    deadline = datetime(year, month, day).strftime("%Y-%m-%d")
-    await state.update_data(task_deadline=deadline)
-    await callback.message.answer("Введите *исполнителя*:\n"
-                                  "• `общая` – для всех пользователей\n"
-                                  "• `число` – Telegram ID конкретного пользователя (можно узнать через /id)\n"
-                                  "• или оставьте пустым (общая)",
-                                  parse_mode="Markdown", reply_markup=cancel_keyboard)
-    await state.set_state(CreateTask.waiting_for_assignee)
-    await callback.answer()
+    # Этот обработчик уже есть выше (calendar_task_day)
+    pass  # он обрабатывается общим обработчиком cal_task_
 
-@router.message(CreateTask.waiting_for_assignee, F.text != "❌ Отмена")
-async def process_task_assignee(message: Message, state: FSMContext):
-    assignee_text = message.text.strip()
-    assignee_user_id = None
-    if assignee_text.lower() == "общая" or assignee_text == "":
-        assignee_user_id = None
-    elif assignee_text.isdigit():
-        assignee_user_id = int(assignee_text)
-    else:
-        assignee_user_id = assignee_text
-    data = await state.get_data()
-    title = data["task_title"]
-    deadline = data["task_deadline"]
-    sheet.add_task(title, deadline, assignee_user_id)
-    await message.answer("✅ Задача создана!", reply_markup=main_menu)
-    await state.clear()
-
+# ---------- Остальные обработчики задач ----------
 @router.callback_query(F.data.startswith("view_task_"))
 async def view_task(callback: CallbackQuery):
     task_id = int(callback.data.split("_")[-1])
