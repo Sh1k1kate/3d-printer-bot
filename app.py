@@ -57,7 +57,7 @@ async def check_tasks():
                 task_id = task["id"]
                 title = task["title"]
 
-                # Проверка типов
+                # Проверка типа исполнителя
                 if assignee and not str(assignee).isdigit():
                     logger.warning(f"Задача {task_id}: исполнитель не является числом: {assignee}")
                     continue
