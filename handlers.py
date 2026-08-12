@@ -1187,6 +1187,44 @@ async def tasks_page(callback: CallbackQuery):
         return
     await callback.message.edit_reply_markup(reply_markup=tasks_list_keyboard(tasks, page))
     await callback.answer()
+@router.message(CreateTask.waiting_for_assignee, F.text != "❌ Отмена")
+async def process_task_assignee(message: Message, state: FSMContext):
+    try:
+        assignee_text = message.text.strip()
+        assignee_user_id = None
+
+        if assignee_text.lower() == "общая" or assignee_text == "":
+            assignee_user_id = None
+        elif assignee_text.isdigit():
+            assignee_user_id = int(assignee_text)
+        else:
+            assignee_user_id = assignee_text
+
+        data = await state.get_data()
+        title = data.get("task_title")
+        deadline = data.get("task_deadline")
+
+        if not title or not deadline:
+            await message.answer(
+                "❌ Ошибка: не хватает данных для создания задачи. Начните заново командой /new_task.",
+                reply_markup=main_menu
+            )
+            await state.clear()
+            return
+
+        sheet.add_task(title, deadline, assignee_user_id)
+
+        await message.answer(
+            f"✅ Задача *{title}* создана!\n"
+            f"📅 Срок: {deadline}\n"
+            f"👤 Исполнитель: {assignee_user_id if assignee_user_id else 'Общая'}",
+            parse_mode="Markdown",
+            reply_markup=main_menu
+        )
+        await state.clear()
+    except Exception as e:
+        await message.answer(f"❌ Ошибка при создании задачи: {e}", reply_markup=main_menu)
+        await state.clear()
 
 # ---------- Отмена ----------
 @router.message(F.text == "❌ Отмена")
