@@ -7,6 +7,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from handlers import router
 from config import BOT_TOKEN
 from google_sheets import SheetManager
+from datetime import datetime
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=BOT_TOKEN)
@@ -30,25 +31,53 @@ async def webhook(request: Request):
 async def root():
     return {"status": "3D Printer Bot is running"}
 
-# Новый эндпоинт для cron-job
 @app.get("/check_tasks")
 async def check_tasks():
     sheet = SheetManager()
-    tasks = sheet.get_tasks_due_today()
+    tasks = sheet.get_tasks_for_notification()
+    now = datetime.now()
     notified_count = 0
     for task in tasks:
-        assignee = task['assignee']
-        if assignee and str(assignee).isdigit():
-            try:
-                await bot.send_message(int(assignee), f"🔔 Напоминание: задача '{task['title']}' должна быть выполнена до {task['deadline']}!")
-                notified_count += 1
-            except Exception as e:
-                logging.error(f"Не удалось отправить уведомление пользователю {assignee}: {e}")
-        else:
-            # Общая задача – уведомление не отправляем (можно позже добавить канал)
-            pass
-        # Помечаем, что уведомление отправлено
-        sheet.update_task_field(task['id'], 'notified', '1')
+        deadline_dt = task["deadline_dt"]
+        diff_minutes = (deadline_dt - now).total_seconds() / 60
+        assignee = task["assignee"]
+        task_id = task["id"]
+        title = task["title"]
+
+        # Утреннее уведомление в 9:00 (один раз в день)
+        if now.hour == 9 and now.minute == 0 and task["notified_morning"] == "0":
+            if assignee and str(assignee).isdigit():
+                try:
+                    await bot.send_message(int(assignee), f"🌅 Напоминание: сегодня задача '{title}' должна быть выполнена до {deadline_dt.strftime('%H:%M')}!")
+                    sheet.update_task_notification(task_id, 'notified_morning', '1')
+                    notified_count += 1
+                except Exception as e:
+                    logging.error(f"Ошибка отправки утреннего уведомления: {e}")
+
+        # Проверка уведомлений за 60, 30, 15, 0 минут
+        notifications = [
+            (60, 'notified_60'),
+            (30, 'notified_30'),
+            (15, 'notified_15'),
+            (0, 'notified_0')
+        ]
+        for minutes, field in notifications:
+            if abs(diff_minutes - minutes) < 0.5 and task[field] == "0":
+                if assignee and str(assignee).isdigit():
+                    try:
+                        if minutes == 0:
+                            text = f"🔔 Срок выполнения задачи '{title}' истёк (до {deadline_dt.strftime('%H:%M')})!"
+                        else:
+                            text = f"⏰ Через {minutes} минут задача '{title}' должна быть выполнена (до {deadline_dt.strftime('%H:%M')})!"
+                        await bot.send_message(int(assignee), text)
+                        sheet.update_task_notification(task_id, field, '1')
+                        notified_count += 1
+                    except Exception as e:
+                        logging.error(f"Ошибка отправки уведомления за {minutes} минут: {e}")
+            # Если разница меньше -0.5 (уже позже), и уведомление не отправлено – отметить как отправленное, чтобы не спамить
+            elif diff_minutes < -0.5 and task[field] == "0":
+                sheet.update_task_notification(task_id, field, '1')
+
     return {"status": "ok", "notified": notified_count}
 
 if __name__ == "__main__":
