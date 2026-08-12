@@ -18,17 +18,17 @@ class EditOrder(StatesGroup):
 
 class AddKit(StatesGroup):
     waiting_for_kit_name = State()
-    waiting_for_item = State()                     # выбор модели из списка
-    waiting_for_quantity_for_item = State()        # ввод количества для выбранной модели
+    waiting_for_item = State()
+    waiting_for_quantity_for_item = State()
     waiting_for_price = State()
     waiting_for_description = State()
 
 class EditKit(StatesGroup):
-    waiting_for_new_value = State()                # для name, price, desc
-    waiting_for_item_edit = State()                # редактирование состава (выбор действия)
-    waiting_for_quantity_edit = State()            # ввод количества при добавлении модели
+    waiting_for_new_value = State()
+    waiting_for_item_edit = State()
+    waiting_for_quantity_edit = State()
 
-# Добавить в конец файла
+# Новое состояние для создания задач
 class CreateTask(StatesGroup):
     waiting_for_title = State()
     waiting_for_deadline = State()
