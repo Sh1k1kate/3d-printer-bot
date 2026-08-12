@@ -120,18 +120,22 @@ def edit_order_keyboard(order_num):
         [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_orders")]
     ])
 
-# ---------- Календарь ----------
-def calendar_keyboard(year, month):
+# ---------- Календарь (универсальный, с префиксом) ----------
+def calendar_keyboard(year, month, prefix="cal_order"):
+    """
+    Создаёт календарь с callback_data, начинающимися с указанного prefix.
+    prefix: 'cal_order' для заказов, 'cal_task' для задач.
+    """
     first_day = datetime(year, month, 1)
-    start_weekday = first_day.weekday()  # 0 = понедельник
+    start_weekday = first_day.weekday()
     month_days = (datetime(year, month+1, 1) - timedelta(days=1)).day if month < 12 else (datetime(year+1, 1, 1) - timedelta(days=1)).day
     month_names = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь",
                    "Июль", "Август", "Сентябрь", "Окторябрь", "Ноябрь", "Декабрь"]
     header = f"{month_names[month-1]} {year}"
     nav_buttons = [
-        InlineKeyboardButton(text="◀️", callback_data=f"cal_prev_{year}_{month}"),
+        InlineKeyboardButton(text="◀️", callback_data=f"{prefix}_prev_{year}_{month}"),
         InlineKeyboardButton(text=header, callback_data="ignore"),
-        InlineKeyboardButton(text="▶️", callback_data=f"cal_next_{year}_{month}")
+        InlineKeyboardButton(text="▶️", callback_data=f"{prefix}_next_{year}_{month}")
     ]
     week_days = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
     row = [InlineKeyboardButton(text=day, callback_data="ignore") for day in week_days]
@@ -140,7 +144,7 @@ def calendar_keyboard(year, month):
     for _ in range(start_weekday):
         row.append(InlineKeyboardButton(text=" ", callback_data="ignore"))
     for day in range(1, month_days+1):
-        row.append(InlineKeyboardButton(text=str(day), callback_data=f"cal_day_{year}_{month}_{day}"))
+        row.append(InlineKeyboardButton(text=str(day), callback_data=f"{prefix}_{year}_{month}_{day}"))
         if len(row) == 7:
             buttons.append(row)
             row = []
