@@ -59,12 +59,18 @@ async def set_commands(bot):
         BotCommand(command="tasks", description="Список задач"),
         BotCommand(command="new_task", description="Создать новую задачу"),
         BotCommand(command="id", description="Ваш Telegram ID"),
+        BotCommand(command="subscribe", description="Подписаться на общие уведомления"),
+        BotCommand(command="unsubscribe", description="Отписаться от общих уведомлений"),
     ]
     await bot.set_my_commands(commands, scope=BotCommandScopeDefault())
 
 @router.message(Command("start"))
 async def cmd_start(message: Message):
     sheet.init_sheet()
+    # Автоматическая подписка пользователя
+    user_id = message.from_user.id
+    if sheet.add_subscriber(user_id):
+        logger.info(f"Пользователь {user_id} автоматически подписан на уведомления")
     await message.answer(
         "👋 Привет! Я бот для управления 3D-печатью и задачами.\n\n"
         "📌 Основные возможности:\n"
@@ -73,7 +79,8 @@ async def cmd_start(message: Message):
         "• Расчёт палет, времени и граммовки\n"
         "• Создание заказов (модель или набор)\n"
         "• Управление задачами (создание, назначение, уведомления)\n\n"
-        "Используй кнопки меню или команды:\n"
+        "✅ Вы автоматически подписаны на общие уведомления о задачах.\n"
+        "Используй команды:\n"
         "/help - подробная справка",
         reply_markup=main_menu
     )
@@ -90,7 +97,9 @@ async def cmd_help(message: Message):
         "/my_orders - просмотреть свои заказы\n"
         "/tasks - список задач\n"
         "/new_task - создать новую задачу\n"
-        "/id - ваш Telegram ID (для назначения задач)\n\n"
+        "/id - ваш Telegram ID (для назначения задач)\n"
+        "/subscribe - подписаться на общие уведомления\n"
+        "/unsubscribe - отписаться от общих уведомлений\n\n"
         "📌 *Кнопки меню*\n"
         "• Список моделей и наборов – просмотр, расчёт, редактирование\n"
         "• Добавить модель – создание новой модели\n"
@@ -103,6 +112,23 @@ async def cmd_help(message: Message):
     )
     await message.answer(help_text, parse_mode="Markdown")
 
+@router.message(Command("subscribe"))
+async def cmd_subscribe(message: Message):
+    user_id = message.from_user.id
+    if sheet.add_subscriber(user_id):
+        await message.answer("✅ Вы подписались на общие уведомления о задачах.")
+    else:
+        await message.answer("ℹ️ Вы уже подписаны на уведомления.")
+
+@router.message(Command("unsubscribe"))
+async def cmd_unsubscribe(message: Message):
+    user_id = message.from_user.id
+    if sheet.remove_subscriber(user_id):
+        await message.answer("✅ Вы отписались от общих уведомлений.")
+    else:
+        await message.answer("ℹ️ Вы не были подписаны на уведомления.")
+
+# ---------- Остальные команды ----------
 @router.message(Command("items"))
 async def cmd_items(message: Message):
     await list_items(message)
@@ -957,8 +983,8 @@ async def process_task_time(message: Message, state: FSMContext):
     await state.update_data(task_time=time_str)
     await message.answer(
         "Введите *исполнителя*:\n"
-        "• `общая` – для всех пользователей\n"
-        "• `число` – Telegram ID (узнайте через /id)\n"
+        "• `общая` – для всех подписчиков\n"
+        "• `число` – Telegram ID конкретного пользователя (узнайте через /id)\n"
         "• или оставьте пустым (общая)",
         parse_mode="Markdown",
         reply_markup=cancel_keyboard
@@ -988,7 +1014,7 @@ async def process_task_assignee(message: Message, state: FSMContext):
 
         sheet.add_task(title, deadline, time_str, assignee_user_id)
         await message.answer(
-            f"✅ Задача *{title}* создана!\n📅 Срок: {deadline} {time_str}\n👤 Исполнитель: {assignee_user_id if assignee_user_id else 'Общая'}",
+            f"✅ Задача *{title}* создана!\n📅 Срок: {deadline} {time_str}\n👤 Исполнитель: {assignee_user_id if assignee_user_id else 'Общая (все подписчики)'}",
             parse_mode="Markdown",
             reply_markup=main_menu
         )
@@ -1145,10 +1171,10 @@ async def main_menu_callback(callback: CallbackQuery):
 async def list_tasks(message: Message):
     user_id = message.from_user.id
     tasks = sheet.get_active_tasks(user_id)
-    if not tasks:
-        await message.answer("У вас нет активных задач. Создайте новую командой /new_task или кнопкой.")
-        return
-    await message.answer("Ваши задачи:", reply_markup=tasks_list_keyboard(tasks))
+    await message.answer(
+        "Ваши задачи:" if tasks else "У вас нет активных задач. Создайте новую:",
+        reply_markup=tasks_list_keyboard(tasks)
+    )
 
 async def create_task_start(message: Message, state: FSMContext):
     await state.clear()
@@ -1211,7 +1237,10 @@ async def complete_task(callback: CallbackQuery):
     if task['assignee'] and str(task['assignee']).isdigit() and int(task['assignee']) != user_id:
         await callback.answer("Вы не являетесь исполнителем этой задачи", show_alert=True)
         return
-    sheet.update_task_field(task_id, 'status', 'completed')
+    result = sheet.update_task_field(task_id, 'status', 'completed')
+    if not result:
+        await callback.answer("Ошибка при обновлении статуса", show_alert=True)
+        return
     await callback.answer("Задача отмечена выполненной!", show_alert=True)
     task = sheet.get_task_by_id(task_id)
     text = f"📌 *{task['title']}*\n📅 Срок: {task['deadline']} {task['time']}\n👤 Исполнитель: {task['assignee'] if task['assignee'] else 'Общая'}\nСтатус: ✅ Выполнена"
@@ -1231,6 +1260,11 @@ async def tasks_page(callback: CallbackQuery):
         await callback.answer("Нет задач", show_alert=True)
         return
     await callback.message.edit_reply_markup(reply_markup=tasks_list_keyboard(tasks, page))
+    await callback.answer()
+
+@router.callback_query(F.data == "create_task")
+async def create_task_callback(callback: CallbackQuery, state: FSMContext):
+    await create_task_start(callback.message, state)
     await callback.answer()
 
 # ---------- Отмена ----------
