@@ -28,8 +28,8 @@ class EditKit(StatesGroup):
     waiting_for_item_edit = State()
     waiting_for_quantity_edit = State()
 
-# Новое состояние для создания задач
 class CreateTask(StatesGroup):
     waiting_for_title = State()
     waiting_for_deadline = State()
+    waiting_for_time = State()          # новое состояние для времени
     waiting_for_assignee = State()
