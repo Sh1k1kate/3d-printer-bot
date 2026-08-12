@@ -1016,7 +1016,151 @@ async def mark_completed(callback: CallbackQuery):
 async def main_menu_callback(callback: CallbackQuery):
     await callback.message.edit_text("Главное меню:", reply_markup=main_menu)
     await callback.answer()
+# ---------- Задачи ----------
+@router.message(Command("tasks"))
+async def cmd_tasks(message: Message):
+    await list_tasks(message)
 
+@router.message(F.text == "📋 Задачи")
+async def tasks_menu(message: Message):
+    await list_tasks(message)
+
+async def list_tasks(message: Message):
+    user_id = message.from_user.id
+    tasks = sheet.get_active_tasks(user_id)
+    if not tasks:
+        await message.answer("У вас нет активных задач. Создайте новую командой /new_task или кнопкой.")
+        return
+    await message.answer("Ваши задачи:", reply_markup=tasks_list_keyboard(tasks))
+
+@router.message(Command("new_task"))
+async def cmd_new_task(message: Message, state: FSMContext):
+    await create_task_start(message, state)
+
+@router.callback_query(F.data == "create_task")
+async def create_task_callback(callback: CallbackQuery, state: FSMContext):
+    await create_task_start(callback.message, state)
+    await callback.answer()
+
+async def create_task_start(message: Message, state: FSMContext):
+    await state.clear()
+    await message.answer("Введите *название задачи*:", parse_mode="Markdown", reply_markup=cancel_keyboard)
+    await state.set_state(CreateTask.waiting_for_title)
+
+@router.message(CreateTask.waiting_for_title, F.text != "❌ Отмена")
+async def process_task_title(message: Message, state: FSMContext):
+    title = message.text.strip()
+    await state.update_data(task_title=title)
+    await message.answer("Выберите *срок выполнения* на календаре:", parse_mode="Markdown", reply_markup=calendar_keyboard(datetime.now().year, datetime.now().month))
+    await state.set_state(CreateTask.waiting_for_deadline)
+
+@router.callback_query(CreateTask.waiting_for_deadline, F.data.startswith("cal_day_"))
+async def process_task_deadline(callback: CallbackQuery, state: FSMContext):
+    data = callback.data.split("_")
+    year = int(data[2])
+    month = int(data[3])
+    day = int(data[4])
+    deadline = datetime(year, month, day).strftime("%Y-%m-%d")
+    await state.update_data(task_deadline=deadline)
+    await callback.message.answer("Введите *исполнителя*:\n"
+                                  "• `общая` – для всех пользователей\n"
+                                  "• `@username` – конкретному пользователю\n"
+                                  "• или оставьте пустым (отправить как общую)",
+                                  parse_mode="Markdown", reply_markup=cancel_keyboard)
+    await state.set_state(CreateTask.waiting_for_assignee)
+    await callback.answer()
+
+@router.message(CreateTask.waiting_for_assignee, F.text != "❌ Отмена")
+async def process_task_assignee(message: Message, state: FSMContext):
+    assignee_text = message.text.strip()
+    assignee_user_id = None
+    if assignee_text.lower() == "общая":
+        assignee_user_id = None
+    elif assignee_text.startswith("@"):
+        # пытаемся найти пользователя по username (сложно без базы), оставим как текст
+        # можно сохранить username как строку
+        assignee_user_id = assignee_text  # сохраним как строку (позже можно доработать)
+    else:
+        assignee_user_id = None  # если пусто – общая
+    data = await state.get_data()
+    title = data["task_title"]
+    deadline = data["task_deadline"]
+    # Если assignee – строка (username), сохраним как строку
+    sheet.add_task(title, deadline, assignee_user_id)
+    await message.answer("✅ Задача создана!", reply_markup=main_menu)
+    await state.clear()
+
+@router.callback_query(F.data.startswith("view_task_"))
+async def view_task(callback: CallbackQuery):
+    task_id = int(callback.data.split("_")[-1])
+    task = sheet.get_task_by_id(task_id)
+    if not task:
+        await callback.answer("Задача не найдена", show_alert=True)
+        return
+    text = f"📌 *{task['title']}*\n"
+    text += f"📅 Срок: {task['deadline']}\n"
+    text += f"👤 Исполнитель: {task['assignee'] if task['assignee'] else 'Общая'}\n"
+    text += f"Статус: {'✅ Выполнена' if task['status'] != 'active' else '⏳ Активна'}"
+    await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=task_actions_keyboard(task_id))
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("take_task_"))
+async def take_task(callback: CallbackQuery):
+    task_id = int(callback.data.split("_")[-1])
+    user_id = callback.from_user.id
+    task = sheet.get_task_by_id(task_id)
+    if not task or task['status'] != 'active':
+        await callback.answer("Задача неактивна или не найдена", show_alert=True)
+        return
+    # Если задача уже имеет исполнителя
+    if task['assignee'] and task['assignee'] != user_id:
+        await callback.answer("Эта задача уже назначена другому пользователю", show_alert=True)
+        return
+    # Назначаем текущего пользователя
+    sheet.update_task_field(task_id, 'assignee', user_id)
+    await callback.answer("Вы стали исполнителем задачи!", show_alert=True)
+    # Обновить сообщение
+    task = sheet.get_task_by_id(task_id)
+    text = f"📌 *{task['title']}*\n📅 Срок: {task['deadline']}\n👤 Исполнитель: {user_id}\nСтатус: ⏳ Активна"
+    await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=task_actions_keyboard(task_id))
+
+@router.callback_query(F.data.startswith("complete_task_"))
+async def complete_task(callback: CallbackQuery):
+    task_id = int(callback.data.split("_")[-1])
+    task = sheet.get_task_by_id(task_id)
+    if not task:
+        await callback.answer("Задача не найдена", show_alert=True)
+        return
+    if task['status'] != 'active':
+        await callback.answer("Задача уже выполнена", show_alert=True)
+        return
+    # Проверяем, что пользователь является исполнителем или задача общая
+    user_id = callback.from_user.id
+    if task['assignee'] and task['assignee'] != user_id:
+        await callback.answer("Вы не являетесь исполнителем этой задачи", show_alert=True)
+        return
+    sheet.update_task_field(task_id, 'status', 'completed')
+    await callback.answer("Задача отмечена выполненной!", show_alert=True)
+    # Обновить сообщение
+    task = sheet.get_task_by_id(task_id)
+    text = f"📌 *{task['title']}*\n📅 Срок: {task['deadline']}\n👤 Исполнитель: {task['assignee'] if task['assignee'] else 'Общая'}\nСтатус: ✅ Выполнена"
+    await callback.message.edit_text(text, parse_mode="Markdown")
+
+@router.callback_query(F.data == "back_to_tasks")
+async def back_to_tasks(callback: CallbackQuery):
+    await list_tasks(callback.message)
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("tasks_page_"))
+async def tasks_page(callback: CallbackQuery):
+    page = int(callback.data.split("_")[-1])
+    user_id = callback.from_user.id
+    tasks = sheet.get_active_tasks(user_id)
+    if not tasks:
+        await callback.answer("Нет задач", show_alert=True)
+        return
+    await callback.message.edit_reply_markup(reply_markup=tasks_list_keyboard(tasks, page))
+    await callback.answer()
 # ---------- Отмена ----------
 @router.message(F.text == "❌ Отмена")
 async def cancel_handler(message: Message, state: FSMContext):
