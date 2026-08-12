@@ -7,7 +7,7 @@ from datetime import datetime, timezone, timedelta
 MOSCOW_TZ = timezone(timedelta(hours=3))
 
 def moscow_now():
-    """Возвращает текущее московское время."""
+    """Возвращает текущее московское время с учётом часового пояса."""
     return datetime.now(MOSCOW_TZ)
 
 class SheetManager:
@@ -197,7 +197,7 @@ class SheetManager:
 
     def add_order(self, position, quantity, deadline_str):
         order_num = self.get_next_order_number()
-        now_str = moscow_now().strftime("%Y-%m-%d %H:%M:%S")  # московское время
+        now_str = moscow_now().strftime("%Y-%m-%d %H:%M:%S")
         row = [order_num, position, quantity, 0, deadline_str, now_str, "Нет"]
         self.sheet_orders.append_row(row)
         return order_num
@@ -269,7 +269,7 @@ class SheetManager:
 
     def add_task(self, title, deadline, time_str, assignee_user_id=None):
         task_id = self.get_next_task_id()
-        now_str = moscow_now().strftime("%Y-%m-%d %H:%M:%S")  # московское время
+        now_str = moscow_now().strftime("%Y-%m-%d %H:%M:%S")
         status = "active"
         row = [task_id, title, deadline, time_str, assignee_user_id if assignee_user_id else "", status, now_str,
                "0", "0", "0", "0", "0", "0"]
@@ -344,8 +344,10 @@ class SheetManager:
             notified_morning = row[11] if len(row) > 11 else "0"
             notified_day = row[12] if len(row) > 12 else "0"
             try:
-                deadline_dt = datetime.strptime(f"{deadline_date} {deadline_time}", "%Y-%m-%d %H:%M")
-            except:
+                # Парсим дату и время как naive, затем добавляем московский часовой пояс
+                naive_dt = datetime.strptime(f"{deadline_date} {deadline_time}", "%Y-%m-%d %H:%M")
+                deadline_dt = naive_dt.replace(tzinfo=MOSCOW_TZ)
+            except Exception as e:
                 continue
             tasks.append({
                 "id": int(row[0]),
