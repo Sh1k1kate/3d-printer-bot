@@ -15,7 +15,129 @@ class SheetManager:
         except gspread.exceptions.WorksheetNotFound:
             self.sheet_kits = self.client.open_by_key(SPREADSHEET_ID).add_worksheet(title="Наборы", rows=100, cols=4)
             self.sheet_kits.append_row(["Название", "Состав", "Цена", "Описание"])
+# ---------- Работа с листом "Задачи" ----------
+def init_tasks_sheet(self):
+    try:
+        self.sheet_tasks = self.client.open_by_key(SPREADSHEET_ID).worksheet("Задачи")
+    except gspread.exceptions.WorksheetNotFound:
+        self.sheet_tasks = self.client.open_by_key(SPREADSHEET_ID).add_worksheet(title="Задачи", rows=1000, cols=7)
+        headers = ["ID", "Название", "Срок", "Исполнитель (user_id)", "Статус", "Создана", "Уведомление отправлено"]
+        self.sheet_tasks.append_row(headers)
 
+def get_next_task_id(self):
+    records = self.sheet_tasks.get_all_values()
+    if len(records) <= 1:
+        return 1
+    max_id = 0
+    for row in records[1:]:
+        try:
+            tid = int(row[0])
+            if tid > max_id:
+                max_id = tid
+        except:
+            continue
+    return max_id + 1
+
+def add_task(self, title, deadline, assignee_user_id=None):
+    """
+    assignee_user_id: int (Telegram user_id) или None для общей задачи.
+    """
+    task_id = self.get_next_task_id()
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    status = "active"
+    notified = "0"
+    row = [task_id, title, deadline, assignee_user_id if assignee_user_id else "", status, now_str, notified]
+    self.sheet_tasks.append_row(row)
+    return task_id
+
+def get_active_tasks(self, user_id=None):
+    """
+    Возвращает активные задачи:
+    - если user_id указан: задачи, где исполнитель = user_id ИЛИ общие (assignee пусто)
+    - если user_id None: все активные задачи.
+    """
+    records = self.sheet_tasks.get_all_values()
+    if len(records) <= 1:
+        return []
+    tasks = []
+    for row in records[1:]:
+        if len(row) < 7:
+            continue
+        task_id = int(row[0])
+        title = row[1]
+        deadline = row[2]
+        assignee = row[3] if row[3] else None
+        status = row[4]
+        if status != "active":
+            continue
+        if user_id is not None:
+            if assignee is not None and int(assignee) == user_id:
+                tasks.append((task_id, title, deadline, assignee, status))
+            elif assignee is None:
+                tasks.append((task_id, title, deadline, assignee, status))
+        else:
+            tasks.append((task_id, title, deadline, assignee, status))
+    return tasks
+
+def get_task_by_id(self, task_id):
+    cell = self.sheet_tasks.find(str(task_id), in_column=1)
+    if not cell:
+        return None
+    row = self.sheet_tasks.row_values(cell.row)
+    return {
+        "id": int(row[0]),
+        "title": row[1],
+        "deadline": row[2],
+        "assignee": row[3] if row[3] else None,
+        "status": row[4],
+        "created": row[5],
+        "notified": row[6] if len(row) > 6 else "0"
+    }
+
+def update_task_field(self, task_id, field, value):
+    """
+    field: 'assignee', 'status', 'notified'
+    """
+    col_map = {'assignee': 4, 'status': 5, 'notified': 7}
+    col = col_map.get(field)
+    if not col:
+        return False
+    cell = self.sheet_tasks.find(str(task_id), in_column=1)
+    if not cell:
+        return False
+    self.sheet_tasks.update_cell(cell.row, col, str(value))
+    return True
+
+def get_tasks_due_today(self):
+    """Возвращает активные задачи, срок которых сегодня или просрочены, и уведомление ещё не отправлено."""
+    today = datetime.now().date()
+    records = self.sheet_tasks.get_all_values()
+    if len(records) <= 1:
+        return []
+    tasks = []
+    for row in records[1:]:
+        if len(row) < 7:
+            continue
+        status = row[4]
+        if status != "active":
+            continue
+        notified = row[6] if len(row) > 6 else "0"
+        if notified == "1":
+            continue
+        deadline_str = row[2]
+        try:
+            deadline_date = datetime.strptime(deadline_str, "%Y-%m-%d").date()
+        except:
+            continue
+        if deadline_date <= today:
+            tasks.append({
+                "id": int(row[0]),
+                "title": row[1],
+                "deadline": deadline_str,
+                "assignee": row[3] if row[3] else None,
+                "row_index": cell.row  # для обновления notified
+            })
+    return tasks
     # ---------- Модели ----------
     def _normalize_rows_with_index(self):
         records = self.sheet_models.get_all_values()
