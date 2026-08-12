@@ -1,7 +1,14 @@
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from config import SPREADSHEET_ID, CREDENTIALS_FILE
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
+
+# Московский часовой пояс (UTC+3)
+MOSCOW_TZ = timezone(timedelta(hours=3))
+
+def moscow_now():
+    """Возвращает текущее московское время."""
+    return datetime.now(MOSCOW_TZ)
 
 class SheetManager:
     def __init__(self):
@@ -190,7 +197,7 @@ class SheetManager:
 
     def add_order(self, position, quantity, deadline_str):
         order_num = self.get_next_order_number()
-        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        now_str = moscow_now().strftime("%Y-%m-%d %H:%M:%S")  # московское время
         row = [order_num, position, quantity, 0, deadline_str, now_str, "Нет"]
         self.sheet_orders.append_row(row)
         return order_num
@@ -215,7 +222,7 @@ class SheetManager:
         cell = self.sheet_orders.find(str(order_num), in_column=1)
         if cell:
             self.sheet_orders.update_cell(cell.row, 4, printed_qty)
-            now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            now_str = moscow_now().strftime("%Y-%m-%d %H:%M:%S")
             self.sheet_orders.update_cell(cell.row, 6, now_str)
             return True
         return False
@@ -224,7 +231,7 @@ class SheetManager:
         cell = self.sheet_orders.find(str(order_num), in_column=1)
         if cell:
             self.sheet_orders.update_cell(cell.row, 7, "Да")
-            now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            now_str = moscow_now().strftime("%Y-%m-%d %H:%M:%S")
             self.sheet_orders.update_cell(cell.row, 6, now_str)
             return True
         return False
@@ -262,7 +269,7 @@ class SheetManager:
 
     def add_task(self, title, deadline, time_str, assignee_user_id=None):
         task_id = self.get_next_task_id()
-        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        now_str = moscow_now().strftime("%Y-%m-%d %H:%M:%S")  # московское время
         status = "active"
         row = [task_id, title, deadline, time_str, assignee_user_id if assignee_user_id else "", status, now_str,
                "0", "0", "0", "0", "0", "0"]
