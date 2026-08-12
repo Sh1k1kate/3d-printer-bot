@@ -8,6 +8,7 @@ main_menu = ReplyKeyboardMarkup(
         [KeyboardButton(text="➕ Добавить модель")],
         [KeyboardButton(text="➕ Добавить набор")],
         [KeyboardButton(text="🛒 Создать заказ")],
+        [KeyboardButton(text="📋 Задачи")],
         [KeyboardButton(text="📦 Мои заказы")],
         [KeyboardButton(text="❓ Помощь")]
     ],
@@ -159,14 +160,12 @@ def task_actions_keyboard(task_id):
 
 def tasks_list_keyboard(tasks, page=0, per_page=5):
     """
-    tasks: список задач в виде списка словарей или кортежей.
-    Возвращает клавиатуру с кнопками задач и пагинацией.
+    tasks: список задач в виде списка кортежей (task_id, title, deadline, assignee, status)
     """
     buttons = []
     start = page * per_page
     end = min(start + per_page, len(tasks))
     for task in tasks[start:end]:
-        # task: (task_id, title, deadline, assignee, status)
         task_id, title, deadline, assignee, status = task
         text = f"{title} (до {deadline})"
         if assignee:
