@@ -283,18 +283,17 @@ class SheetManager:
                 continue
             title = row[1]
             deadline = row[2]
-            time_str = row[3] if len(row) > 3 else ""
             assignee = row[4] if row[4] else None
             status = row[5]
             if status != "active":
                 continue
             if user_id is not None:
                 if assignee is not None and assignee.isdigit() and int(assignee) == user_id:
-                    tasks.append((task_id, title, deadline, assignee, status, time_str))
+                    tasks.append((task_id, title, deadline, assignee, status))
                 elif assignee is None:
-                    tasks.append((task_id, title, deadline, assignee, status, time_str))
+                    tasks.append((task_id, title, deadline, assignee, status))
             else:
-                tasks.append((task_id, title, deadline, assignee, status, time_str))
+                tasks.append((task_id, title, deadline, assignee, status))
         return tasks
 
     def get_task_by_id(self, task_id):
@@ -319,7 +318,6 @@ class SheetManager:
         }
 
     def get_tasks_for_notification(self):
-        """Возвращает все активные задачи для проверки уведомлений."""
         records = self.sheet_tasks.get_all_values()
         if len(records) <= 1:
             return []
