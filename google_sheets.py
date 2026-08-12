@@ -23,6 +23,7 @@ class SheetManager:
             self.sheet_kits = self.client.open_by_key(SPREADSHEET_ID).add_worksheet(title="Наборы", rows=100, cols=4)
             self.sheet_kits.append_row(["Название", "Состав", "Цена", "Описание"])
         self.init_tasks_sheet()
+        self.init_subscribers_sheet()
 
     # ---------- Модели ----------
     def _normalize_rows_with_index(self):
@@ -344,7 +345,6 @@ class SheetManager:
             notified_morning = row[11] if len(row) > 11 else "0"
             notified_day = row[12] if len(row) > 12 else "0"
             try:
-                # Парсим дату и время как naive, затем добавляем московский часовой пояс
                 naive_dt = datetime.strptime(f"{deadline_date} {deadline_time}", "%Y-%m-%d %H:%M")
                 deadline_dt = naive_dt.replace(tzinfo=MOSCOW_TZ)
             except Exception as e:
@@ -392,6 +392,47 @@ class SheetManager:
         self.sheet_tasks.update_cell(cell.row, col, str(value))
         return True
 
+    # ---------- Подписчики ----------
+    def init_subscribers_sheet(self):
+        try:
+            self.sheet_subscribers = self.client.open_by_key(SPREADSHEET_ID).worksheet("Подписчики")
+        except gspread.exceptions.WorksheetNotFound:
+            self.sheet_subscribers = self.client.open_by_key(SPREADSHEET_ID).add_worksheet(title="Подписчики", rows=1000, cols=1)
+            self.sheet_subscribers.append_row(["user_id"])
+
+    def add_subscriber(self, user_id):
+        """Добавляет пользователя в список подписчиков, если его там нет."""
+        try:
+            cell = self.sheet_subscribers.find(str(user_id), in_column=1)
+            if cell:
+                return False  # уже подписан
+        except gspread.exceptions.CellNotFound:
+            pass
+        self.sheet_subscribers.append_row([user_id])
+        return True
+
+    def remove_subscriber(self, user_id):
+        """Удаляет пользователя из списка подписчиков."""
+        try:
+            cell = self.sheet_subscribers.find(str(user_id), in_column=1)
+            if cell:
+                self.sheet_subscribers.delete_rows(cell.row)
+                return True
+        except gspread.exceptions.CellNotFound:
+            pass
+        return False
+
+    def get_all_subscribers(self):
+        """Возвращает список user_id всех подписчиков."""
+        records = self.sheet_subscribers.get_all_values()
+        if len(records) <= 1:
+            return []
+        subscribers = []
+        for row in records[1:]:
+            if row and row[0].isdigit():
+                subscribers.append(int(row[0]))
+        return subscribers
+
     # ---------- Общие ----------
     def get_all_items(self):
         return self.get_all_models(), self.get_all_kits()
@@ -409,3 +450,4 @@ class SheetManager:
             self.sheet_kits = self.client.open_by_key(SPREADSHEET_ID).add_worksheet(title="Наборы", rows=100, cols=4)
             self.sheet_kits.append_row(["Название", "Состав", "Цена", "Описание"])
         self.init_tasks_sheet()
+        self.init_subscribers_sheet()
