@@ -120,12 +120,8 @@ def edit_order_keyboard(order_num):
         [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_orders")]
     ])
 
-# ---------- Календарь (универсальный, с префиксом) ----------
+# ---------- Календарь ----------
 def calendar_keyboard(year, month, prefix="cal_order"):
-    """
-    Создаёт календарь с callback_data, начинающимися с указанного prefix.
-    prefix: 'cal_order' для заказов, 'cal_task' для задач.
-    """
     first_day = datetime(year, month, 1)
     start_weekday = first_day.weekday()
     month_days = (datetime(year, month+1, 1) - timedelta(days=1)).day if month < 12 else (datetime(year+1, 1, 1) - timedelta(days=1)).day
@@ -154,7 +150,7 @@ def calendar_keyboard(year, month, prefix="cal_order"):
         buttons.append(row)
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
-# ---------- Клавиатуры для задач ----------
+# ---------- Задачи ----------
 def task_actions_keyboard(task_id):
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="👤 Взять задачу", callback_data=f"take_task_{task_id}")],
@@ -163,9 +159,6 @@ def task_actions_keyboard(task_id):
     ])
 
 def tasks_list_keyboard(tasks, page=0, per_page=5):
-    """
-    tasks: список задач в виде списка кортежей (task_id, title, deadline, assignee, status)
-    """
     buttons = []
     start = page * per_page
     end = min(start + per_page, len(tasks))
@@ -183,4 +176,25 @@ def tasks_list_keyboard(tasks, page=0, per_page=5):
     if nav:
         buttons.append(nav)
     buttons.append([InlineKeyboardButton(text="➕ Создать задачу", callback_data="create_task")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+# ---------- Выбор исполнителя ----------
+def assignee_keyboard(subscribers, page=0, per_page=5):
+    total = len(subscribers)
+    start = page * per_page
+    end = min(start + per_page, total)
+    buttons = []
+    for user_id, name in subscribers[start:end]:
+        buttons.append([InlineKeyboardButton(text=name, callback_data=f"assignee_{user_id}")])
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton(text="◀️", callback_data=f"assignee_page_{page-1}"))
+    if end < total:
+        nav.append(InlineKeyboardButton(text="▶️", callback_data=f"assignee_page_{page+1}"))
+    if nav:
+        buttons.append(nav)
+    buttons.append([
+        InlineKeyboardButton(text="🌐 Общая (все подписчики)", callback_data="assignee_common"),
+        InlineKeyboardButton(text="✏️ Ввести ID вручную", callback_data="assignee_manual")
+    ])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
