@@ -31,5 +31,6 @@ class EditKit(StatesGroup):
 class CreateTask(StatesGroup):
     waiting_for_title = State()
     waiting_for_deadline = State()
-    waiting_for_time = State()          # новое состояние для времени
-    waiting_for_assignee = State()
+    waiting_for_time = State()
+    waiting_for_assignee_selection = State()   # выбор из списка
+    waiting_for_assignee_manual = State()      # ручной ввод
