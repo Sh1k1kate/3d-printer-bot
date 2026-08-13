@@ -3,11 +3,9 @@ from oauth2client.service_account import ServiceAccountCredentials
 from config import SPREADSHEET_ID, CREDENTIALS_FILE
 from datetime import datetime, timezone, timedelta
 
-# Московский часовой пояс (UTC+3)
 MOSCOW_TZ = timezone(timedelta(hours=3))
 
 def moscow_now():
-    """Возвращает текущее московское время с учётом часового пояса."""
     return datetime.now(MOSCOW_TZ)
 
 class SheetManager:
@@ -397,22 +395,22 @@ class SheetManager:
         try:
             self.sheet_subscribers = self.client.open_by_key(SPREADSHEET_ID).worksheet("Подписчики")
         except gspread.exceptions.WorksheetNotFound:
-            self.sheet_subscribers = self.client.open_by_key(SPREADSHEET_ID).add_worksheet(title="Подписчики", rows=1000, cols=1)
-            self.sheet_subscribers.append_row(["user_id"])
+            self.sheet_subscribers = self.client.open_by_key(SPREADSHEET_ID).add_worksheet(title="Подписчики", rows=1000, cols=2)
+            self.sheet_subscribers.append_row(["user_id", "name"])
 
-    def add_subscriber(self, user_id):
-        """Добавляет пользователя в список подписчиков, если его там нет."""
+    def add_subscriber(self, user_id, name=None):
         try:
             cell = self.sheet_subscribers.find(str(user_id), in_column=1)
             if cell:
-                return False  # уже подписан
+                return False
         except gspread.exceptions.CellNotFound:
             pass
-        self.sheet_subscribers.append_row([user_id])
+        if not name:
+            name = f"Пользователь {user_id}"
+        self.sheet_subscribers.append_row([user_id, name])
         return True
 
     def remove_subscriber(self, user_id):
-        """Удаляет пользователя из списка подписчиков."""
         try:
             cell = self.sheet_subscribers.find(str(user_id), in_column=1)
             if cell:
@@ -423,7 +421,6 @@ class SheetManager:
         return False
 
     def get_all_subscribers(self):
-        """Возвращает список user_id всех подписчиков."""
         records = self.sheet_subscribers.get_all_values()
         if len(records) <= 1:
             return []
@@ -431,6 +428,18 @@ class SheetManager:
         for row in records[1:]:
             if row and row[0].isdigit():
                 subscribers.append(int(row[0]))
+        return subscribers
+
+    def get_subscribers_with_names(self):
+        records = self.sheet_subscribers.get_all_values()
+        if len(records) <= 1:
+            return []
+        subscribers = []
+        for row in records[1:]:
+            if row and row[0].isdigit():
+                user_id = int(row[0])
+                name = row[1] if len(row) > 1 and row[1] else f"Пользователь {user_id}"
+                subscribers.append((user_id, name))
         return subscribers
 
     # ---------- Общие ----------
