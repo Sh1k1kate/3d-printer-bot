@@ -9,11 +9,9 @@ from config import BOT_TOKEN
 from google_sheets import SheetManager, moscow_now
 from datetime import datetime, timezone, timedelta
 
-# Настройка логирования
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Проверка наличия BOT_TOKEN
 if not BOT_TOKEN:
     logger.error("BOT_TOKEN не задан в переменных окружения!")
     raise ValueError("BOT_TOKEN is required")
@@ -57,12 +55,10 @@ async def check_tasks():
                 task_id = task["id"]
                 title = task["title"]
 
-                # Определяем получателей
                 recipients = []
                 if assignee and str(assignee).isdigit():
                     recipients = [int(assignee)]
                 else:
-                    # Общая задача – отправляем всем подписчикам
                     recipients = sheet.get_all_subscribers()
                     if not recipients:
                         logger.warning(f"Нет подписчиков для общей задачи {task_id}")
@@ -104,7 +100,6 @@ async def check_tasks():
                         sheet.update_task_notification(task_id, field, '1')
                         logger.info(f"Отправлено уведомление за {minutes} минут для задачи {task_id}")
                     elif diff_minutes < -0.5 and task[field] == "0":
-                        # Если время уже прошло, помечаем как отправленное
                         sheet.update_task_notification(task_id, field, '1')
                         logger.info(f"Задача {task_id}: пропущено уведомление {field}, т.к. время прошло")
             except Exception as e:
