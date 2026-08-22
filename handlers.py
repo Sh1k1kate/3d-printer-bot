@@ -1,4 +1,4 @@
-from aiogram import Router, F
+from aiogram import Router, F, BaseMiddleware
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery, BotCommand, BotCommandScopeDefault
@@ -17,11 +17,35 @@ from config import ALLOWED_USERS
 import re
 from datetime import datetime
 import logging
+from typing import Callable, Dict, Any, Awaitable
 
 logger = logging.getLogger(__name__)
 
 router = Router()
 sheet = SheetManager()
+
+# ---------- Функция проверки доступа ----------
+def is_allowed(user_id: int) -> bool:
+    if not ALLOWED_USERS:
+        return True
+    return user_id in ALLOWED_USERS
+
+# ---------- Middleware для проверки доступа ----------
+class AccessMiddleware(BaseMiddleware):
+    async def __call__(
+        self,
+        handler: Callable[[Message, Dict[str, Any]], Awaitable[Any]],
+        event: Message,
+        data: Dict[str, Any]
+    ) -> Any:
+        if not is_allowed(event.from_user.id):
+            await event.answer("⛔ Доступ запрещён. Вы не авторизованы для использования этого бота.")
+            return
+        return await handler(event, data)
+
+# Регистрируем middleware
+router.message.middleware(AccessMiddleware())
+router.callback_query.middleware(AccessMiddleware())
 
 # ---------- Форматирование ----------
 def format_time(minutes: int) -> str:
@@ -53,27 +77,6 @@ def format_kit_info(kit_name, kit_data):
         text += f"📄 *Описание:* {desc}\n"
     return text
 
-# ---------- Функция проверки доступа ----------
-def is_allowed(user_id: int) -> bool:
-    if not ALLOWED_USERS:
-        return True
-    return user_id in ALLOWED_USERS
-
-# ---------- Middleware для проверки доступа ----------
-@router.message()
-async def check_access_message(message: Message, state: FSMContext):
-    if not is_allowed(message.from_user.id):
-        await message.answer("⛔ Доступ запрещён. Вы не авторизованы для использования этого бота.")
-        return
-    await router.propagate_event("message", message, state=state)
-
-@router.callback_query()
-async def check_access_callback(callback: CallbackQuery, state: FSMContext):
-    if not is_allowed(callback.from_user.id):
-        await callback.answer("⛔ Доступ запрещён.", show_alert=True)
-        return
-    await router.propagate_event("callback_query", callback, state=state)
-
 # ---------- Команды ----------
 async def set_commands(bot):
     commands = [
@@ -92,8 +95,6 @@ async def set_commands(bot):
 
 @router.message(Command("start"))
 async def cmd_start(message: Message):
-    if not is_allowed(message.from_user.id):
-        return
     sheet.init_sheet()
     user_id = message.from_user.id
     name = message.from_user.full_name or str(user_id)
@@ -116,8 +117,6 @@ async def cmd_start(message: Message):
 
 @router.message(Command("help"))
 async def cmd_help(message: Message):
-    if not is_allowed(message.from_user.id):
-        return
     help_text = (
         "📖 *Справка по командам*\n\n"
         "/start - запустить бота\n"
@@ -144,8 +143,6 @@ async def cmd_help(message: Message):
 
 @router.message(Command("subscribe"))
 async def cmd_subscribe(message: Message):
-    if not is_allowed(message.from_user.id):
-        return
     user_id = message.from_user.id
     name = message.from_user.full_name or str(user_id)
     if sheet.add_subscriber(user_id, name):
@@ -155,8 +152,6 @@ async def cmd_subscribe(message: Message):
 
 @router.message(Command("unsubscribe"))
 async def cmd_unsubscribe(message: Message):
-    if not is_allowed(message.from_user.id):
-        return
     user_id = message.from_user.id
     if sheet.remove_subscriber(user_id):
         await message.answer("✅ Вы отписались от общих уведомлений.")
@@ -165,51 +160,35 @@ async def cmd_unsubscribe(message: Message):
 
 @router.message(Command("items"))
 async def cmd_items(message: Message):
-    if not is_allowed(message.from_user.id):
-        return
     await list_items(message)
 
 @router.message(Command("new_order"))
 async def cmd_new_order(message: Message, state: FSMContext):
-    if not is_allowed(message.from_user.id):
-        return
     await create_order_start(message, state)
 
 @router.message(Command("my_orders"))
 async def cmd_my_orders(message: Message):
-    if not is_allowed(message.from_user.id):
-        return
     await show_my_orders(message)
 
 @router.message(Command("tasks"))
 async def cmd_tasks(message: Message):
-    if not is_allowed(message.from_user.id):
-        return
     await list_tasks(message)
 
 @router.message(Command("new_task"))
 async def cmd_new_task(message: Message, state: FSMContext):
-    if not is_allowed(message.from_user.id):
-        return
     await create_task_start(message, state)
 
 @router.message(Command("id"))
 async def cmd_id(message: Message):
-    if not is_allowed(message.from_user.id):
-        return
     await message.answer(f"Ваш Telegram ID: `{message.from_user.id}`", parse_mode="Markdown")
 
 # ---------- Кнопки ----------
 @router.message(F.text == "❓ Помощь")
 async def help_button(message: Message):
-    if not is_allowed(message.from_user.id):
-        return
     await cmd_help(message)
 
 @router.message(F.text == "🛒 Создать заказ")
 async def create_order_start(message: Message, state: FSMContext):
-    if not is_allowed(message.from_user.id):
-        return
     models, kits = sheet.get_all_items()
     if not models and not kits:
         await message.answer("❌ Нет ни одной модели или набора. Сначала добавьте их.")
@@ -223,8 +202,6 @@ async def create_order_start(message: Message, state: FSMContext):
 
 @router.message(F.text == "📋 Список моделей и наборов")
 async def list_items(message: Message):
-    if not is_allowed(message.from_user.id):
-        return
     models, kits = sheet.get_all_items()
     if not models and not kits:
         await message.answer("Пока ничего нет. Добавьте модель или набор.")
@@ -233,23 +210,17 @@ async def list_items(message: Message):
 
 @router.message(F.text == "📋 Задачи")
 async def tasks_menu(message: Message):
-    if not is_allowed(message.from_user.id):
-        return
     await list_tasks(message)
 
 # ==================== ДОБАВЛЕНИЕ МОДЕЛИ (НОВОЕ) ====================
 @router.message(F.text == "➕ Добавить модель")
 async def add_model_start(message: Message, state: FSMContext):
-    if not is_allowed(message.from_user.id):
-        return
     await state.clear()
     await message.answer("Введите *название модели*:", parse_mode="Markdown", reply_markup=cancel_keyboard)
     await state.set_state(AddModel.waiting_for_model_name)
 
 @router.message(AddModel.waiting_for_model_name, F.text != "❌ Отмена")
 async def process_model_name(message: Message, state: FSMContext):
-    if not is_allowed(message.from_user.id):
-        return
     model_name = message.text.strip()
     await state.update_data(model_name=model_name, details_list=[])
     await message.answer(
@@ -262,16 +233,12 @@ async def process_model_name(message: Message, state: FSMContext):
 
 @router.callback_query(AddModel.choosing_action, F.data == "add_detail")
 async def add_detail_start(callback: CallbackQuery, state: FSMContext):
-    if not is_allowed(callback.from_user.id):
-        return
     await callback.message.answer("Введите *название детали*:", parse_mode="Markdown", reply_markup=cancel_keyboard)
     await state.set_state(AddModel.waiting_for_detail_name)
     await callback.answer()
 
 @router.message(AddModel.waiting_for_detail_name, F.text != "❌ Отмена")
 async def process_detail_name(message: Message, state: FSMContext):
-    if not is_allowed(message.from_user.id):
-        return
     name = message.text.strip()
     if not name:
         await message.answer("❌ Название детали обязательно.")
@@ -290,8 +257,6 @@ async def process_detail_name(message: Message, state: FSMContext):
 
 @router.callback_query(AddModel.choosing_param, F.data.startswith("set_"))
 async def set_param_start(callback: CallbackQuery, state: FSMContext):
-    if not is_allowed(callback.from_user.id):
-        return
     data = callback.data.split("_")
     param_type = data[1]
     detail_index = int(data[2])
@@ -315,8 +280,6 @@ async def set_param_start(callback: CallbackQuery, state: FSMContext):
 
 @router.message(AddModel.waiting_for_on_pallet, F.text != "❌ Отмена")
 async def process_on_pallet(message: Message, state: FSMContext):
-    if not is_allowed(message.from_user.id):
-        return
     text = message.text.strip()
     value = "" if text.lower() in ("", "нет", "-", "0") else (text if text.isdigit() else None)
     if value is None and text.lower() not in ("", "нет", "-", "0"):
@@ -326,8 +289,6 @@ async def process_on_pallet(message: Message, state: FSMContext):
 
 @router.message(AddModel.waiting_for_per_unit, F.text != "❌ Отмена")
 async def process_per_unit(message: Message, state: FSMContext):
-    if not is_allowed(message.from_user.id):
-        return
     text = message.text.strip()
     value = "" if text.lower() in ("", "нет", "-", "0") else (text if text.isdigit() else None)
     if value is None and text.lower() not in ("", "нет", "-", "0"):
@@ -337,8 +298,6 @@ async def process_per_unit(message: Message, state: FSMContext):
 
 @router.message(AddModel.waiting_for_time, F.text != "❌ Отмена")
 async def process_time(message: Message, state: FSMContext):
-    if not is_allowed(message.from_user.id):
-        return
     text = message.text.strip()
     value = ""
     if text.lower() in ("", "нет", "-", "0"):
@@ -360,8 +319,6 @@ async def process_time(message: Message, state: FSMContext):
 
 @router.message(AddModel.waiting_for_grams, F.text != "❌ Отмена")
 async def process_grams(message: Message, state: FSMContext):
-    if not is_allowed(message.from_user.id):
-        return
     text = message.text.strip()
     value = "" if text.lower() in ("", "нет", "-", "0") else (text if text.isdigit() else None)
     if value is None and text.lower() not in ("", "нет", "-", "0"):
@@ -397,8 +354,6 @@ async def save_param_value(message: Message, state: FSMContext, param_type: str,
 
 @router.callback_query(AddModel.choosing_param, F.data.startswith("save_detail_"))
 async def save_detail(callback: CallbackQuery, state: FSMContext):
-    if not is_allowed(callback.from_user.id):
-        return
     index = int(callback.data.split("_")[-1])
     data = await state.get_data()
     details_list = data.get("details_list", [])
@@ -414,8 +369,6 @@ async def save_detail(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(AddModel.choosing_action, F.data == "finish_model")
 async def finish_model(callback: CallbackQuery, state: FSMContext):
-    if not is_allowed(callback.from_user.id):
-        return
     data = await state.get_data()
     model_name = data.get("model_name")
     details_list = data.get("details_list", [])
@@ -429,16 +382,12 @@ async def finish_model(callback: CallbackQuery, state: FSMContext):
 
 @router.message(StateFilter(AddModel), F.text == "❌ Отмена")
 async def cancel_add_model(message: Message, state: FSMContext):
-    if not is_allowed(message.from_user.id):
-        return
     await state.clear()
     await message.answer("Добавление модели отменено.", reply_markup=main_menu)
 
 # ==================== РЕДАКТИРОВАНИЕ МОДЕЛИ (НОВОЕ) ====================
 @router.callback_query(F.data.startswith("edit_model_"))
 async def edit_model_start(callback: CallbackQuery, state: FSMContext):
-    if not is_allowed(callback.from_user.id):
-        return
     model_name = callback.data[len("edit_model_"):]
     details_with_rows = sheet.get_model_details_with_rows(model_name)
     if not details_with_rows:
@@ -455,8 +404,6 @@ async def edit_model_start(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data.startswith("edit_part_"))
 async def edit_part_selected(callback: CallbackQuery, state: FSMContext):
-    if not is_allowed(callback.from_user.id):
-        return
     data = callback.data.split("_")
     model_name = data[2]
     part_index = int(data[3])
@@ -475,8 +422,6 @@ async def edit_part_selected(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data.startswith("edit_param_"))
 async def edit_param_selected(callback: CallbackQuery, state: FSMContext):
-    if not is_allowed(callback.from_user.id):
-        return
     raw = callback.data[len("edit_param_"):]
     last_underscore = raw.rfind('_')
     if last_underscore == -1:
@@ -539,8 +484,6 @@ async def edit_param_selected(callback: CallbackQuery, state: FSMContext):
 
 @router.message(EditModel.waiting_for_new_value, F.text != "❌ Отмена")
 async def process_edit_value(message: Message, state: FSMContext):
-    if not is_allowed(message.from_user.id):
-        return
     data = await state.get_data()
     row_idx = data.get("edit_row_idx")
     param = data.get("edit_param")
@@ -615,16 +558,12 @@ async def process_edit_value(message: Message, state: FSMContext):
 
 @router.message(StateFilter(EditModel.waiting_for_new_value), F.text == "❌ Отмена")
 async def cancel_edit_model(message: Message, state: FSMContext):
-    if not is_allowed(message.from_user.id):
-        return
     await state.clear()
     await message.answer("Редактирование отменено.", reply_markup=main_menu)
 
 # ---------- Просмотр модели (с кнопкой редактирования) ----------
 @router.callback_query(F.data.startswith("model_"))
 async def show_model_details(callback: CallbackQuery):
-    if not is_allowed(callback.from_user.id):
-        return
     model_name = callback.data[6:]
     details = sheet.get_model_details(model_name)
     if not details:
@@ -640,8 +579,6 @@ async def show_model_details(callback: CallbackQuery):
 # ---------- Добавление набора ----------
 @router.message(F.text == "➕ Добавить набор")
 async def add_kit_start(message: Message, state: FSMContext):
-    if not is_allowed(message.from_user.id):
-        return
     await state.clear()
     models = sheet.get_all_models()
     if not models:
@@ -652,8 +589,6 @@ async def add_kit_start(message: Message, state: FSMContext):
 
 @router.message(AddKit.waiting_for_kit_name, F.text != "❌ Отмена")
 async def process_kit_name(message: Message, state: FSMContext):
-    if not is_allowed(message.from_user.id):
-        return
     kit_name = message.text.strip()
     existing = sheet.get_all_kits()
     if kit_name in existing:
@@ -670,8 +605,6 @@ async def process_kit_name(message: Message, state: FSMContext):
 
 @router.callback_query(AddKit.waiting_for_item, F.data.startswith("add_kit_model_"))
 async def add_kit_select_model(callback: CallbackQuery, state: FSMContext):
-    if not is_allowed(callback.from_user.id):
-        return
     data = callback.data[15:]
     if data.startswith("page_"):
         page = int(data.split('_')[1])
@@ -693,8 +626,6 @@ async def add_kit_select_model(callback: CallbackQuery, state: FSMContext):
 
 @router.message(AddKit.waiting_for_quantity_for_item, F.text != "❌ Отмена")
 async def add_kit_process_quantity(message: Message, state: FSMContext):
-    if not is_allowed(message.from_user.id):
-        return
     if not message.text.isdigit():
         await message.answer("Введите целое положительное число.")
         return
@@ -723,8 +654,6 @@ async def add_kit_process_quantity(message: Message, state: FSMContext):
 
 @router.callback_query(AddKit.waiting_for_item, F.data == "add_kit_done")
 async def add_kit_done(callback: CallbackQuery, state: FSMContext):
-    if not is_allowed(callback.from_user.id):
-        return
     data = await state.get_data()
     items = data.get("kit_items", [])
     if not items:
@@ -738,8 +667,6 @@ async def add_kit_done(callback: CallbackQuery, state: FSMContext):
 
 @router.message(AddKit.waiting_for_price, F.text != "❌ Отмена")
 async def process_kit_price(message: Message, state: FSMContext):
-    if not is_allowed(message.from_user.id):
-        return
     try:
         price = float(message.text.replace(',', '.'))
     except:
@@ -751,8 +678,6 @@ async def process_kit_price(message: Message, state: FSMContext):
 
 @router.message(AddKit.waiting_for_description, F.text != "❌ Отмена")
 async def process_kit_description(message: Message, state: FSMContext):
-    if not is_allowed(message.from_user.id):
-        return
     desc = message.text.strip()
     if desc.lower() == "нет":
         desc = ""
@@ -766,16 +691,12 @@ async def process_kit_description(message: Message, state: FSMContext):
 
 @router.message(StateFilter(AddKit), F.text == "❌ Отмена")
 async def cancel_add_kit(message: Message, state: FSMContext):
-    if not is_allowed(message.from_user.id):
-        return
     await state.clear()
     await message.answer("Добавление набора отменено.", reply_markup=main_menu)
 
 # ---------- Редактирование набора ----------
 @router.callback_query(F.data.startswith("edit_kit_"))
 async def edit_kit_start(callback: CallbackQuery):
-    if not is_allowed(callback.from_user.id):
-        return
     kit_name = callback.data[9:]
     kit_data = sheet.get_kit_details(kit_name)
     if not kit_data:
@@ -790,8 +711,6 @@ async def edit_kit_start(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("edit_kit_param_"))
 async def edit_kit_param_start(callback: CallbackQuery, state: FSMContext):
-    if not is_allowed(callback.from_user.id):
-        return
     data = callback.data[15:]
     parts = data.split('_')
     if len(parts) < 2:
@@ -846,8 +765,6 @@ async def ask_edit_kit_value(callback, state, kit_name, param, current, prompt):
 
 @router.callback_query(EditKit.waiting_for_item_edit, F.data == "edit_kit_add")
 async def edit_kit_add_model(callback: CallbackQuery, state: FSMContext):
-    if not is_allowed(callback.from_user.id):
-        return
     models = sheet.get_all_models()
     if not models:
         await callback.answer("Нет доступных моделей", show_alert=True)
@@ -861,8 +778,6 @@ async def edit_kit_add_model(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(EditKit.waiting_for_item_edit, F.data.startswith("edit_kit_model_"))
 async def edit_kit_select_model(callback: CallbackQuery, state: FSMContext):
-    if not is_allowed(callback.from_user.id):
-        return
     data = callback.data[15:]
     if data.startswith("page_"):
         page = int(data.split('_')[1])
@@ -884,8 +799,6 @@ async def edit_kit_select_model(callback: CallbackQuery, state: FSMContext):
 
 @router.message(EditKit.waiting_for_quantity_edit, F.text != "❌ Отмена")
 async def edit_kit_process_quantity(message: Message, state: FSMContext):
-    if not is_allowed(message.from_user.id):
-        return
     if not message.text.isdigit():
         await message.answer("Введите целое положительное число.")
         return
@@ -920,8 +833,6 @@ async def edit_kit_process_quantity(message: Message, state: FSMContext):
 
 @router.callback_query(EditKit.waiting_for_item_edit, F.data.startswith("remove_kit_item_"))
 async def edit_kit_remove_item(callback: CallbackQuery, state: FSMContext):
-    if not is_allowed(callback.from_user.id):
-        return
     index = int(callback.data.split('_')[-1])
     data = await state.get_data()
     items = data.get("edit_kit_items", [])
@@ -942,8 +853,6 @@ async def edit_kit_remove_item(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(EditKit.waiting_for_item_edit, F.data == "back_to_kit")
 async def edit_kit_back_to_kit(callback: CallbackQuery, state: FSMContext):
-    if not is_allowed(callback.from_user.id):
-        return
     data = await state.get_data()
     kit_name = data.get("edit_kit_name")
     if not kit_name:
@@ -961,8 +870,6 @@ async def edit_kit_back_to_kit(callback: CallbackQuery, state: FSMContext):
 
 @router.message(EditKit.waiting_for_new_value, F.text != "❌ Отмена")
 async def process_edit_kit_param(message: Message, state: FSMContext):
-    if not is_allowed(message.from_user.id):
-        return
     data = await state.get_data()
     kit_name = data.get("edit_kit_name")
     param = data.get("edit_kit_param")
@@ -1007,16 +914,12 @@ async def process_edit_kit_param(message: Message, state: FSMContext):
 
 @router.message(StateFilter(EditKit), F.text == "❌ Отмена")
 async def cancel_edit_kit(message: Message, state: FSMContext):
-    if not is_allowed(message.from_user.id):
-        return
     await state.clear()
     await message.answer("Редактирование набора отменено.", reply_markup=main_menu)
 
 # ---------- Просмотр набора ----------
 @router.callback_query(F.data.startswith("kit_"))
 async def show_kit_details(callback: CallbackQuery):
-    if not is_allowed(callback.from_user.id):
-        return
     kit_name = callback.data[4:]
     kit_data = sheet.get_kit_details(kit_name)
     if not kit_data:
@@ -1031,8 +934,6 @@ async def show_kit_details(callback: CallbackQuery):
 
 @router.callback_query(F.data == "back_to_items")
 async def back_to_items(callback: CallbackQuery):
-    if not is_allowed(callback.from_user.id):
-        return
     models, kits = sheet.get_all_items()
     if models or kits:
         await callback.message.edit_text("Выберите элемент:", reply_markup=items_inline_keyboard(models, kits))
@@ -1043,8 +944,6 @@ async def back_to_items(callback: CallbackQuery):
 # ---------- Заказ модели или набора ----------
 @router.callback_query(F.data.startswith("order_model_"))
 async def order_this_model(callback: CallbackQuery, state: FSMContext):
-    if not is_allowed(callback.from_user.id):
-        return
     model_name = callback.data[12:]
     await state.update_data(order_item=model_name, order_type="model")
     await state.set_state(CreateOrder.waiting_for_quantity)
@@ -1057,8 +956,6 @@ async def order_this_model(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data.startswith("order_kit_"))
 async def order_this_kit(callback: CallbackQuery, state: FSMContext):
-    if not is_allowed(callback.from_user.id):
-        return
     kit_name = callback.data[10:]
     await state.update_data(order_item=kit_name, order_type="kit")
     await state.set_state(CreateOrder.waiting_for_quantity)
@@ -1071,8 +968,6 @@ async def order_this_kit(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(CreateOrder.waiting_for_model, F.data.startswith("model_"))
 async def process_order_model_from_callback(callback: CallbackQuery, state: FSMContext):
-    if not is_allowed(callback.from_user.id):
-        return
     model_name = callback.data[6:]
     await state.update_data(order_item=model_name, order_type="model")
     await state.set_state(CreateOrder.waiting_for_quantity)
@@ -1085,8 +980,6 @@ async def process_order_model_from_callback(callback: CallbackQuery, state: FSMC
 
 @router.callback_query(CreateOrder.waiting_for_model, F.data.startswith("kit_"))
 async def process_order_kit_from_callback(callback: CallbackQuery, state: FSMContext):
-    if not is_allowed(callback.from_user.id):
-        return
     kit_name = callback.data[4:]
     await state.update_data(order_item=kit_name, order_type="kit")
     await state.set_state(CreateOrder.waiting_for_quantity)
@@ -1099,8 +992,6 @@ async def process_order_kit_from_callback(callback: CallbackQuery, state: FSMCon
 
 @router.message(CreateOrder.waiting_for_model, F.text != "❌ Отмена")
 async def process_order_model_text(message: Message, state: FSMContext):
-    if not is_allowed(message.from_user.id):
-        return
     await message.answer("❌ Пожалуйста, выберите элемент из списка кнопками.")
     models, kits = sheet.get_all_items()
     if models or kits:
@@ -1108,8 +999,6 @@ async def process_order_model_text(message: Message, state: FSMContext):
 
 @router.message(CreateOrder.waiting_for_quantity, F.text != "❌ Отмена")
 async def process_order_quantity(message: Message, state: FSMContext):
-    if not is_allowed(message.from_user.id):
-        return
     if not message.text.isdigit():
         await message.answer("Введите целое положительное число.")
         return
@@ -1128,8 +1017,6 @@ async def process_order_quantity(message: Message, state: FSMContext):
 # ---------- Календарь для заказов ----------
 @router.callback_query(F.data.startswith("cal_order_prev_"))
 async def calendar_order_prev(callback: CallbackQuery):
-    if not is_allowed(callback.from_user.id):
-        return
     data = callback.data.split("_")
     year = int(data[3])
     month = int(data[4])
@@ -1143,8 +1030,6 @@ async def calendar_order_prev(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("cal_order_next_"))
 async def calendar_order_next(callback: CallbackQuery):
-    if not is_allowed(callback.from_user.id):
-        return
     data = callback.data.split("_")
     year = int(data[3])
     month = int(data[4])
@@ -1158,8 +1043,6 @@ async def calendar_order_next(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("cal_order_"))
 async def calendar_order_day(callback: CallbackQuery, state: FSMContext):
-    if not is_allowed(callback.from_user.id):
-        return
     current_state = await state.get_state()
     if current_state != CreateOrder.waiting_for_deadline:
         await callback.answer("Ошибка: неверное состояние", show_alert=True)
@@ -1197,8 +1080,6 @@ async def calendar_order_day(callback: CallbackQuery, state: FSMContext):
 # ---------- Календарь для задач ----------
 @router.callback_query(F.data.startswith("cal_task_prev_"))
 async def calendar_task_prev(callback: CallbackQuery):
-    if not is_allowed(callback.from_user.id):
-        return
     data = callback.data.split("_")
     year = int(data[3])
     month = int(data[4])
@@ -1212,8 +1093,6 @@ async def calendar_task_prev(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("cal_task_next_"))
 async def calendar_task_next(callback: CallbackQuery):
-    if not is_allowed(callback.from_user.id):
-        return
     data = callback.data.split("_")
     year = int(data[3])
     month = int(data[4])
@@ -1227,8 +1106,6 @@ async def calendar_task_next(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("cal_task_"))
 async def calendar_task_day(callback: CallbackQuery, state: FSMContext):
-    if not is_allowed(callback.from_user.id):
-        return
     current_state = await state.get_state()
     if current_state != CreateTask.waiting_for_deadline:
         await callback.answer("Ошибка: неверное состояние", show_alert=True)
@@ -1250,8 +1127,6 @@ async def calendar_task_day(callback: CallbackQuery, state: FSMContext):
 
 @router.message(CreateTask.waiting_for_time, F.text != "❌ Отмена")
 async def process_task_time(message: Message, state: FSMContext):
-    if not is_allowed(message.from_user.id):
-        return
     time_str = message.text.strip()
     if not re.match(r'^\d{2}:\d{2}$', time_str):
         await message.answer("❌ Неверный формат. Введите время в формате `ЧЧ:ММ`, например `19:00`.")
@@ -1281,8 +1156,6 @@ async def process_task_time(message: Message, state: FSMContext):
 
 @router.callback_query(CreateTask.waiting_for_assignee_selection, F.data.startswith("assignee_"))
 async def select_assignee(callback: CallbackQuery, state: FSMContext):
-    if not is_allowed(callback.from_user.id):
-        return
     data = callback.data
     if data == "assignee_common":
         assignee_user_id = None
@@ -1334,8 +1207,6 @@ async def select_assignee(callback: CallbackQuery, state: FSMContext):
 
 @router.message(CreateTask.waiting_for_assignee_manual, F.text != "❌ Отмена")
 async def process_assignee_manual(message: Message, state: FSMContext):
-    if not is_allowed(message.from_user.id):
-        return
     assignee_text = message.text.strip()
     assignee_user_id = None
     if assignee_text.lower() == "общая" or assignee_text == "":
@@ -1364,8 +1235,6 @@ async def process_assignee_manual(message: Message, state: FSMContext):
 
 @router.message(StateFilter(CreateTask.waiting_for_assignee_manual, CreateTask.waiting_for_assignee_selection), F.text == "❌ Отмена")
 async def cancel_create_task(message: Message, state: FSMContext):
-    if not is_allowed(message.from_user.id):
-        return
     await state.clear()
     await message.answer("Создание задачи отменено.", reply_markup=main_menu)
 
@@ -1385,8 +1254,6 @@ async def create_task_start(message: Message, state: FSMContext):
 
 @router.message(CreateTask.waiting_for_title, F.text != "❌ Отмена")
 async def process_task_title(message: Message, state: FSMContext):
-    if not is_allowed(message.from_user.id):
-        return
     title = message.text.strip()
     await state.update_data(task_title=title)
     await message.answer(
@@ -1398,8 +1265,6 @@ async def process_task_title(message: Message, state: FSMContext):
 
 @router.callback_query(F.data.startswith("view_task_"))
 async def view_task(callback: CallbackQuery):
-    if not is_allowed(callback.from_user.id):
-        return
     task_id = int(callback.data.split("_")[-1])
     task = sheet.get_task_by_id(task_id)
     if not task:
@@ -1417,8 +1282,6 @@ async def view_task(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("take_task_"))
 async def take_task(callback: CallbackQuery):
-    if not is_allowed(callback.from_user.id):
-        return
     task_id = int(callback.data.split("_")[-1])
     user_id = callback.from_user.id
     task = sheet.get_task_by_id(task_id)
@@ -1439,8 +1302,6 @@ async def take_task(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("complete_task_"))
 async def complete_task(callback: CallbackQuery):
-    if not is_allowed(callback.from_user.id):
-        return
     task_id = int(callback.data.split("_")[-1])
     task = sheet.get_task_by_id(task_id)
     if not task:
@@ -1467,15 +1328,11 @@ async def complete_task(callback: CallbackQuery):
 
 @router.callback_query(F.data == "back_to_tasks")
 async def back_to_tasks(callback: CallbackQuery):
-    if not is_allowed(callback.from_user.id):
-        return
     await list_tasks(callback.message)
     await callback.answer()
 
 @router.callback_query(F.data.startswith("tasks_page_"))
 async def tasks_page(callback: CallbackQuery):
-    if not is_allowed(callback.from_user.id):
-        return
     page = int(callback.data.split("_")[-1])
     user_id = callback.from_user.id
     tasks = sheet.get_active_tasks(user_id)
@@ -1487,16 +1344,12 @@ async def tasks_page(callback: CallbackQuery):
 
 @router.callback_query(F.data == "create_task")
 async def create_task_callback(callback: CallbackQuery, state: FSMContext):
-    if not is_allowed(callback.from_user.id):
-        return
     await create_task_start(callback.message, state)
     await callback.answer()
 
 # ---------- Расчёт ----------
 @router.callback_query(F.data.startswith("calc_"))
 async def start_calculation(callback: CallbackQuery, state: FSMContext):
-    if not is_allowed(callback.from_user.id):
-        return
     model_name = callback.data[5:]
     await state.update_data(calc_model=model_name)
     await callback.message.answer(
@@ -1508,8 +1361,6 @@ async def start_calculation(callback: CallbackQuery, state: FSMContext):
 
 @router.message(StateFilter("waiting_for_quantity"), F.text != "❌ Отмена")
 async def process_quantity(message: Message, state: FSMContext):
-    if not is_allowed(message.from_user.id):
-        return
     if not message.text.isdigit():
         await message.answer("Введите целое положительное число (количество моделей):")
         return
@@ -1555,8 +1406,6 @@ async def process_quantity(message: Message, state: FSMContext):
 # ---------- Заказы ----------
 @router.message(F.text == "📦 Мои заказы")
 async def show_my_orders(message: Message):
-    if not is_allowed(message.from_user.id):
-        return
     orders = sheet.get_active_orders()
     if not orders:
         await message.answer("📭 У вас нет активных заказов. Создайте новый через кнопку 'Создать заказ'.")
@@ -1565,8 +1414,6 @@ async def show_my_orders(message: Message):
 
 @router.callback_query(F.data.startswith("view_order_"))
 async def view_order(callback: CallbackQuery):
-    if not is_allowed(callback.from_user.id):
-        return
     order_num = callback.data.split("_")[-1]
     order = sheet.get_order_by_number(order_num)
     if not order:
@@ -1593,8 +1440,6 @@ async def view_order(callback: CallbackQuery):
 
 @router.callback_query(F.data == "back_to_orders")
 async def back_to_orders(callback: CallbackQuery):
-    if not is_allowed(callback.from_user.id):
-        return
     orders = sheet.get_active_orders()
     if orders:
         await callback.message.edit_text("Выберите заказ:", reply_markup=my_orders_inline_keyboard(orders))
@@ -1604,8 +1449,6 @@ async def back_to_orders(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("printed_"))
 async def start_edit_printed(callback: CallbackQuery, state: FSMContext):
-    if not is_allowed(callback.from_user.id):
-        return
     order_num = callback.data.split("_")[-1]
     await state.update_data(edit_order_num=order_num)
     await callback.message.answer("Введите новое количество напечатанных экземпляров (целое число):", reply_markup=cancel_keyboard)
@@ -1614,8 +1457,6 @@ async def start_edit_printed(callback: CallbackQuery, state: FSMContext):
 
 @router.message(EditOrder.waiting_for_new_printed, F.text != "❌ Отмена")
 async def process_edit_printed(message: Message, state: FSMContext):
-    if not is_allowed(message.from_user.id):
-        return
     if not message.text.isdigit():
         await message.answer("Введите целое число.")
         return
@@ -1641,8 +1482,6 @@ async def process_edit_printed(message: Message, state: FSMContext):
 
 @router.callback_query(F.data.startswith("complete_"))
 async def mark_completed(callback: CallbackQuery):
-    if not is_allowed(callback.from_user.id):
-        return
     order_num = callback.data.split("_")[-1]
     sheet.mark_order_completed(order_num)
     await callback.answer("Заказ отмечен выполненным!", show_alert=True)
@@ -1655,15 +1494,11 @@ async def mark_completed(callback: CallbackQuery):
 
 @router.callback_query(F.data == "main_menu")
 async def main_menu_callback(callback: CallbackQuery):
-    if not is_allowed(callback.from_user.id):
-        return
     await callback.message.edit_text("Главное меню:", reply_markup=main_menu)
     await callback.answer()
 
 # ---------- Отмена ----------
 @router.message(F.text == "❌ Отмена")
 async def cancel_handler(message: Message, state: FSMContext):
-    if not is_allowed(message.from_user.id):
-        return
     await state.clear()
     await message.answer("Операция отменена.", reply_markup=main_menu)
