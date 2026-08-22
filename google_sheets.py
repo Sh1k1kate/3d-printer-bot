@@ -85,7 +85,14 @@ class SheetManager:
             if d_name == det_name:
                 return row_idx, on_pallet, per_unit, time_pp, grams_pp
         return None
-
+def delete_part(self, model_name, det_name):
+    """Удаляет деталь из модели (удаляет строку)."""
+    rows = self._normalize_rows_with_index()
+    for row_idx, row in rows:
+        if row[0] == model_name and row[1] == det_name:
+            self.sheet_models.delete_rows(row_idx)
+            return True
+    return False
     def update_part_field(self, row_index, field, new_value):
         col_map = {'name': 2, 'on_pallet': 3, 'per_unit': 4, 'time': 5, 'grams': 6}
         col = col_map.get(field)
