@@ -3,7 +3,11 @@ from aiogram.fsm.state import State, StatesGroup
 class AddModel(StatesGroup):
     waiting_for_model_name = State()
     waiting_for_details_count = State()
-    waiting_for_detail = State()
+    waiting_for_detail_name = State()        # название детали
+    waiting_for_on_pallet = State()          # кол-во на палете (опционально)
+    waiting_for_per_unit = State()           # кол-во на единицу (опционально)
+    waiting_for_time = State()               # время (часы минуты) – опционально
+    waiting_for_grams = State()              # граммы (опционально)
 
 class EditModel(StatesGroup):
     waiting_for_new_value = State()
@@ -32,5 +36,5 @@ class CreateTask(StatesGroup):
     waiting_for_title = State()
     waiting_for_deadline = State()
     waiting_for_time = State()
-    waiting_for_assignee_selection = State()   # выбор из списка
-    waiting_for_assignee_manual = State()      # ручной ввод
+    waiting_for_assignee_selection = State()
+    waiting_for_assignee_manual = State()
