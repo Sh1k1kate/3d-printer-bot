@@ -212,7 +212,7 @@ async def list_items(message: Message):
 async def tasks_menu(message: Message):
     await list_tasks(message)
 
-# ==================== ДОБАВЛЕНИЕ МОДЕЛИ (НОВОЕ) ====================
+# ==================== ДОБАВЛЕНИЕ МОДЕЛИ ====================
 @router.message(F.text == "➕ Добавить модель")
 async def add_model_start(message: Message, state: FSMContext):
     await state.clear()
@@ -385,7 +385,7 @@ async def cancel_add_model(message: Message, state: FSMContext):
     await state.clear()
     await message.answer("Добавление модели отменено.", reply_markup=main_menu)
 
-# ==================== РЕДАКТИРОВАНИЕ МОДЕЛИ (НОВОЕ) ====================
+# ==================== РЕДАКТИРОВАНИЕ МОДЕЛИ (с разделителем |) ====================
 @router.callback_query(F.data.startswith("edit_model_"))
 async def edit_model_start(callback: CallbackQuery, state: FSMContext):
     model_name = callback.data[len("edit_model_"):]
@@ -404,9 +404,17 @@ async def edit_model_start(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data.startswith("edit_part_"))
 async def edit_part_selected(callback: CallbackQuery, state: FSMContext):
-    data = callback.data.split("_")
-    model_name = data[2]
-    part_index = int(data[3])
+    # Формат: edit_part_{model_name}|{index}
+    raw = callback.data[len("edit_part_"):]
+    if '|' not in raw:
+        await callback.answer("Ошибка формата")
+        return
+    model_name, part_index_str = raw.split('|', 1)
+    try:
+        part_index = int(part_index_str)
+    except ValueError:
+        await callback.answer("Ошибка формата")
+        return
     data_state = await state.get_data()
     rows = data_state.get("edit_rows", [])
     if part_index >= len(rows):
@@ -422,17 +430,16 @@ async def edit_part_selected(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data.startswith("edit_param_"))
 async def edit_param_selected(callback: CallbackQuery, state: FSMContext):
+    # Формат: edit_param_{model_name}|{det_name}|{param}
     raw = callback.data[len("edit_param_"):]
-    last_underscore = raw.rfind('_')
-    if last_underscore == -1:
+    if '|' not in raw:
         await callback.answer("Ошибка формата")
         return
-    param = raw[last_underscore+1:]
-    rest = raw[:last_underscore]
-    parts = rest.split('_')
-    param = parts[-1]
-    det_name = parts[-2]
-    model_name = '_'.join(parts[:-2])
+    parts = raw.split('|')
+    if len(parts) != 3:
+        await callback.answer("Ошибка формата")
+        return
+    model_name, det_name, param = parts
     part_info = sheet.get_part_row_and_data(model_name, det_name)
     if not part_info:
         await callback.answer("Деталь не найдена", show_alert=True)
@@ -561,7 +568,7 @@ async def cancel_edit_model(message: Message, state: FSMContext):
     await state.clear()
     await message.answer("Редактирование отменено.", reply_markup=main_menu)
 
-# ---------- Просмотр модели (с кнопкой редактирования) ----------
+# ---------- Просмотр модели ----------
 @router.callback_query(F.data.startswith("model_"))
 async def show_model_details(callback: CallbackQuery):
     model_name = callback.data[6:]
