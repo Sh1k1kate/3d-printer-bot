@@ -8,7 +8,8 @@ from keyboards import (
     calendar_keyboard, my_orders_inline_keyboard, edit_order_keyboard,
     kit_action_keyboard, kit_parameters_keyboard,
     select_model_keyboard, show_current_items_keyboard,
-    tasks_list_keyboard, task_actions_keyboard, assignee_keyboard
+    tasks_list_keyboard, task_actions_keyboard, assignee_keyboard,
+    add_model_action_keyboard, detail_param_keyboard, edit_part_keyboard, edit_param_keyboard
 )
 from states import AddModel, EditModel, CreateOrder, EditOrder, AddKit, EditKit, CreateTask
 from google_sheets import SheetManager
@@ -236,13 +237,13 @@ async def tasks_menu(message: Message):
         return
     await list_tasks(message)
 
-# ---------- Добавление модели (с опциональными параметрами) ----------
+# ==================== ДОБАВЛЕНИЕ МОДЕЛИ (НОВОЕ) ====================
 @router.message(F.text == "➕ Добавить модель")
 async def add_model_start(message: Message, state: FSMContext):
     if not is_allowed(message.from_user.id):
         return
     await state.clear()
-    await message.answer("Введите *название модели*:", reply_markup=cancel_keyboard)
+    await message.answer("Введите *название модели*:", parse_mode="Markdown", reply_markup=cancel_keyboard)
     await state.set_state(AddModel.waiting_for_model_name)
 
 @router.message(AddModel.waiting_for_model_name, F.text != "❌ Отмена")
@@ -250,41 +251,22 @@ async def process_model_name(message: Message, state: FSMContext):
     if not is_allowed(message.from_user.id):
         return
     model_name = message.text.strip()
-    await state.update_data(model_name=model_name)
-    await message.answer("Сколько *деталей* входит в эту модель? (введите число)")
-    await state.set_state(AddModel.waiting_for_details_count)
+    await state.update_data(model_name=model_name, details_list=[])
+    await message.answer(
+        f"Модель *{model_name}* создаётся.\n\n"
+        "Теперь вы можете добавлять детали. Используйте кнопки:",
+        parse_mode="Markdown",
+        reply_markup=add_model_action_keyboard()
+    )
+    await state.set_state(AddModel.choosing_action)
 
-@router.message(AddModel.waiting_for_details_count, F.text != "❌ Отмена")
-async def process_details_count(message: Message, state: FSMContext):
-    if not is_allowed(message.from_user.id):
+@router.callback_query(AddModel.choosing_action, F.data == "add_detail")
+async def add_detail_start(callback: CallbackQuery, state: FSMContext):
+    if not is_allowed(callback.from_user.id):
         return
-    if not message.text.isdigit():
-        await message.answer("Введите целое число (количество деталей):")
-        return
-    count = int(message.text)
-    if count <= 0:
-        await message.answer("Количество должно быть больше 0.")
-        return
-    await state.update_data(details_count=count, current_detail=0, details_list=[])
-    await ask_detail_name(message, state)
-
-async def ask_detail_name(message: Message, state: FSMContext):
-    data = await state.get_data()
-    current = data["current_detail"]
-    total = data["details_count"]
-    if current < total:
-        await message.answer(
-            f"📌 *Деталь {current+1} из {total}*\nВведите *название детали* (обязательно):",
-            parse_mode="Markdown",
-            reply_markup=cancel_keyboard
-        )
-        await state.set_state(AddModel.waiting_for_detail_name)
-    else:
-        model_name = data["model_name"]
-        details_list = data["details_list"]
-        sheet.add_model(model_name, details_list)
-        await message.answer(f"✅ Модель *{model_name}* успешно добавлена!", reply_markup=main_menu)
-        await state.clear()
+    await callback.message.answer("Введите *название детали*:", parse_mode="Markdown", reply_markup=cancel_keyboard)
+    await state.set_state(AddModel.waiting_for_detail_name)
+    await callback.answer()
 
 @router.message(AddModel.waiting_for_detail_name, F.text != "❌ Отмена")
 async def process_detail_name(message: Message, state: FSMContext):
@@ -292,140 +274,353 @@ async def process_detail_name(message: Message, state: FSMContext):
         return
     name = message.text.strip()
     if not name:
-        await message.answer("❌ Название детали обязательно. Введите название:")
+        await message.answer("❌ Название детали обязательно.")
         return
     data = await state.get_data()
     details_list = data.get("details_list", [])
-    details_list.append((name, "", "", "", ""))
-    await state.update_data(details_list=details_list, current_detail=data["current_detail"] + 1)
-    await ask_on_pallet(message, state)
-
-async def ask_on_pallet(message: Message, state: FSMContext):
+    details_list.append([name, "", "", "", ""])
+    await state.update_data(details_list=details_list, current_index=len(details_list)-1)
+    detail_index = len(details_list) - 1
     await message.answer(
-        "Введите *количество на палете* (целое число) или нажмите Enter / введите `нет`, чтобы пропустить:",
+        f"Деталь *{name}* добавлена. Теперь заполните параметры (или пропустите):",
         parse_mode="Markdown",
-        reply_markup=cancel_keyboard
+        reply_markup=detail_param_keyboard(detail_index, data["model_name"])
     )
-    await state.set_state(AddModel.waiting_for_on_pallet)
+    await state.set_state(AddModel.choosing_param)
+
+@router.callback_query(AddModel.choosing_param, F.data.startswith("set_"))
+async def set_param_start(callback: CallbackQuery, state: FSMContext):
+    if not is_allowed(callback.from_user.id):
+        return
+    data = callback.data.split("_")
+    param_type = data[1]
+    detail_index = int(data[2])
+    await state.update_data(current_param=param_type, current_index=detail_index)
+    prompts = {
+        "on_pallet": "Введите *количество на палете* (целое число) или пропустите (введите 'нет'):",
+        "per_unit": "Введите *количество на единицу модели* (целое число) или пропустите:",
+        "time": "Введите *время печати* в формате `часы минуты` (например, `8 47`) или пропустите:",
+        "grams": "Введите *граммовку на палет* (целое число) или пропустите:"
+    }
+    await callback.message.answer(prompts[param_type], parse_mode="Markdown", reply_markup=cancel_keyboard)
+    if param_type == "on_pallet":
+        await state.set_state(AddModel.waiting_for_on_pallet)
+    elif param_type == "per_unit":
+        await state.set_state(AddModel.waiting_for_per_unit)
+    elif param_type == "time":
+        await state.set_state(AddModel.waiting_for_time)
+    elif param_type == "grams":
+        await state.set_state(AddModel.waiting_for_grams)
+    await callback.answer()
 
 @router.message(AddModel.waiting_for_on_pallet, F.text != "❌ Отмена")
 async def process_on_pallet(message: Message, state: FSMContext):
     if not is_allowed(message.from_user.id):
         return
     text = message.text.strip()
-    if text.lower() in ("", "нет", "-", "0"):
-        value = ""
-    else:
-        if not text.isdigit():
-            await message.answer("❌ Введите целое число или пропустите (Enter / 'нет').")
-            return
-        value = text
-    data = await state.get_data()
-    details_list = data["details_list"]
-    if details_list:
-        last = list(details_list[-1])
-        last[1] = value
-        details_list[-1] = tuple(last)
-        await state.update_data(details_list=details_list)
-    await ask_per_unit(message, state)
-
-async def ask_per_unit(message: Message, state: FSMContext):
-    await message.answer(
-        "Введите *количество на единицу модели* (целое число) или пропустите:",
-        parse_mode="Markdown",
-        reply_markup=cancel_keyboard
-    )
-    await state.set_state(AddModel.waiting_for_per_unit)
+    value = "" if text.lower() in ("", "нет", "-", "0") else (text if text.isdigit() else None)
+    if value is None and text.lower() not in ("", "нет", "-", "0"):
+        await message.answer("❌ Введите целое число или 'нет' для пропуска.")
+        return
+    await save_param_value(message, state, "on_pallet", value)
 
 @router.message(AddModel.waiting_for_per_unit, F.text != "❌ Отмена")
 async def process_per_unit(message: Message, state: FSMContext):
     if not is_allowed(message.from_user.id):
         return
     text = message.text.strip()
-    if text.lower() in ("", "нет", "-", "0"):
-        value = ""
-    else:
-        if not text.isdigit():
-            await message.answer("❌ Введите целое число или пропустите.")
-            return
-        value = text
-    data = await state.get_data()
-    details_list = data["details_list"]
-    if details_list:
-        last = list(details_list[-1])
-        last[2] = value
-        details_list[-1] = tuple(last)
-        await state.update_data(details_list=details_list)
-    await ask_time(message, state)
-
-async def ask_time(message: Message, state: FSMContext):
-    await message.answer(
-        "Введите *время печати* в формате `часы минуты` (например, `8 47`) или пропустите:",
-        parse_mode="Markdown",
-        reply_markup=cancel_keyboard
-    )
-    await state.set_state(AddModel.waiting_for_time)
+    value = "" if text.lower() in ("", "нет", "-", "0") else (text if text.isdigit() else None)
+    if value is None and text.lower() not in ("", "нет", "-", "0"):
+        await message.answer("❌ Введите целое число или 'нет' для пропуска.")
+        return
+    await save_param_value(message, state, "per_unit", value)
 
 @router.message(AddModel.waiting_for_time, F.text != "❌ Отмена")
 async def process_time(message: Message, state: FSMContext):
     if not is_allowed(message.from_user.id):
         return
     text = message.text.strip()
+    value = ""
     if text.lower() in ("", "нет", "-", "0"):
         value = ""
     else:
         parts = text.split()
         if len(parts) != 2:
-            await message.answer("❌ Введите два числа: часы и минуты (например, `8 47`) или пропустите.")
+            await message.answer("❌ Введите два числа: часы и минуты (например, `8 47`) или 'нет' для пропуска.")
             return
         try:
-            hours = int(parts[0])
-            minutes = int(parts[1])
+            hours = int(parts[0]); minutes = int(parts[1])
             if hours < 0 or minutes < 0 or minutes >= 60:
                 raise ValueError
             value = str(hours * 60 + minutes)
         except:
-            await message.answer("❌ Неверный формат. Введите два числа (часы и минуты) или пропустите.")
+            await message.answer("❌ Неверный формат. Введите два числа (часы и минуты) или 'нет'.")
             return
-    data = await state.get_data()
-    details_list = data["details_list"]
-    if details_list:
-        last = list(details_list[-1])
-        last[3] = value
-        details_list[-1] = tuple(last)
-        await state.update_data(details_list=details_list)
-    await ask_grams(message, state)
-
-async def ask_grams(message: Message, state: FSMContext):
-    await message.answer(
-        "Введите *граммовку на палет* (целое число) или пропустите:",
-        parse_mode="Markdown",
-        reply_markup=cancel_keyboard
-    )
-    await state.set_state(AddModel.waiting_for_grams)
+    await save_param_value(message, state, "time", value)
 
 @router.message(AddModel.waiting_for_grams, F.text != "❌ Отмена")
 async def process_grams(message: Message, state: FSMContext):
     if not is_allowed(message.from_user.id):
         return
     text = message.text.strip()
-    if text.lower() in ("", "нет", "-", "0"):
-        value = ""
-    else:
-        if not text.isdigit():
-            await message.answer("❌ Введите целое число или пропустите.")
-            return
-        value = text
-    data = await state.get_data()
-    details_list = data["details_list"]
-    if details_list:
-        last = list(details_list[-1])
-        last[4] = value
-        details_list[-1] = tuple(last)
-        await state.update_data(details_list=details_list)
-    await ask_detail_name(message, state)
+    value = "" if text.lower() in ("", "нет", "-", "0") else (text if text.isdigit() else None)
+    if value is None and text.lower() not in ("", "нет", "-", "0"):
+        await message.answer("❌ Введите целое число или 'нет' для пропуска.")
+        return
+    await save_param_value(message, state, "grams", value)
 
-# ---------- Просмотр модели или набора ----------
+async def save_param_value(message: Message, state: FSMContext, param_type: str, value):
+    data = await state.get_data()
+    details_list = data.get("details_list", [])
+    index = data.get("current_index")
+    if index is None or index >= len(details_list):
+        await message.answer("Ошибка: деталь не найдена.")
+        await state.clear()
+        return
+    if param_type == "on_pallet":
+        details_list[index][1] = value
+    elif param_type == "per_unit":
+        details_list[index][2] = value
+    elif param_type == "time":
+        details_list[index][3] = value
+    elif param_type == "grams":
+        details_list[index][4] = value
+    await state.update_data(details_list=details_list)
+    model_name = data.get("model_name")
+    det_name = details_list[index][0]
+    await message.answer(
+        f"Параметр сохранён. Деталь *{det_name}* – что дальше?",
+        parse_mode="Markdown",
+        reply_markup=detail_param_keyboard(index, model_name)
+    )
+    await state.set_state(AddModel.choosing_param)
+
+@router.callback_query(AddModel.choosing_param, F.data.startswith("save_detail_"))
+async def save_detail(callback: CallbackQuery, state: FSMContext):
+    if not is_allowed(callback.from_user.id):
+        return
+    index = int(callback.data.split("_")[-1])
+    data = await state.get_data()
+    details_list = data.get("details_list", [])
+    if index >= len(details_list):
+        await callback.answer("Ошибка", show_alert=True)
+        return
+    await callback.message.answer(
+        "Деталь сохранена. Вы можете добавить ещё одну или завершить.",
+        reply_markup=add_model_action_keyboard()
+    )
+    await state.set_state(AddModel.choosing_action)
+    await callback.answer()
+
+@router.callback_query(AddModel.choosing_action, F.data == "finish_model")
+async def finish_model(callback: CallbackQuery, state: FSMContext):
+    if not is_allowed(callback.from_user.id):
+        return
+    data = await state.get_data()
+    model_name = data.get("model_name")
+    details_list = data.get("details_list", [])
+    if not details_list:
+        await callback.answer("Нельзя создать модель без деталей.", show_alert=True)
+        return
+    sheet.add_model(model_name, details_list)
+    await callback.message.answer(f"✅ Модель *{model_name}* успешно добавлена с {len(details_list)} деталями!", reply_markup=main_menu)
+    await state.clear()
+    await callback.answer()
+
+@router.message(StateFilter(AddModel), F.text == "❌ Отмена")
+async def cancel_add_model(message: Message, state: FSMContext):
+    if not is_allowed(message.from_user.id):
+        return
+    await state.clear()
+    await message.answer("Добавление модели отменено.", reply_markup=main_menu)
+
+# ==================== РЕДАКТИРОВАНИЕ МОДЕЛИ (НОВОЕ) ====================
+@router.callback_query(F.data.startswith("edit_model_"))
+async def edit_model_start(callback: CallbackQuery, state: FSMContext):
+    if not is_allowed(callback.from_user.id):
+        return
+    model_name = callback.data[len("edit_model_"):]
+    details_with_rows = sheet.get_model_details_with_rows(model_name)
+    if not details_with_rows:
+        await callback.answer("Нет деталей для редактирования", show_alert=True)
+        return
+    parts_list = [det_name for (_, det_name, _, _, _, _) in details_with_rows]
+    await callback.message.edit_text(
+        f"✏️ Редактирование модели *{model_name}*\nВыберите деталь для изменения:",
+        parse_mode="Markdown",
+        reply_markup=edit_part_keyboard(parts_list, model_name)
+    )
+    await state.update_data(edit_model_name=model_name, edit_parts=parts_list, edit_rows=details_with_rows)
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("edit_part_"))
+async def edit_part_selected(callback: CallbackQuery, state: FSMContext):
+    if not is_allowed(callback.from_user.id):
+        return
+    data = callback.data.split("_")
+    model_name = data[2]
+    part_index = int(data[3])
+    data_state = await state.get_data()
+    rows = data_state.get("edit_rows", [])
+    if part_index >= len(rows):
+        await callback.answer("Ошибка", show_alert=True)
+        return
+    det_name = rows[part_index][1]
+    await callback.message.edit_text(
+        f"Редактирование детали *{det_name}* (модель *{model_name}*)",
+        reply_markup=edit_param_keyboard(model_name, det_name)
+    )
+    await state.update_data(edit_det_name=det_name, edit_det_index=part_index)
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("edit_param_"))
+async def edit_param_selected(callback: CallbackQuery, state: FSMContext):
+    if not is_allowed(callback.from_user.id):
+        return
+    raw = callback.data[len("edit_param_"):]
+    last_underscore = raw.rfind('_')
+    if last_underscore == -1:
+        await callback.answer("Ошибка формата")
+        return
+    param = raw[last_underscore+1:]
+    rest = raw[:last_underscore]
+    parts = rest.split('_')
+    param = parts[-1]
+    det_name = parts[-2]
+    model_name = '_'.join(parts[:-2])
+    part_info = sheet.get_part_row_and_data(model_name, det_name)
+    if not part_info:
+        await callback.answer("Деталь не найдена", show_alert=True)
+        return
+    row_idx, on_pallet, per_unit, time_pp, grams_pp = part_info
+    prompt = ""
+    current = ""
+    if param == "name":
+        current = det_name
+        prompt = "Введите новое *название детали*:"
+    elif param == "on_pallet":
+        current = str(on_pallet)
+        prompt = "Введите новое *количество на палете* (целое число):"
+    elif param == "per_unit":
+        current = str(per_unit)
+        prompt = "Введите новое *количество на единицу модели* (целое число):"
+    elif param == "time":
+        current = format_time(time_pp)
+        prompt = "Введите новое *время печати* в формате `часы минуты` (например, `8 47`):"
+    elif param == "grams":
+        current = f"{grams_pp} г"
+        prompt = "Введите новую *граммовку* (целое число):"
+    elif param == "delete":
+        if sheet.delete_part(model_name, det_name):
+            await callback.answer("Деталь удалена!", show_alert=True)
+            details = sheet.get_model_details(model_name)
+            text = format_model_info(model_name, details)
+            await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=model_action_keyboard(model_name))
+        else:
+            await callback.answer("Ошибка удаления", show_alert=True)
+        return
+    else:
+        await callback.answer("Неизвестный параметр")
+        return
+    await state.update_data(
+        edit_row_idx=row_idx,
+        edit_param=param,
+        edit_model_name=model_name,
+        edit_det_name=det_name,
+        edit_current_value=current
+    )
+    await callback.message.answer(
+        f"{prompt}\n\nТекущее значение: *{current}*",
+        parse_mode="Markdown",
+        reply_markup=cancel_keyboard
+    )
+    await state.set_state(EditModel.waiting_for_new_value)
+    await callback.answer()
+
+@router.message(EditModel.waiting_for_new_value, F.text != "❌ Отмена")
+async def process_edit_value(message: Message, state: FSMContext):
+    if not is_allowed(message.from_user.id):
+        return
+    data = await state.get_data()
+    row_idx = data.get("edit_row_idx")
+    param = data.get("edit_param")
+    model_name = data.get("edit_model_name")
+    det_name = data.get("edit_det_name")
+    if None in (row_idx, param, model_name, det_name):
+        await message.answer("❌ Ошибка: данные потеряны.", reply_markup=main_menu)
+        await state.clear()
+        return
+    new_text = message.text.strip()
+    try:
+        if param == "name":
+            existing = sheet.get_model_details_with_rows(model_name)
+            for (_, dname, _, _, _, _) in existing:
+                if dname == new_text:
+                    await message.answer("❌ Деталь с таким именем уже существует. Введите другое.")
+                    return
+            sheet.update_part_field(row_idx, 'name', new_text)
+            await message.answer(f"✅ Название детали изменено на *{new_text}*", parse_mode="Markdown")
+        elif param == "on_pallet":
+            new_int = int(new_text)
+            if new_int <= 0:
+                await message.answer("❌ Количество на палете должно быть положительным числом.")
+                return
+            sheet.update_part_field(row_idx, 'on_pallet', new_int)
+            await message.answer(f"✅ Количество на палете обновлено: *{new_int}* шт.", parse_mode="Markdown")
+        elif param == "per_unit":
+            new_int = int(new_text)
+            if new_int <= 0:
+                await message.answer("❌ Количество на единицу должно быть положительным числом.")
+                return
+            sheet.update_part_field(row_idx, 'per_unit', new_int)
+            await message.answer(f"✅ Количество на единицу модели обновлено: *{new_int}* шт.", parse_mode="Markdown")
+        elif param == "time":
+            parts = new_text.split()
+            if len(parts) != 2:
+                await message.answer("❌ Введите два числа: часы и минуты. Пример: `8 47`")
+                return
+            hours = int(parts[0]); minutes = int(parts[1])
+            if hours < 0 or minutes < 0 or minutes >= 60:
+                await message.answer("❌ Часы >=0, минуты 0-59.")
+                return
+            new_minutes = hours * 60 + minutes
+            sheet.update_part_field(row_idx, 'time', new_minutes)
+            await message.answer(f"✅ Время печати палета обновлено: *{format_time(new_minutes)}*", parse_mode="Markdown")
+        elif param == "grams":
+            new_int = int(new_text)
+            if new_int < 0:
+                await message.answer("❌ Граммовка не может быть отрицательной.")
+                return
+            sheet.update_part_field(row_idx, 'grams', new_int)
+            await message.answer(f"✅ Граммовка обновлена: *{new_int}* г", parse_mode="Markdown")
+        else:
+            await message.answer("❌ Неизвестный параметр")
+            await state.clear()
+            return
+    except ValueError:
+        await message.answer("❌ Ошибка: введите корректное числовое значение.")
+        return
+    except Exception as e:
+        await message.answer(f"❌ Ошибка при обновлении: {e}")
+        await state.clear()
+        return
+    await state.clear()
+    details = sheet.get_model_details(model_name)
+    text = format_model_info(model_name, details)
+    try:
+        await message.answer(text, parse_mode="Markdown", reply_markup=model_action_keyboard(model_name))
+    except:
+        await message.answer(text, reply_markup=model_action_keyboard(model_name))
+    await message.answer("Вы можете продолжить редактирование или выбрать другое действие.", reply_markup=main_menu)
+
+@router.message(StateFilter(EditModel.waiting_for_new_value), F.text == "❌ Отмена")
+async def cancel_edit_model(message: Message, state: FSMContext):
+    if not is_allowed(message.from_user.id):
+        return
+    await state.clear()
+    await message.answer("Редактирование отменено.", reply_markup=main_menu)
+
+# ---------- Просмотр модели (с кнопкой редактирования) ----------
 @router.callback_query(F.data.startswith("model_"))
 async def show_model_details(callback: CallbackQuery):
     if not is_allowed(callback.from_user.id):
@@ -440,33 +635,6 @@ async def show_model_details(callback: CallbackQuery):
         await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=model_action_keyboard(model_name))
     except:
         await callback.message.edit_text(text, reply_markup=model_action_keyboard(model_name))
-    await callback.answer()
-
-@router.callback_query(F.data.startswith("kit_"))
-async def show_kit_details(callback: CallbackQuery):
-    if not is_allowed(callback.from_user.id):
-        return
-    kit_name = callback.data[4:]
-    kit_data = sheet.get_kit_details(kit_name)
-    if not kit_data:
-        await callback.answer("Набор не найден", show_alert=True)
-        return
-    text = format_kit_info(kit_name, kit_data)
-    try:
-        await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=kit_action_keyboard(kit_name))
-    except:
-        await callback.message.edit_text(text, reply_markup=kit_action_keyboard(kit_name))
-    await callback.answer()
-
-@router.callback_query(F.data == "back_to_items")
-async def back_to_items(callback: CallbackQuery):
-    if not is_allowed(callback.from_user.id):
-        return
-    models, kits = sheet.get_all_items()
-    if models or kits:
-        await callback.message.edit_text("Выберите элемент:", reply_markup=items_inline_keyboard(models, kits))
-    else:
-        await callback.message.edit_text("Ничего нет.")
     await callback.answer()
 
 # ---------- Добавление набора ----------
@@ -602,181 +770,6 @@ async def cancel_add_kit(message: Message, state: FSMContext):
         return
     await state.clear()
     await message.answer("Добавление набора отменено.", reply_markup=main_menu)
-
-# ---------- Редактирование модели ----------
-@router.callback_query(F.data.startswith("edit_model_"))
-async def edit_model_parts(callback: CallbackQuery):
-    if not is_allowed(callback.from_user.id):
-        return
-    model_name = callback.data[11:]
-    details_with_rows = sheet.get_model_details_with_rows(model_name)
-    if not details_with_rows:
-        await callback.answer("Нет деталей для редактирования", show_alert=True)
-        return
-    parts_list = [det_name for (_, det_name, _, _, _, _) in details_with_rows]
-    await callback.message.edit_text(
-        f"✏️ Редактирование модели *{model_name}*\nВыберите деталь:",
-        parse_mode="Markdown",
-        reply_markup=parts_inline_keyboard(model_name, parts_list)
-    )
-    await callback.answer()
-
-@router.callback_query(F.data.startswith("edit_part_"))
-async def edit_part_parameters(callback: CallbackQuery):
-    if not is_allowed(callback.from_user.id):
-        return
-    data = callback.data[10:]
-    last_underscore = data.rfind('_')
-    if last_underscore == -1:
-        await callback.answer("Ошибка формата")
-        return
-    model_name = data[:last_underscore]
-    det_name = data[last_underscore+1:]
-    await callback.message.edit_text(
-        f"✏️ Редактирование детали *{det_name}* (модель *{model_name}*)\n\nЧто вы хотите изменить?",
-        parse_mode="Markdown",
-        reply_markup=part_parameters_keyboard(model_name, det_name)
-    )
-    await callback.answer()
-
-@router.callback_query(F.data.startswith("edit_param_"))
-async def edit_param_start(callback: CallbackQuery, state: FSMContext):
-    if not is_allowed(callback.from_user.id):
-        return
-    data = callback.data[11:]
-    last_underscore = data.rfind('_')
-    if last_underscore == -1:
-        await callback.answer("Ошибка формата")
-        return
-    param = data[last_underscore+1:]
-    rest = data[:last_underscore]
-    parts = rest.split('_')
-    if len(parts) < 2:
-        await callback.answer("Ошибка формата")
-        return
-    model_name = parts[0]
-    det_name = '_'.join(parts[1:])
-    part_info = sheet.get_part_row_and_data(model_name, det_name)
-    if not part_info:
-        await callback.answer("Деталь не найдена", show_alert=True)
-        return
-    row_idx, on_pallet, per_unit, time_pp, grams_pp = part_info
-    if param == "name":
-        current_value = det_name
-        prompt = "Введите новое *название детали*:"
-    elif param == "on_pallet":
-        current_value = str(on_pallet)
-        prompt = "Введите новое *количество на палете* (целое число):"
-    elif param == "per_unit":
-        current_value = str(per_unit)
-        prompt = "Введите новое *количество на единицу модели* (целое число):"
-    elif param == "time":
-        current_value = format_time(time_pp)
-        prompt = "Введите новое *время печати одного палета* в формате `часы минуты`\nПример: `8 47`"
-    elif param == "grams":
-        current_value = f"{grams_pp} г"
-        prompt = "Введите новый *расход граммов на один палет* (целое число):"
-    else:
-        await callback.answer("Неизвестный параметр")
-        return
-    await state.update_data(
-        edit_row_idx=row_idx,
-        edit_param=param,
-        edit_model_name=model_name,
-        edit_det_name=det_name,
-        edit_current_value=current_value
-    )
-    await callback.message.answer(
-        f"{prompt}\n\nТекущее значение: *{current_value}*",
-        parse_mode="Markdown",
-        reply_markup=cancel_keyboard
-    )
-    await state.set_state(EditModel.waiting_for_new_value)
-    await callback.answer()
-
-@router.message(EditModel.waiting_for_new_value, F.text != "❌ Отмена")
-async def edit_param_process(message: Message, state: FSMContext):
-    if not is_allowed(message.from_user.id):
-        return
-    data = await state.get_data()
-    row_idx = data.get("edit_row_idx")
-    param = data.get("edit_param")
-    model_name = data.get("edit_model_name")
-    det_name = data.get("edit_det_name")
-    if None in (row_idx, param, model_name, det_name):
-        await message.answer("❌ Ошибка: данные потеряны.", reply_markup=main_menu)
-        await state.clear()
-        return
-    new_text = message.text.strip()
-    try:
-        if param == "name":
-            existing = sheet.get_model_details_with_rows(model_name)
-            for (_, dname, _, _, _, _) in existing:
-                if dname == new_text:
-                    await message.answer("❌ Деталь с таким именем уже существует. Введите другое название.")
-                    return
-            sheet.update_part_field(row_idx, 'name', new_text)
-            await message.answer(f"✅ Название детали изменено на *{new_text}*", parse_mode="Markdown")
-        elif param == "on_pallet":
-            new_int = int(new_text)
-            if new_int <= 0:
-                await message.answer("❌ Количество на палете должно быть положительным числом.")
-                return
-            sheet.update_part_field(row_idx, 'on_pallet', new_int)
-            await message.answer(f"✅ Количество на палете обновлено: *{new_int}* шт.", parse_mode="Markdown")
-        elif param == "per_unit":
-            new_int = int(new_text)
-            if new_int <= 0:
-                await message.answer("❌ Количество на единицу должно быть положительным числом.")
-                return
-            sheet.update_part_field(row_idx, 'per_unit', new_int)
-            await message.answer(f"✅ Количество на единицу модели обновлено: *{new_int}* шт.", parse_mode="Markdown")
-        elif param == "time":
-            parts = new_text.split()
-            if len(parts) != 2:
-                await message.answer("❌ Введите два числа: часы и минуты. Пример: `8 47`")
-                return
-            hours = int(parts[0])
-            minutes = int(parts[1])
-            if hours < 0 or minutes < 0 or minutes >= 60:
-                await message.answer("❌ Часы >=0, минуты 0-59.")
-                return
-            new_minutes = hours * 60 + minutes
-            sheet.update_part_field(row_idx, 'time', new_minutes)
-            await message.answer(f"✅ Время печати палета обновлено: *{format_time(new_minutes)}*", parse_mode="Markdown")
-        elif param == "grams":
-            new_int = int(new_text)
-            if new_int < 0:
-                await message.answer("❌ Граммовка не может быть отрицательной.")
-                return
-            sheet.update_part_field(row_idx, 'grams', new_int)
-            await message.answer(f"✅ Расход граммов на палет обновлён: *{new_int}* г", parse_mode="Markdown")
-        else:
-            await message.answer("❌ Неизвестный параметр")
-            await state.clear()
-            return
-    except ValueError:
-        await message.answer("❌ Ошибка: введите корректное числовое значение.")
-        return
-    except Exception as e:
-        await message.answer(f"❌ Ошибка при обновлении: {e}")
-        await state.clear()
-        return
-    await state.clear()
-    details = sheet.get_model_details(model_name)
-    text = format_model_info(model_name, details)
-    try:
-        await message.answer(text, parse_mode="Markdown", reply_markup=model_action_keyboard(model_name))
-    except:
-        await message.answer(text, reply_markup=model_action_keyboard(model_name))
-    await message.answer("Вы можете продолжить редактирование или выбрать другое действие.", reply_markup=main_menu)
-
-@router.message(StateFilter(EditModel.waiting_for_new_value), F.text == "❌ Отмена")
-async def cancel_edit_model(message: Message, state: FSMContext):
-    if not is_allowed(message.from_user.id):
-        return
-    await state.clear()
-    await message.answer("Редактирование модели отменено.", reply_markup=main_menu)
 
 # ---------- Редактирование набора ----------
 @router.callback_query(F.data.startswith("edit_kit_"))
@@ -1018,6 +1011,34 @@ async def cancel_edit_kit(message: Message, state: FSMContext):
         return
     await state.clear()
     await message.answer("Редактирование набора отменено.", reply_markup=main_menu)
+
+# ---------- Просмотр набора ----------
+@router.callback_query(F.data.startswith("kit_"))
+async def show_kit_details(callback: CallbackQuery):
+    if not is_allowed(callback.from_user.id):
+        return
+    kit_name = callback.data[4:]
+    kit_data = sheet.get_kit_details(kit_name)
+    if not kit_data:
+        await callback.answer("Набор не найден", show_alert=True)
+        return
+    text = format_kit_info(kit_name, kit_data)
+    try:
+        await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=kit_action_keyboard(kit_name))
+    except:
+        await callback.message.edit_text(text, reply_markup=kit_action_keyboard(kit_name))
+    await callback.answer()
+
+@router.callback_query(F.data == "back_to_items")
+async def back_to_items(callback: CallbackQuery):
+    if not is_allowed(callback.from_user.id):
+        return
+    models, kits = sheet.get_all_items()
+    if models or kits:
+        await callback.message.edit_text("Выберите элемент:", reply_markup=items_inline_keyboard(models, kits))
+    else:
+        await callback.message.edit_text("Ничего нет.")
+    await callback.answer()
 
 # ---------- Заказ модели или набора ----------
 @router.callback_query(F.data.startswith("order_model_"))
