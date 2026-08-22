@@ -198,3 +198,41 @@ def assignee_keyboard(subscribers, page=0, per_page=5):
         InlineKeyboardButton(text="✏️ Ввести ID вручную", callback_data="assignee_manual")
     ])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
+# ---------- Клавиатуры для добавления модели ----------
+def add_model_action_keyboard():
+    """Главное меню при добавлении модели."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="➕ Добавить деталь", callback_data="add_detail")],
+        [InlineKeyboardButton(text="✅ Завершить добавление", callback_data="finish_model")]
+    ])
+
+def detail_param_keyboard(detail_index, model_name):
+    """Клавиатура выбора параметра для текущей детали (при добавлении)."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📦 Кол-во на палете", callback_data=f"set_on_pallet_{detail_index}")],
+        [InlineKeyboardButton(text="🔢 Кол-во на единицу", callback_data=f"set_per_unit_{detail_index}")],
+        [InlineKeyboardButton(text="⏱ Время печати", callback_data=f"set_time_{detail_index}")],
+        [InlineKeyboardButton(text="⚖️ Граммовка", callback_data=f"set_grams_{detail_index}")],
+        [InlineKeyboardButton(text="✅ Готово (деталь сохранена)", callback_data=f"save_detail_{detail_index}")]
+    ])
+
+# ---------- Клавиатуры для редактирования модели ----------
+def edit_part_keyboard(parts_list, model_name):
+    """Клавиатура выбора детали для редактирования."""
+    buttons = []
+    for i, det_name in enumerate(parts_list):
+        buttons.append([InlineKeyboardButton(text=det_name, callback_data=f"edit_part_{model_name}_{i}")])
+    buttons.append([InlineKeyboardButton(text="🔙 Назад", callback_data=f"model_{model_name}")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+def edit_param_keyboard(model_name, det_name):
+    """Клавиатура выбора параметра для изменения."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📝 Название", callback_data=f"edit_param_{model_name}_{det_name}_name")],
+        [InlineKeyboardButton(text="📦 Кол-во на палете", callback_data=f"edit_param_{model_name}_{det_name}_on_pallet")],
+        [InlineKeyboardButton(text="🔢 Кол-во на единицу", callback_data=f"edit_param_{model_name}_{det_name}_per_unit")],
+        [InlineKeyboardButton(text="⏱ Время печати", callback_data=f"edit_param_{model_name}_{det_name}_time")],
+        [InlineKeyboardButton(text="⚖️ Граммовка", callback_data=f"edit_param_{model_name}_{det_name}_grams")],
+        [InlineKeyboardButton(text="🗑 Удалить деталь", callback_data=f"delete_part_{model_name}_{det_name}")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data=f"edit_model_{model_name}")]
+    ])
