@@ -13,14 +13,38 @@ class SheetManager:
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
         creds = ServiceAccountCredentials.from_json_keyfile_name(CREDENTIALS_FILE, scope)
         self.client = gspread.authorize(creds)
-        self.sheet_models = self.client.open_by_key(SPREADSHEET_ID).worksheet("Время печати")
-        self.sheet_orders = self.client.open_by_key(SPREADSHEET_ID).worksheet("Заказы")
+        self.sheet = self.client.open_by_key(SPREADSHEET_ID)
+
+        # ---------- Лист "Время печати" ----------
         try:
-            self.sheet_kits = self.client.open_by_key(SPREADSHEET_ID).worksheet("Наборы")
+            self.sheet_models = self.sheet.worksheet("Время печати")
         except gspread.exceptions.WorksheetNotFound:
-            self.sheet_kits = self.client.open_by_key(SPREADSHEET_ID).add_worksheet(title="Наборы", rows=100, cols=4)
+            self.sheet_models = self.sheet.add_worksheet(title="Время печати", rows=1000, cols=6)
+            self.sheet_models.append_row(["Название", "Детали", "Кол-во на палете", "Нужно на шт.", "Время палета (мин)", "Грамм на палет"])
+
+        # ---------- Лист "Заказы" ----------
+        try:
+            self.sheet_orders = self.sheet.worksheet("Заказы")
+        except gspread.exceptions.WorksheetNotFound:
+            self.sheet_orders = self.sheet.add_worksheet(title="Заказы", rows=1000, cols=8)
+            self.sheet_orders.append_row(["Номер заказа", "Позиция", "Кол-во заказано", "Кол-во напечатано", "Срок заказа", "Дата последнего изменения", "Выполнен", "Заказчик"])
+        else:
+            # Проверяем, есть ли колонка "Заказчик"
+            headers = self.sheet_orders.row_values(1)
+            if "Заказчик" not in headers:
+                last_col = len(headers) + 1
+                self.sheet_orders.update_cell(1, last_col, "Заказчик")
+
+        # ---------- Лист "Наборы" ----------
+        try:
+            self.sheet_kits = self.sheet.worksheet("Наборы")
+        except gspread.exceptions.WorksheetNotFound:
+            self.sheet_kits = self.sheet.add_worksheet(title="Наборы", rows=100, cols=4)
             self.sheet_kits.append_row(["Название", "Состав", "Цена", "Описание"])
+
+        # ---------- Лист "Задачи" ----------
         self.init_tasks_sheet()
+        # ---------- Лист "Подписчики" ----------
         self.init_subscribers_sheet()
 
     # ---------- Модели ----------
@@ -189,24 +213,8 @@ class SheetManager:
 
     # ---------- Заказы ----------
     def init_sheet(self):
-        if not self.sheet_models.get_all_values():
-            headers = ["Название", "Детали", "Кол-во на палете", "Нужно на шт.", "Время палета (мин)", "Грамм на палет"]
-            self.sheet_models.append_row(headers)
-        if not self.sheet_orders.get_all_values():
-            order_headers = ["Номер заказа", "Позиция", "Кол-во заказано", "Кол-во напечатано", "Срок заказа", "Дата последнего изменения", "Выполнен", "Заказчик"]
-            self.sheet_orders.append_row(order_headers)
-        else:
-            headers = self.sheet_orders.row_values(1)
-            if "Заказчик" not in headers:
-                last_col = len(headers) + 1
-                self.sheet_orders.update_cell(1, last_col, "Заказчик")
-        try:
-            self.sheet_kits = self.client.open_by_key(SPREADSHEET_ID).worksheet("Наборы")
-        except gspread.exceptions.WorksheetNotFound:
-            self.sheet_kits = self.client.open_by_key(SPREADSHEET_ID).add_worksheet(title="Наборы", rows=100, cols=4)
-            self.sheet_kits.append_row(["Название", "Состав", "Цена", "Описание"])
-        self.init_tasks_sheet()
-        self.init_subscribers_sheet()
+        # Уже всё создано в __init__, но оставляем метод для совместимости
+        pass
 
     def get_next_order_number(self):
         records = self.sheet_orders.get_all_values()
@@ -280,12 +288,11 @@ class SheetManager:
     # ---------- Задачи ----------
     def init_tasks_sheet(self):
         try:
-            self.sheet_tasks = self.client.open_by_key(SPREADSHEET_ID).worksheet("Задачи")
+            self.sheet_tasks = self.sheet.worksheet("Задачи")
         except gspread.exceptions.WorksheetNotFound:
-            self.sheet_tasks = self.client.open_by_key(SPREADSHEET_ID).add_worksheet(title="Задачи", rows=1000, cols=13)
-            headers = ["ID", "Название", "Срок", "Время", "Исполнитель (user_id)", "Статус", "Создана",
-                       "notified_60", "notified_30", "notified_15", "notified_0", "notified_morning", "notified_day"]
-            self.sheet_tasks.append_row(headers)
+            self.sheet_tasks = self.sheet.add_worksheet(title="Задачи", rows=1000, cols=13)
+            self.sheet_tasks.append_row(["ID", "Название", "Срок", "Время", "Исполнитель (user_id)", "Статус", "Создана",
+                                         "notified_60", "notified_30", "notified_15", "notified_0", "notified_morning", "notified_day"])
 
     def get_next_task_id(self):
         records = self.sheet_tasks.get_all_values()
@@ -428,9 +435,9 @@ class SheetManager:
     # ---------- Подписчики ----------
     def init_subscribers_sheet(self):
         try:
-            self.sheet_subscribers = self.client.open_by_key(SPREADSHEET_ID).worksheet("Подписчики")
+            self.sheet_subscribers = self.sheet.worksheet("Подписчики")
         except gspread.exceptions.WorksheetNotFound:
-            self.sheet_subscribers = self.client.open_by_key(SPREADSHEET_ID).add_worksheet(title="Подписчики", rows=1000, cols=2)
+            self.sheet_subscribers = self.sheet.add_worksheet(title="Подписчики", rows=1000, cols=2)
             self.sheet_subscribers.append_row(["user_id", "name"])
 
     def add_subscriber(self, user_id, name=None):
