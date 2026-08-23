@@ -1,267 +1,314 @@
 <!DOCTYPE html>
-<html lang="ru">
+<html lang="ru" class="transition-colors duration-300">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Трекер заказов 3D-печати</title>
+    <title>📦 Трекер 3D-печати</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet">
     <style>
-        .progress-bar { transition: width 0.6s ease-in-out; }
-        .fade-in { animation: fadeIn 0.5s ease-in-out; }
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(10px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-        .status-badge {
-            @apply px-2 py-1 rounded-full text-xs font-semibold;
-        }
-        .card-hover:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 10px 25px -5px rgba(0,0,0,0.1);
-            transition: all 0.2s ease;
-        }
+        * { transition: background-color 0.3s, color 0.3s, border-color 0.3s; }
+        .progress-bar { transition: width 1s ease-in-out; }
+        .card-hover:hover { transform: translateY(-2px); box-shadow: 0 10px 25px -5px rgba(0,0,0,0.1); }
+        .theme-toggle { cursor: pointer; }
+        /* Убираем полосу прокрутки у карточек принтеров */
+        .printers-grid { scrollbar-width: thin; }
     </style>
 </head>
-<body class="bg-gray-100 font-sans antialiased">
-    <div class="container mx-auto px-4 py-8 max-w-7xl fade-in">
+<body class="bg-gray-100 dark:bg-gray-900 text-gray-800 dark:text-gray-200 font-sans antialiased transition-colors duration-300" id="app">
+    <div class="container mx-auto px-4 py-6 max-w-7xl">
         <!-- Шапка -->
-        <header class="flex flex-wrap items-center justify-between mb-8 gap-4">
+        <header class="flex flex-wrap items-center justify-between gap-4 mb-8">
             <div class="flex items-center gap-3">
-                <div class="bg-blue-600 p-3 rounded-xl shadow-lg">
-                    <i class="fas fa-print text-white text-2xl"></i>
-                </div>
-                <div>
-                    <h1 class="text-3xl font-bold text-gray-800">Трекер заказов</h1>
-                    <p class="text-sm text-gray-500">3D-печать в реальном времени</p>
-                </div>
+                <span class="text-3xl">📦</span>
+                <h1 class="text-2xl md:text-3xl font-bold">Трекер заказов</h1>
+                <span class="text-sm bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300 px-2 py-1 rounded-full">v2</span>
             </div>
-            <div class="flex items-center gap-4">
-                <span class="text-sm text-gray-400" id="last-update">
-                    <i class="fas fa-clock mr-1"></i> Обновлено: сейчас
-                </span>
-                <button onclick="refreshAll()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg shadow-md transition flex items-center gap-2">
-                    <i class="fas fa-sync-alt"></i> Обновить
+            <div class="flex items-center gap-3 flex-wrap">
+                <span id="last-update" class="text-sm text-gray-500 dark:text-gray-400">Обновлено: сейчас</span>
+                <button onclick="refreshAll()" class="bg-blue-500 hover:bg-blue-600 text-white text-sm px-4 py-2 rounded-lg shadow transition">
+                    ↻ Обновить
                 </button>
-                <span id="cache-status" class="text-xs text-gray-400 hidden">
-                    <i class="fas fa-database"></i> из кэша
-                </span>
+                <button onclick="toggleTheme()" class="text-xl bg-gray-200 dark:bg-gray-700 p-2 rounded-full hover:bg-gray-300 dark:hover:bg-gray-600 transition">
+                    <span id="theme-icon">🌙</span>
+                </button>
             </div>
         </header>
 
-        <!-- Статистика -->
-        <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8" id="stats">
-            <div class="bg-white rounded-xl shadow p-5 card-hover">
-                <div class="flex items-center justify-between">
-                    <div>
-                        <div class="text-gray-500 text-sm">Всего заказов</div>
-                        <div class="text-2xl font-bold text-gray-800" id="total-orders">0</div>
-                    </div>
-                    <div class="bg-blue-100 p-3 rounded-full">
-                        <i class="fas fa-box text-blue-600"></i>
-                    </div>
-                </div>
+        <!-- Фильтры и поиск -->
+        <div class="flex flex-wrap items-center gap-4 mb-6 bg-white dark:bg-gray-800 p-4 rounded-lg shadow">
+            <div class="flex-1 min-w-[200px]">
+                <input type="text" id="search-input" placeholder="🔍 Поиск по позиции..." 
+                       class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-blue-500 outline-none">
             </div>
-            <div class="bg-white rounded-xl shadow p-5 card-hover">
-                <div class="flex items-center justify-between">
-                    <div>
-                        <div class="text-gray-500 text-sm">В работе</div>
-                        <div class="text-2xl font-bold text-yellow-600" id="in-progress">0</div>
-                    </div>
-                    <div class="bg-yellow-100 p-3 rounded-full">
-                        <i class="fas fa-spinner text-yellow-600"></i>
-                    </div>
-                </div>
-            </div>
-            <div class="bg-white rounded-xl shadow p-5 card-hover">
-                <div class="flex items-center justify-between">
-                    <div>
-                        <div class="text-gray-500 text-sm">Выполнено</div>
-                        <div class="text-2xl font-bold text-green-600" id="completed-orders">0</div>
-                    </div>
-                    <div class="bg-green-100 p-3 rounded-full">
-                        <i class="fas fa-check-circle text-green-600"></i>
-                    </div>
-                </div>
-            </div>
-            <div class="bg-white rounded-xl shadow p-5 card-hover">
-                <div class="flex items-center justify-between">
-                    <div>
-                        <div class="text-gray-500 text-sm">Средний прогресс</div>
-                        <div class="text-2xl font-bold text-purple-600" id="avg-progress">0%</div>
-                    </div>
-                    <div class="bg-purple-100 p-3 rounded-full">
-                        <i class="fas fa-chart-line text-purple-600"></i>
-                    </div>
-                </div>
+            <div class="flex gap-2 flex-wrap">
+                <button onclick="filterOrders('all')" class="filter-btn px-3 py-1 rounded-full text-sm bg-blue-500 text-white" data-filter="all">Все</button>
+                <button onclick="filterOrders('active')" class="filter-btn px-3 py-1 rounded-full text-sm bg-gray-200 dark:bg-gray-700 hover:bg-blue-100 dark:hover:bg-blue-900" data-filter="active">⏳ В работе</button>
+                <button onclick="filterOrders('completed')" class="filter-btn px-3 py-1 rounded-full text-sm bg-gray-200 dark:bg-gray-700 hover:bg-green-100 dark:hover:bg-green-900" data-filter="completed">✅ Выполнены</button>
+                <button onclick="filterOrders('overdue')" class="filter-btn px-3 py-1 rounded-full text-sm bg-gray-200 dark:bg-gray-700 hover:bg-red-100 dark:hover:bg-red-900" data-filter="overdue">🔴 Просрочены</button>
             </div>
         </div>
 
-        <!-- Таблица заказов -->
-        <div class="bg-white rounded-xl shadow overflow-hidden mb-8">
-            <div class="overflow-x-auto">
-                <table class="min-w-full divide-y divide-gray-200">
-                    <thead class="bg-gray-50">
+        <!-- Статистика -->
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+            <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-4 text-center">
+                <div class="text-2xl font-bold text-blue-600 dark:text-blue-400" id="total-orders">0</div>
+                <div class="text-xs uppercase text-gray-500 dark:text-gray-400">Всего заказов</div>
+            </div>
+            <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-4 text-center">
+                <div class="text-2xl font-bold text-green-600 dark:text-green-400" id="completed-orders">0</div>
+                <div class="text-xs uppercase text-gray-500 dark:text-gray-400">Выполнено</div>
+            </div>
+            <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-4 text-center">
+                <div class="text-2xl font-bold text-yellow-600 dark:text-yellow-400" id="active-orders">0</div>
+                <div class="text-xs uppercase text-gray-500 dark:text-gray-400">В работе</div>
+            </div>
+            <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-4 text-center">
+                <div class="text-2xl font-bold text-purple-600 dark:text-purple-400" id="avg-progress">0%</div>
+                <div class="text-xs uppercase text-gray-500 dark:text-gray-400">Средний прогресс</div>
+            </div>
+        </div>
+
+        <!-- Список заказов (карточки + таблица) -->
+        <div class="bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden">
+            <!-- Таблица (десктоп) -->
+            <div class="hidden md:block overflow-x-auto">
+                <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+                    <thead class="bg-gray-50 dark:bg-gray-700">
                         <tr>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">№</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Позиция</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Заказано</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Напечатано</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Прогресс</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Срок</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Статус</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">№</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">Позиция</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">Заказано</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">Напечатано</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">Прогресс</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">Срок</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">Осталось</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">Статус</th>
                         </tr>
                     </thead>
-                    <tbody id="orders-body" class="bg-white divide-y divide-gray-200">
-                        <!-- JS вставит строки -->
-                    </tbody>
+                    <tbody id="orders-table-body" class="divide-y divide-gray-200 dark:divide-gray-700"></tbody>
                 </table>
             </div>
-            <div id="empty-state" class="text-center py-12 text-gray-400 hidden">
-                <i class="fas fa-inbox text-5xl mb-4 block"></i>
-                <p class="text-xl font-medium">Нет активных заказов</p>
-                <p class="text-sm mt-1">Добавьте заказ через бота</p>
+            <!-- Карточки (мобильные) -->
+            <div id="orders-cards" class="md:hidden p-4 space-y-4"></div>
+            <!-- Пустое состояние -->
+            <div id="empty-state" class="text-center py-12 text-gray-400 dark:text-gray-500 hidden">
+                <p class="text-xl">📭 Нет заказов</p>
+                <p class="text-sm">Создайте новый заказ через бота</p>
             </div>
         </div>
 
         <!-- Принтеры -->
-        <div class="bg-white rounded-xl shadow p-6">
-            <div class="flex items-center justify-between mb-4">
-                <h2 class="text-xl font-semibold text-gray-800 flex items-center gap-2">
-                    <i class="fas fa-print text-blue-600"></i> Статус принтеров
-                </h2>
-                <span class="text-xs text-gray-400" id="printer-update"></span>
-            </div>
-            <div id="printers-status" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                <!-- JS вставит карточки принтеров -->
+        <div class="mt-8 bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+            <h2 class="text-xl font-semibold mb-4 flex items-center gap-2">
+                <span>🖨️</span> Статус принтеров
+                <span class="ml-2 text-sm font-normal text-gray-500 dark:text-gray-400" id="printers-update"></span>
+            </h2>
+            <div id="printers-status" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 printers-grid">
+                <!-- Загружается через JS -->
             </div>
         </div>
     </div>
 
     <script>
-        // Функция обновления всех данных
-        async function refreshAll() {
-            const statusSpan = document.getElementById('cache-status');
-            // Загрузка заказов
-            try {
-                const resp = await fetch('/api/orders');
-                if (!resp.ok) throw new Error('Ошибка загрузки заказов');
-                const data = await resp.json();
-                if (data.cached) {
-                    statusSpan.classList.remove('hidden');
-                } else {
-                    statusSpan.classList.add('hidden');
-                }
-                renderOrders(data.orders);
-                updateStats(data.orders);
-            } catch (e) {
-                console.error(e);
-                showError('Не удалось загрузить заказы');
-            }
+        // ---------- Тёмная тема ----------
+        let darkMode = localStorage.getItem('theme') === 'dark';
+        function applyTheme() {
+            document.documentElement.classList.toggle('dark', darkMode);
+            document.getElementById('theme-icon').textContent = darkMode ? '☀️' : '🌙';
+            localStorage.setItem('theme', darkMode ? 'dark' : 'light');
+        }
+        function toggleTheme() { darkMode = !darkMode; applyTheme(); }
+        applyTheme();
 
-            // Загрузка принтеров
-            try {
-                const resp = await fetch('/api/printers');
-                const data = await resp.json();
-                renderPrinters(data.printers);
-            } catch (e) {
-                console.error(e);
-            }
+        // ---------- Данные и фильтры ----------
+        let allOrders = [];
+        let currentFilter = 'all';
+        let searchQuery = '';
 
-            document.getElementById('last-update').innerHTML = `<i class="fas fa-clock mr-1"></i> Обновлено: ${new Date().toLocaleTimeString()}`;
-            document.getElementById('printer-update').textContent = `Обновлено: ${new Date().toLocaleTimeString()}`;
+        function getStatusClass(status) {
+            return status.toLowerCase() === 'да' ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300' :
+                   'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300';
+        }
+
+        function getStatusText(status) {
+            return status.toLowerCase() === 'да' ? '✅ Выполнен' : '⏳ В работе';
+        }
+
+        function getOverdueClass(deadline) {
+            const now = new Date();
+            const due = new Date(deadline);
+            const diff = (due - now) / (1000*60*60*24);
+            if (diff < 0) return 'text-red-600 dark:text-red-400 font-bold';
+            if (diff < 1) return 'text-yellow-600 dark:text-yellow-400';
+            return 'text-green-600 dark:text-green-400';
+        }
+
+        function getDaysLeft(deadline) {
+            const now = new Date();
+            const due = new Date(deadline);
+            const diff = Math.ceil((due - now) / (1000*60*60*24));
+            if (diff < 0) return '🔴 Просрочен';
+            if (diff === 0) return 'Сегодня';
+            if (diff === 1) return 'Завтра';
+            return `${diff} дн.`;
         }
 
         function renderOrders(orders) {
-            const tbody = document.getElementById('orders-body');
+            allOrders = orders;
+            applyFilters();
+        }
+
+        function applyFilters() {
+            const filtered = allOrders.filter(order => {
+                const matchesSearch = order.position.toLowerCase().includes(searchQuery.toLowerCase());
+                const statusMatch = currentFilter === 'all' ? true :
+                    currentFilter === 'active' ? order.status.toLowerCase() !== 'да' :
+                    currentFilter === 'completed' ? order.status.toLowerCase() === 'да' :
+                    currentFilter === 'overdue' ? (new Date(order.deadline) < new Date() && order.status.toLowerCase() !== 'да') : true;
+                return matchesSearch && statusMatch;
+            });
+
+            const tbody = document.getElementById('orders-table-body');
+            const cards = document.getElementById('orders-cards');
             const empty = document.getElementById('empty-state');
-            if (!orders || orders.length === 0) {
+
+            if (filtered.length === 0) {
                 tbody.innerHTML = '';
+                cards.innerHTML = '';
                 empty.classList.remove('hidden');
                 return;
             }
             empty.classList.add('hidden');
-            tbody.innerHTML = orders.map(o => `
-                <tr class="hover:bg-gray-50 transition">
-                    <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">${o.id}</td>
-                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-700">${o.position}</td>
-                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-700">${o.ordered}</td>
-                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-700">${o.printed}</td>
+
+            // Таблица
+            tbody.innerHTML = filtered.map(o => `
+                <tr class="hover:bg-gray-50 dark:hover:bg-gray-700 transition">
+                    <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">${o.id}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm">${o.position}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm">${o.ordered}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm">${o.printed}</td>
                     <td class="px-6 py-4 whitespace-nowrap">
-                        <div class="flex items-center gap-2">
-                            <div class="w-32 bg-gray-200 rounded-full h-2.5">
-                                <div class="bg-blue-600 h-2.5 rounded-full progress-bar" style="width: ${o.progress}%"></div>
-                            </div>
-                            <span class="text-xs text-gray-500">${o.progress}%</span>
+                        <div class="w-32 bg-gray-200 dark:bg-gray-600 rounded-full h-2">
+                            <div class="bg-blue-600 h-2 rounded-full progress-bar" style="width: ${o.progress}%"></div>
                         </div>
+                        <span class="text-xs text-gray-500">${o.progress}%</span>
                     </td>
-                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-700">${o.deadline}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm ${getOverdueClass(o.deadline)}">${o.deadline}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm">${getDaysLeft(o.deadline)}</td>
                     <td class="px-6 py-4 whitespace-nowrap">
-                        <span class="px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full 
-                            ${o.status.toLowerCase() === 'да' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}">
-                            ${o.status.toLowerCase() === 'да' ? '<i class="fas fa-check mr-1"></i> Выполнен' : '<i class="fas fa-clock mr-1"></i> В работе'}
+                        <span class="px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full ${getStatusClass(o.status)}">
+                            ${getStatusText(o.status)}
                         </span>
                     </td>
                 </tr>
             `).join('');
-        }
 
-        function updateStats(orders) {
-            const total = orders.length;
-            const completed = orders.filter(o => o.status.toLowerCase() === 'да').length;
-            const inProgress = total - completed;
-            const avg = total > 0 ? Math.round(orders.reduce((s, o) => s + o.progress, 0) / total) : 0;
-            document.getElementById('total-orders').textContent = total;
-            document.getElementById('in-progress').textContent = inProgress;
-            document.getElementById('completed-orders').textContent = completed;
-            document.getElementById('avg-progress').textContent = avg + '%';
-        }
-
-        function renderPrinters(printers) {
-            const container = document.getElementById('printers-status');
-            if (!printers || printers.length === 0) {
-                container.innerHTML = `
-                    <div class="col-span-full text-center py-8 text-gray-400">
-                        <i class="fas fa-wifi text-4xl mb-4 block"></i>
-                        <p>Нет данных о принтерах</p>
-                        <p class="text-sm">Проверьте подключение к Bambu Lab</p>
-                    </div>
-                `;
-                return;
-            }
-            container.innerHTML = printers.map(p => `
-                <div class="bg-gray-50 rounded-lg p-4 flex items-center justify-between card-hover">
-                    <div class="flex items-center gap-3">
-                        <div class="w-10 h-10 rounded-full ${p.status === 'printing' ? 'bg-green-100' : p.status === 'idle' ? 'bg-gray-200' : 'bg-red-100'} flex items-center justify-center">
-                            <i class="fas fa-print ${p.status === 'printing' ? 'text-green-600' : p.status === 'idle' ? 'text-gray-500' : 'text-red-500'}"></i>
-                        </div>
+            // Карточки
+            cards.innerHTML = filtered.map(o => `
+                <div class="bg-gray-50 dark:bg-gray-700 p-4 rounded-lg shadow card-hover transition">
+                    <div class="flex justify-between items-start">
                         <div>
-                            <div class="font-medium text-gray-800">${p.name || p.id}</div>
-                            <div class="text-xs text-gray-400">${p.model || ''}</div>
+                            <div class="font-bold">${o.position}</div>
+                            <div class="text-sm text-gray-500 dark:text-gray-400">Заказ №${o.id}</div>
                         </div>
+                        <span class="px-2 py-1 text-xs font-semibold rounded-full ${getStatusClass(o.status)}">${getStatusText(o.status)}</span>
                     </div>
-                    <div class="text-right">
-                        <div class="text-sm font-medium ${p.status === 'printing' ? 'text-green-600' : p.status === 'idle' ? 'text-gray-500' : 'text-red-500'}">
-                            ${p.status === 'printing' ? `🖨 ${p.progress}%` :
-                              p.status === 'idle' ? '⏸ Ожидание' :
-                              p.status === 'offline' ? '🔴 Офлайн' :
-                              p.status || 'Неизвестно'}
+                    <div class="mt-2 grid grid-cols-2 gap-2 text-sm">
+                        <div><span class="text-gray-500 dark:text-gray-400">Заказано:</span> ${o.ordered}</div>
+                        <div><span class="text-gray-500 dark:text-gray-400">Напечатано:</span> ${o.printed}</div>
+                        <div><span class="text-gray-500 dark:text-gray-400">Срок:</span> <span class="${getOverdueClass(o.deadline)}">${o.deadline}</span></div>
+                        <div><span class="text-gray-500 dark:text-gray-400">Осталось:</span> ${getDaysLeft(o.deadline)}</div>
+                    </div>
+                    <div class="mt-2">
+                        <div class="w-full bg-gray-200 dark:bg-gray-600 rounded-full h-2">
+                            <div class="bg-blue-600 h-2 rounded-full progress-bar" style="width: ${o.progress}%"></div>
                         </div>
-                        ${p.current_job ? `<div class="text-xs text-gray-400 mt-1">${p.current_job}</div>` : ''}
+                        <span class="text-xs text-gray-500">${o.progress}%</span>
                     </div>
                 </div>
             `).join('');
+
+            updateStats(filtered);
         }
 
-        function showError(msg) {
-            const tbody = document.getElementById('orders-body');
-            tbody.innerHTML = `<tr><td colspan="7" class="text-center py-8 text-red-500"><i class="fas fa-exclamation-circle mr-2"></i>${msg}</td></tr>`;
+        function updateStats(orders) {
+            const total = allOrders.length;
+            const completed = allOrders.filter(o => o.status.toLowerCase() === 'да').length;
+            const active = allOrders.filter(o => o.status.toLowerCase() !== 'да').length;
+            const avg = total > 0 ? Math.round(allOrders.reduce((s, o) => s + o.progress, 0) / total) : 0;
+            document.getElementById('total-orders').textContent = total;
+            document.getElementById('completed-orders').textContent = completed;
+            document.getElementById('active-orders').textContent = active;
+            document.getElementById('avg-progress').textContent = avg + '%';
         }
 
-        // Загружаем при загрузке страницы
+        function filterOrders(filter) {
+            currentFilter = filter;
+            document.querySelectorAll('.filter-btn').forEach(btn => {
+                btn.classList.remove('bg-blue-500', 'text-white');
+                btn.classList.add('bg-gray-200', 'dark:bg-gray-700');
+                if (btn.dataset.filter === filter) {
+                    btn.classList.remove('bg-gray-200', 'dark:bg-gray-700');
+                    btn.classList.add('bg-blue-500', 'text-white');
+                }
+            });
+            applyFilters();
+        }
+
+        // ---------- Загрузка данных ----------
+        async function loadOrders() {
+            try {
+                const resp = await fetch('/api/orders');
+                if (!resp.ok) throw new Error('Ошибка');
+                const data = await resp.json();
+                renderOrders(data.orders);
+            } catch (e) {
+                console.error(e);
+            }
+        }
+
+        async function loadPrinters() {
+            try {
+                const resp = await fetch('/api/printers');
+                const data = await resp.json();
+                const container = document.getElementById('printers-status');
+                if (data.printers && data.printers.length > 0) {
+                    container.innerHTML = data.printers.map(p => `
+                        <div class="bg-gray-50 dark:bg-gray-700 p-3 rounded-lg flex items-center justify-between card-hover transition">
+                            <div class="flex items-center gap-2">
+                                <span class="text-xl">${p.status === 'printing' ? '🖨️' : p.status === 'idle' ? '⏸️' : '🔴'}</span>
+                                <span class="font-medium">${p.name || p.id}</span>
+                            </div>
+                            <div>
+                                <span class="text-sm ${p.status === 'printing' ? 'text-green-600 dark:text-green-400' : p.status === 'idle' ? 'text-gray-500 dark:text-gray-400' : 'text-red-500 dark:text-red-400'}">
+                                    ${p.status === 'printing' ? `Печатает (${p.progress}%)` : p.status === 'idle' ? 'Ожидание' : 'Офлайн'}
+                                </span>
+                            </div>
+                        </div>
+                    `).join('');
+                } else {
+                    container.innerHTML = `<p class="text-gray-500 dark:text-gray-400">Нет данных о принтерах</p>`;
+                }
+            } catch (e) {
+                console.error('Ошибка загрузки принтеров:', e);
+            }
+        }
+
+        function refreshAll() {
+            loadOrders();
+            loadPrinters();
+            document.getElementById('last-update').textContent = 'Обновлено: ' + new Date().toLocaleTimeString();
+        }
+
+        // ---------- Поиск ----------
+        document.getElementById('search-input').addEventListener('input', function() {
+            searchQuery = this.value;
+            applyFilters();
+        });
+
+        // ---------- Автообновление ----------
         document.addEventListener('DOMContentLoaded', refreshAll);
-        // Автообновление каждые 60 секунд (чтобы не перегружать API)
-        setInterval(refreshAll, 60000);
+        setInterval(refreshAll, 30000);
     </script>
 </body>
 </html>
