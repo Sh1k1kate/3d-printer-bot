@@ -11,3 +11,6 @@ ALLOWED_USERS = [
     398362790,763201845,  # замените на ваш ID
     # добавьте другие ID через запятую
 ]
+# Bambu Lab Cloud API
+BAMBU_EMAIL = os.getenv("BAMBU_EMAIL", "")
+BAMBU_PASSWORD = os.getenv("BAMBU_PASSWORD", "")
