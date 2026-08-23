@@ -9,7 +9,9 @@
         * { transition: background-color 0.3s, color 0.3s, border-color 0.3s; }
         .progress-bar { transition: width 1s ease-in-out; }
         .card-hover:hover { transform: translateY(-2px); box-shadow: 0 10px 25px -5px rgba(0,0,0,0.1); }
-        .theme-toggle { cursor: pointer; }
+        .tab-btn { cursor: pointer; }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
         /* Убираем полосу прокрутки у карточек принтеров */
         .printers-grid { scrollbar-width: thin; }
     </style>
@@ -20,7 +22,7 @@
         <header class="flex flex-wrap items-center justify-between gap-4 mb-8">
             <div class="flex items-center gap-3">
                 <span class="text-3xl">📦</span>
-                <h1 class="text-2xl md:text-3xl font-bold">Трекер заказов</h1>
+                <h1 class="text-2xl md:text-3xl font-bold">Трекер</h1>
                 <span class="text-sm bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300 px-2 py-1 rounded-full">v2</span>
             </div>
             <div class="flex items-center gap-3 flex-wrap">
@@ -34,70 +36,135 @@
             </div>
         </header>
 
-        <!-- Фильтры и поиск -->
-        <div class="flex flex-wrap items-center gap-4 mb-6 bg-white dark:bg-gray-800 p-4 rounded-lg shadow">
-            <div class="flex-1 min-w-[200px]">
-                <input type="text" id="search-input" placeholder="🔍 Поиск по позиции..." 
-                       class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-blue-500 outline-none">
+        <!-- Вкладки -->
+        <div class="flex border-b border-gray-200 dark:border-gray-700 mb-6">
+            <button class="tab-btn px-4 py-2 text-sm font-medium border-b-2 border-blue-500 text-blue-600 dark:text-blue-400" data-tab="orders">📋 Заказы</button>
+            <button class="tab-btn px-4 py-2 text-sm font-medium border-b-2 border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300" data-tab="tasks">📌 Задачи</button>
+        </div>
+
+        <!-- Контент: Заказы -->
+        <div id="tab-orders" class="tab-content active">
+            <!-- Фильтры и поиск для заказов -->
+            <div class="flex flex-wrap items-center gap-4 mb-6 bg-white dark:bg-gray-800 p-4 rounded-lg shadow">
+                <div class="flex-1 min-w-[200px]">
+                    <input type="text" id="search-input-orders" placeholder="🔍 Поиск по позиции..." 
+                           class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-blue-500 outline-none">
+                </div>
+                <div class="flex gap-2 flex-wrap">
+                    <button onclick="filterOrders('all')" class="filter-btn px-3 py-1 rounded-full text-sm bg-blue-500 text-white" data-filter="all">Все</button>
+                    <button onclick="filterOrders('active')" class="filter-btn px-3 py-1 rounded-full text-sm bg-gray-200 dark:bg-gray-700 hover:bg-blue-100 dark:hover:bg-blue-900" data-filter="active">⏳ В работе</button>
+                    <button onclick="filterOrders('completed')" class="filter-btn px-3 py-1 rounded-full text-sm bg-gray-200 dark:bg-gray-700 hover:bg-green-100 dark:hover:bg-green-900" data-filter="completed">✅ Выполнены</button>
+                    <button onclick="filterOrders('overdue')" class="filter-btn px-3 py-1 rounded-full text-sm bg-gray-200 dark:bg-gray-700 hover:bg-red-100 dark:hover:bg-red-900" data-filter="overdue">🔴 Просрочены</button>
+                </div>
             </div>
-            <div class="flex gap-2 flex-wrap">
-                <button onclick="filterOrders('all')" class="filter-btn px-3 py-1 rounded-full text-sm bg-blue-500 text-white" data-filter="all">Все</button>
-                <button onclick="filterOrders('active')" class="filter-btn px-3 py-1 rounded-full text-sm bg-gray-200 dark:bg-gray-700 hover:bg-blue-100 dark:hover:bg-blue-900" data-filter="active">⏳ В работе</button>
-                <button onclick="filterOrders('completed')" class="filter-btn px-3 py-1 rounded-full text-sm bg-gray-200 dark:bg-gray-700 hover:bg-green-100 dark:hover:bg-green-900" data-filter="completed">✅ Выполнены</button>
-                <button onclick="filterOrders('overdue')" class="filter-btn px-3 py-1 rounded-full text-sm bg-gray-200 dark:bg-gray-700 hover:bg-red-100 dark:hover:bg-red-900" data-filter="overdue">🔴 Просрочены</button>
+
+            <!-- Статистика заказов -->
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+                <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-4 text-center">
+                    <div class="text-2xl font-bold text-blue-600 dark:text-blue-400" id="total-orders">0</div>
+                    <div class="text-xs uppercase text-gray-500 dark:text-gray-400">Всего заказов</div>
+                </div>
+                <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-4 text-center">
+                    <div class="text-2xl font-bold text-green-600 dark:text-green-400" id="completed-orders">0</div>
+                    <div class="text-xs uppercase text-gray-500 dark:text-gray-400">Выполнено</div>
+                </div>
+                <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-4 text-center">
+                    <div class="text-2xl font-bold text-yellow-600 dark:text-yellow-400" id="active-orders">0</div>
+                    <div class="text-xs uppercase text-gray-500 dark:text-gray-400">В работе</div>
+                </div>
+                <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-4 text-center">
+                    <div class="text-2xl font-bold text-purple-600 dark:text-purple-400" id="avg-progress">0%</div>
+                    <div class="text-xs uppercase text-gray-500 dark:text-gray-400">Средний прогресс</div>
+                </div>
+            </div>
+
+            <!-- Список заказов (карточки + таблица) -->
+            <div class="bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden">
+                <div class="hidden md:block overflow-x-auto">
+                    <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+                        <thead class="bg-gray-50 dark:bg-gray-700">
+                            <tr>
+                                <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">№</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">Позиция</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">Заказано</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">Напечатано</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">Прогресс</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">Срок</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">Осталось</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">Статус</th>
+                            </tr>
+                        </thead>
+                        <tbody id="orders-table-body" class="divide-y divide-gray-200 dark:divide-gray-700"></tbody>
+                    </table>
+                </div>
+                <div id="orders-cards" class="md:hidden p-4 space-y-4"></div>
+                <div id="empty-state-orders" class="text-center py-12 text-gray-400 dark:text-gray-500 hidden">
+                    <p class="text-xl">📭 Нет заказов</p>
+                    <p class="text-sm">Создайте новый заказ через бота</p>
+                </div>
             </div>
         </div>
 
-        <!-- Статистика -->
-        <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-            <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-4 text-center">
-                <div class="text-2xl font-bold text-blue-600 dark:text-blue-400" id="total-orders">0</div>
-                <div class="text-xs uppercase text-gray-500 dark:text-gray-400">Всего заказов</div>
+        <!-- Контент: Задачи -->
+        <div id="tab-tasks" class="tab-content">
+            <!-- Фильтры и поиск для задач -->
+            <div class="flex flex-wrap items-center gap-4 mb-6 bg-white dark:bg-gray-800 p-4 rounded-lg shadow">
+                <div class="flex-1 min-w-[200px]">
+                    <input type="text" id="search-input-tasks" placeholder="🔍 Поиск по задаче..." 
+                           class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-blue-500 outline-none">
+                </div>
+                <div class="flex gap-2 flex-wrap">
+                    <button onclick="filterTasks('all')" class="task-filter-btn px-3 py-1 rounded-full text-sm bg-blue-500 text-white" data-filter="all">Все</button>
+                    <button onclick="filterTasks('active')" class="task-filter-btn px-3 py-1 rounded-full text-sm bg-gray-200 dark:bg-gray-700 hover:bg-blue-100 dark:hover:bg-blue-900" data-filter="active">⏳ Активные</button>
+                    <button onclick="filterTasks('completed')" class="task-filter-btn px-3 py-1 rounded-full text-sm bg-gray-200 dark:bg-gray-700 hover:bg-green-100 dark:hover:bg-green-900" data-filter="completed">✅ Выполнены</button>
+                    <button onclick="filterTasks('overdue')" class="task-filter-btn px-3 py-1 rounded-full text-sm bg-gray-200 dark:bg-gray-700 hover:bg-red-100 dark:hover:bg-red-900" data-filter="overdue">🔴 Просрочены</button>
+                </div>
             </div>
-            <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-4 text-center">
-                <div class="text-2xl font-bold text-green-600 dark:text-green-400" id="completed-orders">0</div>
-                <div class="text-xs uppercase text-gray-500 dark:text-gray-400">Выполнено</div>
+
+            <!-- Статистика задач -->
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+                <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-4 text-center">
+                    <div class="text-2xl font-bold text-blue-600 dark:text-blue-400" id="total-tasks">0</div>
+                    <div class="text-xs uppercase text-gray-500 dark:text-gray-400">Всего задач</div>
+                </div>
+                <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-4 text-center">
+                    <div class="text-2xl font-bold text-green-600 dark:text-green-400" id="completed-tasks">0</div>
+                    <div class="text-xs uppercase text-gray-500 dark:text-gray-400">Выполнено</div>
+                </div>
+                <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-4 text-center">
+                    <div class="text-2xl font-bold text-yellow-600 dark:text-yellow-400" id="active-tasks">0</div>
+                    <div class="text-xs uppercase text-gray-500 dark:text-gray-400">Активны</div>
+                </div>
+                <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-4 text-center">
+                    <div class="text-2xl font-bold text-red-600 dark:text-red-400" id="overdue-tasks">0</div>
+                    <div class="text-xs uppercase text-gray-500 dark:text-gray-400">Просрочено</div>
+                </div>
             </div>
-            <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-4 text-center">
-                <div class="text-2xl font-bold text-yellow-600 dark:text-yellow-400" id="active-orders">0</div>
-                <div class="text-xs uppercase text-gray-500 dark:text-gray-400">В работе</div>
-            </div>
-            <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-4 text-center">
-                <div class="text-2xl font-bold text-purple-600 dark:text-purple-400" id="avg-progress">0%</div>
-                <div class="text-xs uppercase text-gray-500 dark:text-gray-400">Средний прогресс</div>
+
+            <!-- Список задач (таблица) -->
+            <div class="bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden">
+                <div class="overflow-x-auto">
+                    <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+                        <thead class="bg-gray-50 dark:bg-gray-700">
+                            <tr>
+                                <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">Название</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">Исполнитель</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">Срок</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">Осталось</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">Статус</th>
+                            </tr>
+                        </thead>
+                        <tbody id="tasks-table-body" class="divide-y divide-gray-200 dark:divide-gray-700"></tbody>
+                    </table>
+                </div>
+                <div id="empty-state-tasks" class="text-center py-12 text-gray-400 dark:text-gray-500 hidden">
+                    <p class="text-xl">📭 Нет задач</p>
+                    <p class="text-sm">Создайте новую задачу через бота</p>
+                </div>
             </div>
         </div>
 
-        <!-- Список заказов (карточки + таблица) -->
-        <div class="bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden">
-            <!-- Таблица (десктоп) -->
-            <div class="hidden md:block overflow-x-auto">
-                <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-                    <thead class="bg-gray-50 dark:bg-gray-700">
-                        <tr>
-                            <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">№</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">Позиция</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">Заказано</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">Напечатано</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">Прогресс</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">Срок</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">Осталось</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">Статус</th>
-                        </tr>
-                    </thead>
-                    <tbody id="orders-table-body" class="divide-y divide-gray-200 dark:divide-gray-700"></tbody>
-                </table>
-            </div>
-            <!-- Карточки (мобильные) -->
-            <div id="orders-cards" class="md:hidden p-4 space-y-4"></div>
-            <!-- Пустое состояние -->
-            <div id="empty-state" class="text-center py-12 text-gray-400 dark:text-gray-500 hidden">
-                <p class="text-xl">📭 Нет заказов</p>
-                <p class="text-sm">Создайте новый заказ через бота</p>
-            </div>
-        </div>
-
-        <!-- Принтеры -->
+        <!-- Принтеры (общие для всех вкладок) -->
         <div class="mt-8 bg-white dark:bg-gray-800 rounded-lg shadow p-6">
             <h2 class="text-xl font-semibold mb-4 flex items-center gap-2">
                 <span>🖨️</span> Статус принтеров
@@ -118,12 +185,31 @@
             localStorage.setItem('theme', darkMode ? 'dark' : 'light');
         }
         function toggleTheme() { darkMode = !darkMode; applyTheme(); }
-        applyTheme();
+        applyTheme(); // применяем при загрузке
 
-        // ---------- Данные и фильтры ----------
+        // ---------- Переключение вкладок ----------
+        document.querySelectorAll('.tab-btn').forEach(btn => {
+            btn.addEventListener('click', function() {
+                document.querySelectorAll('.tab-btn').forEach(b => {
+                    b.classList.remove('border-blue-500', 'text-blue-600', 'dark:text-blue-400');
+                    b.classList.add('border-transparent', 'text-gray-500', 'dark:text-gray-400');
+                });
+                this.classList.remove('border-transparent', 'text-gray-500', 'dark:text-gray-400');
+                this.classList.add('border-blue-500', 'text-blue-600', 'dark:text-blue-400');
+
+                const tabId = this.dataset.tab;
+                document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+                document.getElementById('tab-' + tabId).classList.add('active');
+
+                // При переключении на вкладку задач – загружаем задачи
+                if (tabId === 'tasks') loadTasks();
+            });
+        });
+
+        // ---------- Данные заказов ----------
         let allOrders = [];
-        let currentFilter = 'all';
-        let searchQuery = '';
+        let currentOrderFilter = 'all';
+        let orderSearchQuery = '';
 
         function getStatusClass(status) {
             return status.toLowerCase() === 'да' ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300' :
@@ -155,22 +241,22 @@
 
         function renderOrders(orders) {
             allOrders = orders;
-            applyFilters();
+            applyOrderFilters();
         }
 
-        function applyFilters() {
+        function applyOrderFilters() {
             const filtered = allOrders.filter(order => {
-                const matchesSearch = order.position.toLowerCase().includes(searchQuery.toLowerCase());
-                const statusMatch = currentFilter === 'all' ? true :
-                    currentFilter === 'active' ? order.status.toLowerCase() !== 'да' :
-                    currentFilter === 'completed' ? order.status.toLowerCase() === 'да' :
-                    currentFilter === 'overdue' ? (new Date(order.deadline) < new Date() && order.status.toLowerCase() !== 'да') : true;
+                const matchesSearch = order.position.toLowerCase().includes(orderSearchQuery.toLowerCase());
+                const statusMatch = currentOrderFilter === 'all' ? true :
+                    currentOrderFilter === 'active' ? order.status.toLowerCase() !== 'да' :
+                    currentOrderFilter === 'completed' ? order.status.toLowerCase() === 'да' :
+                    currentOrderFilter === 'overdue' ? (new Date(order.deadline) < new Date() && order.status.toLowerCase() !== 'да') : true;
                 return matchesSearch && statusMatch;
             });
 
             const tbody = document.getElementById('orders-table-body');
             const cards = document.getElementById('orders-cards');
-            const empty = document.getElementById('empty-state');
+            const empty = document.getElementById('empty-state-orders');
 
             if (filtered.length === 0) {
                 tbody.innerHTML = '';
@@ -228,10 +314,10 @@
                 </div>
             `).join('');
 
-            updateStats(filtered);
+            updateOrderStats(filtered);
         }
 
-        function updateStats(orders) {
+        function updateOrderStats(orders) {
             const total = allOrders.length;
             const completed = allOrders.filter(o => o.status.toLowerCase() === 'да').length;
             const active = allOrders.filter(o => o.status.toLowerCase() !== 'да').length;
@@ -243,7 +329,7 @@
         }
 
         function filterOrders(filter) {
-            currentFilter = filter;
+            currentOrderFilter = filter;
             document.querySelectorAll('.filter-btn').forEach(btn => {
                 btn.classList.remove('bg-blue-500', 'text-white');
                 btn.classList.add('bg-gray-200', 'dark:bg-gray-700');
@@ -252,16 +338,98 @@
                     btn.classList.add('bg-blue-500', 'text-white');
                 }
             });
-            applyFilters();
+            applyOrderFilters();
+        }
+
+        // ---------- Данные задач ----------
+        let allTasks = [];
+        let currentTaskFilter = 'all';
+        let taskSearchQuery = '';
+
+        function renderTasks(tasks) {
+            allTasks = tasks;
+            applyTaskFilters();
+        }
+
+        function applyTaskFilters() {
+            const filtered = allTasks.filter(task => {
+                const matchesSearch = task.title.toLowerCase().includes(taskSearchQuery.toLowerCase());
+                const statusMatch = currentTaskFilter === 'all' ? true :
+                    currentTaskFilter === 'active' ? task.status !== 'completed' :
+                    currentTaskFilter === 'completed' ? task.status === 'completed' :
+                    currentTaskFilter === 'overdue' ? (new Date(task.deadline) < new Date() && task.status !== 'completed') : true;
+                return matchesSearch && statusMatch;
+            });
+
+            const tbody = document.getElementById('tasks-table-body');
+            const empty = document.getElementById('empty-state-tasks');
+
+            if (filtered.length === 0) {
+                tbody.innerHTML = '';
+                empty.classList.remove('hidden');
+                return;
+            }
+            empty.classList.add('hidden');
+
+            tbody.innerHTML = filtered.map(t => `
+                <tr class="hover:bg-gray-50 dark:hover:bg-gray-700 transition">
+                    <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">${t.title}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm">${t.assignee}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm ${getOverdueClass(t.deadline)}">${t.deadline}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm">${getDaysLeft(t.deadline)}</td>
+                    <td class="px-6 py-4 whitespace-nowrap">
+                        <span class="px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full ${t.status === 'completed' ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300' : 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300'}">
+                            ${t.status === 'completed' ? '✅ Выполнена' : '⏳ Активна'}
+                        </span>
+                    </td>
+                </tr>
+            `).join('');
+
+            updateTaskStats(filtered);
+        }
+
+        function updateTaskStats(displayed) {
+            const total = allTasks.length;
+            const completed = allTasks.filter(t => t.status === 'completed').length;
+            const active = allTasks.filter(t => t.status !== 'completed').length;
+            const overdue = allTasks.filter(t => new Date(t.deadline) < new Date() && t.status !== 'completed').length;
+            document.getElementById('total-tasks').textContent = total;
+            document.getElementById('completed-tasks').textContent = completed;
+            document.getElementById('active-tasks').textContent = active;
+            document.getElementById('overdue-tasks').textContent = overdue;
+        }
+
+        function filterTasks(filter) {
+            currentTaskFilter = filter;
+            document.querySelectorAll('.task-filter-btn').forEach(btn => {
+                btn.classList.remove('bg-blue-500', 'text-white');
+                btn.classList.add('bg-gray-200', 'dark:bg-gray-700');
+                if (btn.dataset.filter === filter) {
+                    btn.classList.remove('bg-gray-200', 'dark:bg-gray-700');
+                    btn.classList.add('bg-blue-500', 'text-white');
+                }
+            });
+            applyTaskFilters();
         }
 
         // ---------- Загрузка данных ----------
         async function loadOrders() {
             try {
                 const resp = await fetch('/api/orders');
-                if (!resp.ok) throw new Error('Ошибка');
+                if (!resp.ok) throw new Error('Ошибка загрузки заказов');
                 const data = await resp.json();
                 renderOrders(data.orders);
+            } catch (e) {
+                console.error(e);
+            }
+        }
+
+        async function loadTasks() {
+            try {
+                const resp = await fetch('/api/tasks');
+                if (!resp.ok) throw new Error('Ошибка загрузки задач');
+                const data = await resp.json();
+                renderTasks(data.tasks);
             } catch (e) {
                 console.error(e);
             }
@@ -296,18 +464,30 @@
 
         function refreshAll() {
             loadOrders();
+            loadTasks(); // если текущая вкладка задачи, они перезагрузятся
             loadPrinters();
             document.getElementById('last-update').textContent = 'Обновлено: ' + new Date().toLocaleTimeString();
         }
 
         // ---------- Поиск ----------
-        document.getElementById('search-input').addEventListener('input', function() {
-            searchQuery = this.value;
-            applyFilters();
+        document.getElementById('search-input-orders').addEventListener('input', function() {
+            orderSearchQuery = this.value;
+            applyOrderFilters();
+        });
+        document.getElementById('search-input-tasks').addEventListener('input', function() {
+            taskSearchQuery = this.value;
+            applyTaskFilters();
         });
 
-        // ---------- Автообновление ----------
-        document.addEventListener('DOMContentLoaded', refreshAll);
+        // ---------- Инициализация ----------
+        document.addEventListener('DOMContentLoaded', function() {
+            // Загружаем заказы всегда, задачи – только если активна вкладка "Задачи"
+            loadOrders();
+            loadPrinters();
+            // Если по умолчанию активна вкладка "Заказы", задачи не загружаем
+        });
+
+        // Автообновление каждые 30 секунд
         setInterval(refreshAll, 30000);
     </script>
 </body>
