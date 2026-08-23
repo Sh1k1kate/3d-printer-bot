@@ -1,7 +1,7 @@
 from aiogram import Router, F, BaseMiddleware
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
-from aiogram.types import Message, CallbackQuery, BotCommand, BotCommandScopeDefault
+from aiogram.types import Message, CallbackQuery, BotCommand, BotCommandScopeDefault, ReplyKeyboardMarkup, KeyboardButton
 from keyboards import (
     main_menu, items_inline_keyboard, model_action_keyboard,
     parts_inline_keyboard, part_parameters_keyboard, cancel_keyboard,
@@ -385,7 +385,7 @@ async def cancel_add_model(message: Message, state: FSMContext):
     await state.clear()
     await message.answer("Добавление модели отменено.", reply_markup=main_menu)
 
-# ==================== РЕДАКТИРОВАНИЕ МОДЕЛИ (с разделителем |) ====================
+# ==================== РЕДАКТИРОВАНИЕ МОДЕЛИ ====================
 @router.callback_query(F.data.startswith("edit_model_"))
 async def edit_model_start(callback: CallbackQuery, state: FSMContext):
     model_name = callback.data[len("edit_model_"):]
@@ -404,7 +404,6 @@ async def edit_model_start(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data.startswith("edit_part_"))
 async def edit_part_selected(callback: CallbackQuery, state: FSMContext):
-    # Формат: edit_part_{model_name}|{index}
     raw = callback.data[len("edit_part_"):]
     if '|' not in raw:
         await callback.answer("Ошибка формата")
@@ -430,7 +429,6 @@ async def edit_part_selected(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data.startswith("edit_param_"))
 async def edit_param_selected(callback: CallbackQuery, state: FSMContext):
-    # Формат: edit_param_{model_name}|{det_name}|{param}
     raw = callback.data[len("edit_param_"):]
     if '|' not in raw:
         await callback.answer("Ошибка формата")
@@ -1014,12 +1012,29 @@ async def process_order_quantity(message: Message, state: FSMContext):
         await message.answer("Количество должно быть больше 0.")
         return
     await state.update_data(order_quantity=quantity)
-    await state.set_state(CreateOrder.waiting_for_deadline)
+    await message.answer(
+        "Введите *имя заказчика* (или нажмите 'Пропустить'):",
+        parse_mode="Markdown",
+        reply_markup=ReplyKeyboardMarkup(
+            keyboard=[[KeyboardButton(text="Пропустить")], [KeyboardButton(text="❌ Отмена")]],
+            resize_keyboard=True
+        )
+    )
+    await state.set_state(CreateOrder.waiting_for_customer)
+
+@router.message(CreateOrder.waiting_for_customer, F.text != "❌ Отмена")
+async def process_order_customer(message: Message, state: FSMContext):
+    if message.text == "Пропустить":
+        customer = ""
+    else:
+        customer = message.text.strip()
+    await state.update_data(order_customer=customer)
     now = datetime.now()
     await message.answer(
         "Выберите срок заказа на календаре:",
         reply_markup=calendar_keyboard(now.year, now.month, prefix="cal_order")
     )
+    await state.set_state(CreateOrder.waiting_for_deadline)
 
 # ---------- Календарь для заказов ----------
 @router.callback_query(F.data.startswith("cal_order_prev_"))
@@ -1063,19 +1078,21 @@ async def calendar_order_day(callback: CallbackQuery, state: FSMContext):
     item_name = user_data.get("order_item")
     order_type = user_data.get("order_type")
     quantity = user_data.get("order_quantity")
+    customer = user_data.get("order_customer", "")
     if not item_name or not quantity:
         await callback.answer("Ошибка: данные заказа потеряны.", show_alert=True)
         await state.clear()
         return
     position = item_name if order_type == "model" else f"Набор: {item_name}"
     try:
-        order_num = sheet.add_order(position, quantity, selected_date)
+        order_num = sheet.add_order(position, quantity, selected_date, customer)
         await callback.message.answer(
             f"✅ Заказ №{order_num} создан!\n\n"
             f"Позиция: {position}\n"
             f"Количество: {quantity} шт.\n"
             f"Срок: {selected_date}\n"
-            f"Статус: в работе",
+            f"Статус: в работе"
+            + (f"\n👤 Заказчик: {customer}" if customer else ""),
             reply_markup=main_menu
         )
         await callback.message.delete()
@@ -1426,23 +1443,22 @@ async def view_order(callback: CallbackQuery):
     if not order:
         await callback.answer("Заказ не найден", show_alert=True)
         return
-    num, position, qty, printed, deadline, modified, status = order[:7]
+    num, position, qty, printed, deadline, modified, status, customer = order[:8]
     text = f"📄 *Заказ №{num}*\n"
     text += f"Позиция: {position}\n"
     text += f"Заказано: {qty} шт.\n"
     text += f"Напечатано: {printed} шт.\n"
     text += f"Осталось: {int(qty)-int(printed)} шт.\n"
     text += f"Срок: {deadline}\n"
-    text += f"Статус: {'✅ Выполнен' if status.lower() == 'да' else '⏳ В работе'}\n\n"
+    text += f"Статус: {'✅ Выполнен' if status.lower() == 'да' else '⏳ В работе'}\n"
+    if customer:
+        text += f"👤 Заказчик: {customer}\n"
     if position.startswith("Набор: "):
         kit_name = position[7:]
         kit_data = sheet.get_kit_details(kit_name)
         if kit_data:
             text += f"🎁 *Состав набора:* {kit_data[1]}\n"
-    try:
-        await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=edit_order_keyboard(num))
-    except:
-        await callback.message.edit_text(text, reply_markup=edit_order_keyboard(num))
+    await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=edit_order_keyboard(num))
     await callback.answer()
 
 @router.callback_query(F.data == "back_to_orders")
