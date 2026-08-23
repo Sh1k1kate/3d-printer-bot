@@ -188,6 +188,26 @@ class SheetManager:
         return items
 
     # ---------- Заказы ----------
+    def init_sheet(self):
+        if not self.sheet_models.get_all_values():
+            headers = ["Название", "Детали", "Кол-во на палете", "Нужно на шт.", "Время палета (мин)", "Грамм на палет"]
+            self.sheet_models.append_row(headers)
+        if not self.sheet_orders.get_all_values():
+            order_headers = ["Номер заказа", "Позиция", "Кол-во заказано", "Кол-во напечатано", "Срок заказа", "Дата последнего изменения", "Выполнен", "Заказчик"]
+            self.sheet_orders.append_row(order_headers)
+        else:
+            headers = self.sheet_orders.row_values(1)
+            if "Заказчик" not in headers:
+                last_col = len(headers) + 1
+                self.sheet_orders.update_cell(1, last_col, "Заказчик")
+        try:
+            self.sheet_kits = self.client.open_by_key(SPREADSHEET_ID).worksheet("Наборы")
+        except gspread.exceptions.WorksheetNotFound:
+            self.sheet_kits = self.client.open_by_key(SPREADSHEET_ID).add_worksheet(title="Наборы", rows=100, cols=4)
+            self.sheet_kits.append_row(["Название", "Состав", "Цена", "Описание"])
+        self.init_tasks_sheet()
+        self.init_subscribers_sheet()
+
     def get_next_order_number(self):
         records = self.sheet_orders.get_all_values()
         if len(records) <= 1:
@@ -202,10 +222,10 @@ class SheetManager:
                 continue
         return max_num + 1
 
-    def add_order(self, position, quantity, deadline_str):
+    def add_order(self, position, quantity, deadline_str, customer=""):
         order_num = self.get_next_order_number()
         now_str = moscow_now().strftime("%Y-%m-%d %H:%M:%S")
-        row = [order_num, position, quantity, 0, deadline_str, now_str, "Нет"]
+        row = [order_num, position, quantity, 0, deadline_str, now_str, "Нет", customer]
         self.sheet_orders.append_row(row)
         return order_num
 
@@ -213,7 +233,12 @@ class SheetManager:
         records = self.sheet_orders.get_all_values()
         if len(records) <= 1:
             return []
-        return records[1:]
+        result = []
+        for row in records[1:]:
+            while len(row) < 8:
+                row.append("")
+            result.append(row)
+        return result
 
     def get_active_orders(self):
         all_orders = self.get_user_orders()
@@ -247,6 +272,8 @@ class SheetManager:
         cell = self.sheet_orders.find(str(order_num), in_column=1)
         if cell:
             row = self.sheet_orders.row_values(cell.row)
+            while len(row) < 8:
+                row.append("")
             return row
         return None
 
@@ -353,7 +380,7 @@ class SheetManager:
             try:
                 naive_dt = datetime.strptime(f"{deadline_date} {deadline_time}", "%Y-%m-%d %H:%M")
                 deadline_dt = naive_dt.replace(tzinfo=MOSCOW_TZ)
-            except Exception as e:
+            except:
                 continue
             tasks.append({
                 "id": int(row[0]),
@@ -453,18 +480,3 @@ class SheetManager:
     # ---------- Общие ----------
     def get_all_items(self):
         return self.get_all_models(), self.get_all_kits()
-
-    def init_sheet(self):
-        if not self.sheet_models.get_all_values():
-            headers = ["Название", "Детали", "Кол-во на палете", "Нужно на шт.", "Время палета (мин)", "Грамм на палет"]
-            self.sheet_models.append_row(headers)
-        if not self.sheet_orders.get_all_values():
-            order_headers = ["Номер заказа", "Позиция", "Кол-во заказано", "Кол-во напечатано", "Срок заказа", "Дата последнего изменения", "Выполнен"]
-            self.sheet_orders.append_row(order_headers)
-        try:
-            self.sheet_kits = self.client.open_by_key(SPREADSHEET_ID).worksheet("Наборы")
-        except gspread.exceptions.WorksheetNotFound:
-            self.sheet_kits = self.client.open_by_key(SPREADSHEET_ID).add_worksheet(title="Наборы", rows=100, cols=4)
-            self.sheet_kits.append_row(["Название", "Состав", "Цена", "Описание"])
-        self.init_tasks_sheet()
-        self.init_subscribers_sheet()
