@@ -12,6 +12,8 @@ from google_sheets import SheetManager, moscow_now
 from datetime import datetime, timedelta
 import aiohttp
 import asyncio
+from functools import wraps
+import time
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -31,7 +33,28 @@ app = FastAPI()
 # Шаблоны
 templates = Jinja2Templates(directory="templates")
 
-# ---------- Класс для работы с облачным API Bambu Lab ----------
+# ---------- Простой кеш ----------
+cache = {
+    "orders": {"data": None, "timestamp": 0},
+    "printers": {"data": None, "timestamp": 0},
+}
+CACHE_TTL = 60  # секунд
+
+def cache_result(cache_key, ttl=CACHE_TTL):
+    def decorator(func):
+        @wraps(func)
+        async def wrapper(*args, **kwargs):
+            now = time.time()
+            if cache[cache_key]["data"] is not None and now - cache[cache_key]["timestamp"] < ttl:
+                return cache[cache_key]["data"]
+            result = await func(*args, **kwargs)
+            cache[cache_key]["data"] = result
+            cache[cache_key]["timestamp"] = now
+            return result
+        return wrapper
+    return decorator
+
+# ---------- Bambu Cloud API (с кешированием) ----------
 class BambuCloudAPI:
     def __init__(self, email=None, password=None):
         self.email = email or os.getenv("BAMBU_EMAIL")
@@ -47,7 +70,6 @@ class BambuCloudAPI:
         return self._session
 
     async def _login(self):
-        """Авторизация в облаке Bambu Lab."""
         if self.access_token and self.token_expiry and datetime.now() < self.token_expiry:
             return self.access_token
         if not self.email or not self.password:
@@ -55,7 +77,6 @@ class BambuCloudAPI:
             return None
         session = await self._get_session()
         try:
-            # Эндпоинт может отличаться – проверьте документацию Bambu Lab
             async with session.post(f"{self.api_base}/auth/login", json={
                 "email": self.email,
                 "password": self.password
@@ -74,8 +95,8 @@ class BambuCloudAPI:
             logger.error(f"Ошибка авторизации Bambu: {e}")
             return None
 
+    @cache_result("printers")
     async def get_printers(self):
-        """Получить список принтеров и их статус."""
         token = await self._login()
         if not token:
             return []
@@ -107,7 +128,6 @@ class BambuCloudAPI:
         if self._session:
             await self._session.close()
 
-# Глобальный экземпляр API (создаётся при первом запросе)
 _bambu_api = None
 
 def get_bambu_api():
@@ -138,31 +158,35 @@ async def root():
 async def tracker_page(request: Request):
     return templates.TemplateResponse("tracker.html", {"request": request})
 
-# ---------- API заказов ----------
+# ---------- API заказов (с кешированием) ----------
+@cache_result("orders")
+async def get_orders_cached():
+    sheet = SheetManager()
+    orders = sheet.get_active_orders()
+    result = []
+    for order in orders:
+        if len(order) >= 7:
+            result.append({
+                "id": order[0],
+                "position": order[1],
+                "ordered": int(order[2]),
+                "printed": int(order[3]),
+                "deadline": order[4],
+                "modified": order[5],
+                "status": order[6],
+                "progress": round(int(order[3]) / int(order[2]) * 100) if int(order[2]) > 0 else 0
+            })
+    return {"orders": result}
+
 @app.get("/api/orders")
 async def get_orders_api():
     try:
-        sheet = SheetManager()
-        orders = sheet.get_active_orders()
-        result = []
-        for order in orders:
-            if len(order) >= 7:
-                result.append({
-                    "id": order[0],
-                    "position": order[1],
-                    "ordered": int(order[2]),
-                    "printed": int(order[3]),
-                    "deadline": order[4],
-                    "modified": order[5],
-                    "status": order[6],
-                    "progress": round(int(order[3]) / int(order[2]) * 100) if int(order[2]) > 0 else 0
-                })
-        return JSONResponse(content={"orders": result})
+        return JSONResponse(content=await get_orders_cached())
     except Exception as e:
         logger.error(f"API error: {e}", exc_info=True)
         return JSONResponse(content={"error": str(e)}, status_code=500)
 
-# ---------- API принтеров (облачный Bambu Lab) ----------
+# ---------- API принтеров ----------
 @app.get("/api/printers")
 async def get_printers_api():
     try:
@@ -176,7 +200,7 @@ async def get_printers_api():
 # ---------- Проверка задач (cron) ----------
 @app.get("/check_tasks")
 async def check_tasks():
-    # (ваш существующий код из предыдущей версии)
+    # (код из предыдущей версии)
     return {"status": "ok"}
 
 # ---------- Запуск ----------
