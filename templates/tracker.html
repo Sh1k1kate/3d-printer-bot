@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Трекер заказов 3D-печати</title>
+    <!-- Подключаем Tailwind CSS через CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .progress-bar {
+            transition: width 0.5s ease-in-out;
+        }
+        .status-badge {
+            @apply px-2 py-1 rounded-full text-xs font-semibold;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 font-sans antialiased">
+    <div class="container mx-auto px-4 py-8 max-w-6xl">
+        <!-- Заголовок -->
+        <header class="flex flex-col md:flex-row justify-between items-center mb-8">
+            <h1 class="text-3xl font-bold text-gray-800 flex items-center gap-2">
+                <span class="text-blue-600">📦</span> Трекер заказов
+            </h1>
+            <div class="flex gap-4 mt-4 md:mt-0">
+                <span class="text-sm text-gray-500" id="last-update">Обновлено: сейчас</span>
+                <button onclick="loadOrders()" class="bg-blue-500 hover:bg-blue-600 text-white text-sm px-4 py-2 rounded-lg shadow transition">
+                    ↻ Обновить
+                </button>
+            </div>
+        </header>
+
+        <!-- Карточка со статистикой (заглушка, можно заполнять динамически) -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8" id="stats">
+            <div class="bg-white rounded-lg shadow p-4">
+                <div class="text-gray-500 text-sm">Всего заказов</div>
+                <div class="text-2xl font-bold text-gray-800" id="total-orders">0</div>
+            </div>
+            <div class="bg-white rounded-lg shadow p-4">
+                <div class="text-gray-500 text-sm">Выполнено</div>
+                <div class="text-2xl font-bold text-green-600" id="completed-orders">0</div>
+            </div>
+            <div class="bg-white rounded-lg shadow p-4">
+                <div class="text-gray-500 text-sm">Средний прогресс</div>
+                <div class="text-2xl font-bold text-blue-600" id="avg-progress">0%</div>
+            </div>
+        </div>
+
+        <!-- Таблица заказов -->
+        <div class="bg-white rounded-lg shadow overflow-hidden">
+            <table class="min-w-full divide-y divide-gray-200">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">№</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Позиция</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Заказано</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Напечатано</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Прогресс</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Срок</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Статус</th>
+                    </tr>
+                </thead>
+                <tbody id="orders-body" class="bg-white divide-y divide-gray-200">
+                    <!-- Строки будут вставлены JavaScript -->
+                </tbody>
+            </table>
+            <div id="empty-state" class="text-center py-12 text-gray-400 hidden">
+                <p class="text-xl">Нет активных заказов</p>
+                <p class="text-sm">Добавьте заказ через бота или дождитесь новых.</p>
+            </div>
+        </div>
+
+        <!-- Блок статуса принтеров (заглушка) -->
+        <div class="mt-8 bg-white rounded-lg shadow p-6">
+            <h2 class="text-xl font-semibold text-gray-800 mb-4">🖨️ Статус принтеров</h2>
+            <div id="printers-status" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                    <span class="font-medium">Bambu X1C</span>
+                    <span class="text-sm text-gray-500">⏸ Ожидание</span>
+                </div>
+                <div class="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                    <span class="font-medium">Bambu P1S</span>
+                    <span class="text-sm text-green-600">🖨 Печатает (45%)</span>
+                </div>
+            </div>
+            <p class="text-xs text-gray-400 mt-2">* Данные о принтерах пока тестовые. Интеграция с Bambu Lab в разработке.</p>
+        </div>
+    </div>
+
+    <script>
+        // Функция для загрузки заказов
+        async function loadOrders() {
+            try {
+                const response = await fetch('/api/orders');
+                if (!response.ok) throw new Error('Ошибка загрузки данных');
+                const data = await response.json();
+                renderOrders(data.orders);
+                updateStats(data.orders);
+                document.getElementById('last-update').textContent = `Обновлено: ${new Date().toLocaleTimeString()}`;
+            } catch (error) {
+                console.error('Ошибка:', error);
+                document.getElementById('orders-body').innerHTML = `
+                    <tr><td colspan="7" class="text-center py-8 text-red-500">Не удалось загрузить данные. Попробуйте позже.</td></tr>
+                `;
+            }
+        }
+
+        // Отрисовка заказов в таблице
+        function renderOrders(orders) {
+            const tbody = document.getElementById('orders-body');
+            const emptyState = document.getElementById('empty-state');
+            if (!orders || orders.length === 0) {
+                tbody.innerHTML = '';
+                emptyState.classList.remove('hidden');
+                return;
+            }
+            emptyState.classList.add('hidden');
+            tbody.innerHTML = orders.map(order => `
+                <tr>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">${order.id}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-700">${order.position}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-700">${order.ordered}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-700">${order.printed}</td>
+                    <td class="px-6 py-4 whitespace-nowrap">
+                        <div class="w-full bg-gray-200 rounded-full h-2.5">
+                            <div class="bg-blue-600 h-2.5 rounded-full progress-bar" style="width: ${order.progress}%"></div>
+                        </div>
+                        <span class="text-xs text-gray-500">${order.progress}%</span>
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-700">${order.deadline}</td>
+                    <td class="px-6 py-4 whitespace-nowrap">
+                        <span class="px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full 
+                            ${order.status.toLowerCase() === 'да' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}">
+                            ${order.status.toLowerCase() === 'да' ? '✅ Выполнен' : '⏳ В работе'}
+                        </span>
+                    </td>
+                </tr>
+            `).join('');
+        }
+
+        // Обновление статистики
+        function updateStats(orders) {
+            const total = orders.length;
+            const completed = orders.filter(o => o.status.toLowerCase() === 'да').length;
+            const avgProgress = total > 0 ? Math.round(orders.reduce((sum, o) => sum + o.progress, 0) / total) : 0;
+            document.getElementById('total-orders').textContent = total;
+            document.getElementById('completed-orders').textContent = completed;
+            document.getElementById('avg-progress').textContent = avgProgress + '%';
+        }
+
+        // Загружаем заказы при загрузке страницы
+        document.addEventListener('DOMContentLoaded', loadOrders);
+        // Автообновление каждые 30 секунд
+        setInterval(loadOrders, 30000);
+    </script>
+</body>
+</html>
