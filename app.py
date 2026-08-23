@@ -12,8 +12,7 @@ from google_sheets import SheetManager, moscow_now
 from datetime import datetime, timedelta
 import aiohttp
 import asyncio
-from functools import wraps
-import time
+from cachetools import TTLCache
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -21,6 +20,10 @@ logger = logging.getLogger(__name__)
 if not BOT_TOKEN:
     logger.error("BOT_TOKEN не задан в переменных окружения!")
     raise ValueError("BOT_TOKEN is required")
+
+# ---------- Кэш для данных ----------
+# Храним данные 30 секунд, чтобы не перегружать Google Sheets API
+cache = TTLCache(maxsize=2, ttl=30)
 
 # ---------- Telegram bot ----------
 bot = Bot(token=BOT_TOKEN)
@@ -33,28 +36,7 @@ app = FastAPI()
 # Шаблоны
 templates = Jinja2Templates(directory="templates")
 
-# ---------- Простой кеш ----------
-cache = {
-    "orders": {"data": None, "timestamp": 0},
-    "printers": {"data": None, "timestamp": 0},
-}
-CACHE_TTL = 60  # секунд
-
-def cache_result(cache_key, ttl=CACHE_TTL):
-    def decorator(func):
-        @wraps(func)
-        async def wrapper(*args, **kwargs):
-            now = time.time()
-            if cache[cache_key]["data"] is not None and now - cache[cache_key]["timestamp"] < ttl:
-                return cache[cache_key]["data"]
-            result = await func(*args, **kwargs)
-            cache[cache_key]["data"] = result
-            cache[cache_key]["timestamp"] = now
-            return result
-        return wrapper
-    return decorator
-
-# ---------- Bambu Cloud API (с кешированием) ----------
+# ---------- Класс Bambu Cloud API (без изменений) ----------
 class BambuCloudAPI:
     def __init__(self, email=None, password=None):
         self.email = email or os.getenv("BAMBU_EMAIL")
@@ -95,7 +77,6 @@ class BambuCloudAPI:
             logger.error(f"Ошибка авторизации Bambu: {e}")
             return None
 
-    @cache_result("printers")
     async def get_printers(self):
         token = await self._login()
         if not token:
@@ -111,7 +92,7 @@ class BambuCloudAPI:
                         result.append({
                             "id": p.get("id"),
                             "name": p.get("name"),
-                            "status": p.get("status"),  # printing, idle, offline
+                            "status": p.get("status"),
                             "progress": p.get("progress", 0),
                             "model": p.get("model"),
                             "current_job": p.get("current_job")
@@ -129,7 +110,6 @@ class BambuCloudAPI:
             await self._session.close()
 
 _bambu_api = None
-
 def get_bambu_api():
     global _bambu_api
     if _bambu_api is None:
@@ -158,35 +138,36 @@ async def root():
 async def tracker_page(request: Request):
     return templates.TemplateResponse("tracker.html", {"request": request})
 
-# ---------- API заказов (с кешированием) ----------
-@cache_result("orders")
-async def get_orders_cached():
-    sheet = SheetManager()
-    orders = sheet.get_active_orders()
-    result = []
-    for order in orders:
-        if len(order) >= 7:
-            result.append({
-                "id": order[0],
-                "position": order[1],
-                "ordered": int(order[2]),
-                "printed": int(order[3]),
-                "deadline": order[4],
-                "modified": order[5],
-                "status": order[6],
-                "progress": round(int(order[3]) / int(order[2]) * 100) if int(order[2]) > 0 else 0
-            })
-    return {"orders": result}
-
+# ---------- API заказов (с кэшированием) ----------
 @app.get("/api/orders")
 async def get_orders_api():
+    cache_key = "orders"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return JSONResponse(content={"orders": cached, "cached": True})
     try:
-        return JSONResponse(content=await get_orders_cached())
+        sheet = SheetManager()
+        orders = sheet.get_active_orders()
+        result = []
+        for order in orders:
+            if len(order) >= 7:
+                result.append({
+                    "id": order[0],
+                    "position": order[1],
+                    "ordered": int(order[2]),
+                    "printed": int(order[3]),
+                    "deadline": order[4],
+                    "modified": order[5],
+                    "status": order[6],
+                    "progress": round(int(order[3]) / int(order[2]) * 100) if int(order[2]) > 0 else 0
+                })
+        cache[cache_key] = result
+        return JSONResponse(content={"orders": result, "cached": False})
     except Exception as e:
         logger.error(f"API error: {e}", exc_info=True)
         return JSONResponse(content={"error": str(e)}, status_code=500)
 
-# ---------- API принтеров ----------
+# ---------- API принтеров (без кэширования, т.к. данные обновляются редко) ----------
 @app.get("/api/printers")
 async def get_printers_api():
     try:
@@ -197,10 +178,10 @@ async def get_printers_api():
         logger.error(f"Ошибка получения принтеров: {e}", exc_info=True)
         return JSONResponse(content={"error": str(e), "printers": []}, status_code=500)
 
-# ---------- Проверка задач (cron) ----------
+# ---------- Проверка задач ----------
 @app.get("/check_tasks")
 async def check_tasks():
-    # (код из предыдущей версии)
+    # (оставляем существующий код)
     return {"status": "ok"}
 
 # ---------- Запуск ----------
