@@ -180,11 +180,8 @@ async def analyze_3mf_api(file: UploadFile = File(...)):
         raw_colors_hex = extract_colors_from_3mf(file_bytes)
         if not raw_colors_hex:
             raise HTTPException(status_code=400, detail="Не удалось найти цвета в файле")
-        
-        # Преобразуем hex-коды в RGB-кортежи для группировки
         raw_colors_rgb = [hex_to_rgb(h) for h in raw_colors_hex]
-        grouped = group_similar_colors(raw_colors_rgb, tolerance=30)
-        
+        grouped = group_similar_colors(raw_colors_rgb, tolerance=20, max_colors=10)
         result = []
         for rgb in grouped:
             hex_str = rgb_to_hex(rgb)
