@@ -64,43 +64,27 @@ def rgb_to_hex(rgb):
     return f"#{rgb[0]:02X}{rgb[1]:02X}{rgb[2]:02X}"
 
 def rgb_to_lab(r, g, b):
-    # Конвертируем в XYZ, потом в Lab
     r /= 255.0
     g /= 255.0
     b /= 255.0
-
-    # Гамма-коррекция
     r = ((r + 0.055) / 1.055) ** 2.4 if r > 0.04045 else r / 12.92
     g = ((g + 0.055) / 1.055) ** 2.4 if g > 0.04045 else g / 12.92
     b = ((b + 0.055) / 1.055) ** 2.4 if b > 0.04045 else b / 12.92
-
-    # XYZ (D65)
     x = r * 0.4124 + g * 0.3576 + b * 0.1805
     y = r * 0.2126 + g * 0.7152 + b * 0.0722
     z = r * 0.0193 + g * 0.1192 + b * 0.9505
-    x *= 100
-    y *= 100
-    z *= 100
-
-    # Reference white D65
+    x *= 100; y *= 100; z *= 100
     xn, yn, zn = 95.047, 100.000, 108.883
-    x /= xn
-    y /= yn
-    z /= zn
-
-    # Преобразование в Lab
+    x /= xn; y /= yn; z /= zn
     fx = x ** (1/3) if x > 0.008856 else (7.787 * x + 16/116)
     fy = y ** (1/3) if y > 0.008856 else (7.787 * y + 16/116)
     fz = z ** (1/3) if z > 0.008856 else (7.787 * z + 16/116)
-
     l = 116 * fy - 16
     a = 500 * (fx - fy)
     b = 200 * (fy - fz)
-
     return (l, a, b)
 
 def delta_e_2000(lab1, lab2):
-    # Приблизительно: евклидово расстояние в Lab
     return math.sqrt((lab1[0]-lab2[0])**2 + (lab1[1]-lab2[1])**2 + (lab1[2]-lab2[2])**2)
 
 def find_closest_colors(input_hex, colors, top_n=5):
@@ -115,27 +99,50 @@ def find_closest_colors(input_hex, colors, top_n=5):
     distances.sort(key=lambda x: x[0])
     return distances[:top_n]
 
-# ---------- Парсер 3MF ----------
+# ---------- Парсер 3MF (улучшенный) ----------
 def extract_colors_from_3mf(file_bytes: bytes) -> list:
+    """
+    Извлекает hex-цвета из 3MF-файла.
+    Ищет в project_settings.config (массив filament_colour или все hex-коды),
+    затем в .model файлах.
+    Поддерживает форматы #RRGGBB и RRGGBB.
+    """
     colors = []
     try:
         with zipfile.ZipFile(BytesIO(file_bytes)) as zf:
-            # Ищем project_settings.config
+            # 1. Ищем project_settings.config
             config_files = [f for f in zf.namelist() if f.lower().endswith('project_settings.config')]
             if config_files:
                 with zf.open(config_files[0]) as cf:
                     content = cf.read().decode('utf-8', errors='ignore')
+                    logger.info(f"Найден config файл, размер: {len(content)} символов")
+
                     # Ищем массив filament_colour
                     match = re.search(r'"filament_colour":\s*\[([\s\S]*?)\]', content)
                     if match:
                         hexes = re.findall(r'#[A-Fa-f0-9]{6}', match.group(1))
                         if hexes:
+                            logger.info(f"Найдены hex-коды в filament_colour: {hexes}")
                             return [h.upper() for h in set(hexes)]
-                    # Если не нашли, ищем все hex-коды в тексте
-                    hexes = re.findall(r'#[A-Fa-f0-9]{6}', content)
-                    if hexes:
-                        return [h.upper() for h in set(hexes)]
-            # Если не нашли, ищем в .model файлах
+                        # Если не нашли #, попробуем найти 6-значные hex без #
+                        hexes_no_hash = re.findall(r'\b([A-Fa-f0-9]{6})\b', match.group(1))
+                        if hexes_no_hash:
+                            logger.info(f"Найдены hex-коды без # в filament_colour: {hexes_no_hash}")
+                            return ['#' + h.upper() for h in set(hexes_no_hash)]
+
+                    # Если не нашли массив, ищем все hex-коды во всём config
+                    hexes_all = re.findall(r'#[A-Fa-f0-9]{6}', content)
+                    if hexes_all:
+                        logger.info(f"Найдены hex-коды во всём config: {len(hexes_all)} шт.")
+                        return [h.upper() for h in set(hexes_all)]
+
+                    # Попробуем без #
+                    hexes_no_hash_all = re.findall(r'\b([A-Fa-f0-9]{6})\b', content)
+                    if hexes_no_hash_all:
+                        logger.info(f"Найдены hex-коды без # во всём config: {len(hexes_no_hash_all)} шт.")
+                        return ['#' + h.upper() for h in set(hexes_no_hash_all)]
+
+            # 2. Ищем в .model файлах
             model_files = [f for f in zf.namelist() if f.endswith('.model')]
             for mf in model_files:
                 with zf.open(mf) as f:
@@ -143,10 +150,17 @@ def extract_colors_from_3mf(file_bytes: bytes) -> list:
                     hexes = re.findall(r'#[A-Fa-f0-9]{6}', content)
                     if hexes:
                         colors.extend([h.upper() for h in set(hexes)])
+                    hexes_no_hash = re.findall(r'\b([A-Fa-f0-9]{6})\b', content)
+                    if hexes_no_hash:
+                        colors.extend(['#' + h.upper() for h in set(hexes_no_hash)])
+
     except Exception as e:
         logger.error(f"Ошибка парсинга 3MF: {e}")
         return []
-    return list(set(colors))
+
+    unique_colors = list(set(colors))
+    logger.info(f"Всего найдено уникальных цветов: {len(unique_colors)}")
+    return unique_colors
 
 def group_similar_colors(colors, tolerance=30):
     if not colors:
