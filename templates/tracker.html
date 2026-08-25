@@ -17,7 +17,6 @@
         .table-cell-wrap { max-width: 200px; white-space: normal; word-break: break-word; }
         @media (max-width: 768px) { .table-cell-wrap { max-width: 140px; } }
 
-        /* Календарь – компактный */
         .calendar-wrapper { max-width: 600px; margin: 0 auto; }
         .calendar-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
         .calendar-day { aspect-ratio: 1; display: flex; align-items: center; justify-content: center; border-radius: 0.5rem; cursor: default; font-size: 0.8rem; background-color: transparent; transition: background 0.2s; }
@@ -34,7 +33,6 @@
             .calendar-day { font-size: 0.9rem; }
         }
 
-        /* Модальное окно */
         .modal { display: none; position: fixed; inset: 0; background-color: rgba(0,0,0,0.5); align-items: center; justify-content: center; z-index: 50; padding: 1rem; }
         .modal.active { display: flex; }
         .modal-content { background-color: white; border-radius: 1rem; max-width: 480px; width: 100%; max-height: 80vh; overflow-y: auto; padding: 1.5rem; box-shadow: 0 20px 60px rgba(0,0,0,0.3); }
@@ -63,6 +61,7 @@
                 <span class="text-sm bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300 px-2 py-1 rounded-full">v2</span>
             </div>
             <div class="flex items-center gap-3 flex-wrap">
+                <a href="/upload_3mf" class="text-sm bg-purple-500 hover:bg-purple-600 text-white px-3 py-1.5 rounded-lg transition">📐 Анализ 3MF</a>
                 <span id="last-update" class="text-sm text-gray-500 dark:text-gray-400">Обновлено: сейчас</span>
                 <button onclick="refreshAll()" class="bg-blue-500 hover:bg-blue-600 text-white text-sm px-4 py-2 rounded-lg shadow transition">
                     ↻ Обновить
@@ -144,7 +143,7 @@
             </div>
         </div>
 
-        <!-- Контент: Задачи (календарь) -->
+        <!-- Контент: Задачи -->
         <div id="tab-tasks" class="tab-content">
             <!-- Фильтры и поиск -->
             <div class="flex flex-wrap items-center gap-4 mb-6 bg-white dark:bg-gray-800 p-4 rounded-lg shadow">
