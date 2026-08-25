@@ -11,14 +11,7 @@
         .file-drop-zone:hover, .file-drop-zone.dragover { border-color: #3b82f6; background-color: rgba(59,130,246,0.05); }
         .dark .file-drop-zone { border-color: #475569; }
         .dark .file-drop-zone:hover, .dark .file-drop-zone.dragover { border-color: #60a5fa; background-color: rgba(96,165,250,0.05); }
-        .match-item { border-left: 4px solid #888; padding: 10px; margin-bottom: 10px; background: #f9f9f9; border-radius: 4px; position: relative; }
-        .match-item input[type="radio"] { position: absolute; top: 10px; right: 10px; transform: scale(1.5); }
-        .match-item.selected { border-left: 4px solid #0066cc; background: #e6f3ff; }
-        .dark .match-item { background: #1f2937; }
-        .dark .match-item.selected { background: #1e3a5f; border-left-color: #60a5fa; }
         .color-box { width: 30px; height: 30px; display: inline-block; border: 1px solid #000; vertical-align: middle; margin-right: 10px; }
-        .match-group { margin-bottom: 2em; }
-        .match-color-box { width: 20px; height: 20px; display: inline-block; border: 1px solid #000; vertical-align: middle; margin-right: 5px; }
         .summary-item { margin-bottom: 15px; padding: 10px; border-left: 4px solid #0066cc; background: #f9f9f9; }
         .dark .summary-item { background: #1f2937; border-left-color: #60a5fa; }
         @media print { .no-print { display: none !important; } }
@@ -33,7 +26,7 @@
         </header>
 
         <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
-            <p class="text-gray-600 dark:text-gray-400 mb-4">Загрузите 3MF-файл, и мы извлечём все цвета, подберём ближайшие из базы Bambu Lab и покажем палитру.</p>
+            <p class="text-gray-600 dark:text-gray-400 mb-4">Загрузите 3MF-файл, и мы автоматически подберём соответствующие цвета из базы Bambu Lab.</p>
             <p class="text-xs text-gray-500 dark:text-gray-400 mb-4">Файл обрабатывается на сервере и не сохраняется.</p>
 
             <form id="upload-form" enctype="multipart/form-data">
@@ -50,13 +43,8 @@
 
             <div id="loading" class="mt-4 text-center hidden text-blue-500">⏳ Анализируем файл... Это может занять несколько секунд.</div>
             <div id="result" class="mt-6 hidden"></div>
-            <div id="selection-section" class="mt-4 hidden no-print">
-                <button id="generate-summary" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition">
-                    📋 Сформировать сводку для выбранных цветов
-                </button>
-            </div>
             <div id="summary" class="mt-6 hidden bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
-                <h3 class="text-xl font-bold mb-2">📋 Сводка выбранных цветов</h3>
+                <h3 class="text-xl font-bold mb-2">📋 Список цветов</h3>
                 <div class="flex gap-2 mb-4 no-print">
                     <button onclick="window.print()" class="bg-green-600 hover:bg-green-700 text-white px-3 py-1 rounded-lg text-sm">🖨️ Печать</button>
                     <button id="copy-summary" class="bg-gray-600 hover:bg-gray-700 text-white px-3 py-1 rounded-lg text-sm">📋 Копировать</button>
@@ -83,7 +71,6 @@
         const loadingDiv = document.getElementById('loading');
         const resultDiv = document.getElementById('result');
         const form = document.getElementById('upload-form');
-        const selectionSection = document.getElementById('selection-section');
         const summaryDiv = document.getElementById('summary');
         const summaryContent = document.getElementById('summary-content');
 
@@ -115,8 +102,6 @@
         }
 
         // ---------- Основная логика ----------
-        let currentData = null;
-
         form.addEventListener('submit', async (e) => {
             e.preventDefault();
             if (!fileInput.files.length) return;
@@ -129,7 +114,6 @@
             resultDiv.classList.add('hidden');
             resultDiv.innerHTML = '';
             summaryDiv.classList.add('hidden');
-            selectionSection.classList.add('hidden');
             submitBtn.disabled = true;
 
             try {
@@ -148,9 +132,7 @@
                     return;
                 }
 
-                currentData = data;
                 renderResults(data);
-                selectionSection.classList.remove('hidden');
 
             } catch (err) {
                 loadingDiv.classList.add('hidden');
@@ -169,83 +151,36 @@
             }
 
             let html = `<div class="mb-4"><span class="font-semibold">🎨 Найдено цветов: ${data.count}</span></div>`;
-            html += `<div id="match-groups">`;
-
-            colors.forEach((colorGroup, idx) => {
-                const inputHex = colorGroup.input_hex;
-                const matches = colorGroup.matches || [];
-                html += `<div class="match-group" data-color-index="${idx}">`;
-                html += `<h4 class="font-semibold mb-2">Цвет ${idx+1}: <span class="color-box" style="background:${inputHex};"></span> ${inputHex}</h4>`;
-                if (matches.length === 0) {
-                    html += `<p class="text-gray-500">Совпадений не найдено</p>`;
-                } else {
-                    matches.forEach((match, mi) => {
-                        const isExact = match.distance < 3;
-                        const checked = mi === 0 ? 'checked' : '';
-                        html += `
-                            <div class="match-item ${mi === 0 ? 'selected' : ''}">
-                                <input type="radio" name="color-${idx}" value="${mi}" ${checked} onchange="selectMatch(${idx}, ${mi})">
-                                <span class="match-color-box" style="background:${match.hex};"></span>
-                                <strong>${match.name}</strong> (${match.hex}) ${isExact ? '🎯 <span class="text-green-600 font-bold">EXCELLENT</span>' : ''}<br>
-                                <span class="text-sm text-gray-600 dark:text-gray-400">Тип: ${match.type} | Код: ${match.code} | Расположение: ${match.location}</span><br>
-                                <span class="text-xs text-gray-500">Расстояние: ${match.distance.toFixed(2)}</span>
-                            </div>
-                        `;
-                    });
-                }
-                html += `</div>`;
+            html += `<div id="color-list">`;
+            colors.forEach((color, idx) => {
+                html += `
+                    <div class="summary-item">
+                        <strong>${idx+1}.</strong>
+                        <span class="color-box" style="background:${color.hex}; display:inline-block; width:30px; height:30px; border:1px solid #000; vertical-align:middle; margin-right:10px;"></span>
+                        <strong>${color.name}</strong> (${color.hex})<br>
+                        <span class="text-sm">Тип: ${color.type} | Код: ${color.code} | Расположение: ${color.location}</span>
+                    </div>
+                `;
             });
-
             html += `</div>`;
             resultDiv.innerHTML = html;
             resultDiv.classList.remove('hidden');
 
+            // Показываем палитру, если есть
             if (data.palette) {
-                const paletteHtml = `<div class="mt-4"><h4 class="font-semibold">Палитра:</h4><img src="data:image/png;base64,${data.palette}" alt="Палитра цветов" class="mt-2 max-w-full border rounded-lg shadow"></div>`;
+                const paletteHtml = `<div class="mt-4"><h4 class="font-semibold">Палитра модели:</h4><img src="data:image/png;base64,${data.palette}" alt="Палитра цветов" class="mt-2 max-w-full border rounded-lg shadow"></div>`;
                 resultDiv.innerHTML += paletteHtml;
             }
-        }
 
-        function selectMatch(colorIndex, matchIndex) {
-            const group = document.querySelector(`.match-group[data-color-index="${colorIndex}"]`);
-            if (!group) return;
-            const items = group.querySelectorAll('.match-item');
-            items.forEach((item, idx) => {
-                if (idx === matchIndex) item.classList.add('selected');
-                else item.classList.remove('selected');
+            // Готовим сводку для копирования/печати
+            let textSummary = "Список цветов:\n\n";
+            colors.forEach((color, idx) => {
+                textSummary += `${idx+1}. ${color.name} (${color.hex}) - ${color.type} [${color.location}]\n`;
             });
-        }
-
-        document.getElementById('generate-summary').addEventListener('click', function() {
-            if (!currentData) return;
-            const colors = currentData.colors;
-            let summaryHTML = '';
-            let textSummary = '';
-
-            colors.forEach((colorGroup, idx) => {
-                const selectedRadio = document.querySelector(`input[name="color-${idx}"]:checked`);
-                const matchIndex = selectedRadio ? parseInt(selectedRadio.value) : 0;
-                const match = colorGroup.matches[matchIndex];
-                if (!match) return;
-
-                const isExact = match.distance < 3;
-                summaryHTML += `
-                    <div class="summary-item">
-                        <strong>Цвет ${idx+1}:</strong>
-                        <span class="match-color-box print-color-box" style="background:${match.hex}; display:inline-block; width:20px; height:20px; border:1px solid #000; vertical-align:middle; margin-right:5px;"></span>
-                        ${match.name} (${match.hex}) ${isExact ? '🎯 EXCELLENT' : ''}<br>
-                        <span class="text-sm">Тип: ${match.type} | Код: ${match.code} | Расположение: ${match.location}</span><br>
-                        <span class="text-xs text-gray-500">Расстояние: ${match.distance.toFixed(2)}</span>
-                    </div>
-                `;
-                textSummary += `Цвет ${idx+1}: ${match.name} (${match.hex})${isExact ? ' 🎯 EXCELLENT' : ''}\nТип: ${match.type} | Код: ${match.code} | Расположение: ${match.location}\nРасстояние: ${match.distance.toFixed(2)}\n\n`;
-            });
-
-            summaryContent.innerHTML = summaryHTML;
-            summaryDiv.classList.remove('hidden');
-            summaryDiv.scrollIntoView({ behavior: 'smooth' });
             window._textSummary = textSummary;
-        });
+            summaryDiv.classList.remove('hidden');
+            summaryContent.innerHTML = resultDiv.innerHTML; // копируем содержимое
+        }
 
         document.getElementById('copy-summary').addEventListener('click', function() {
             const text = window._textSummary || '';
