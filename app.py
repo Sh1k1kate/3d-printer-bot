@@ -7,13 +7,21 @@ from aiogram import Bot, Dispatcher
 from aiogram.types import Update
 from aiogram.fsm.storage.memory import MemoryStorage
 from handlers import router
-from handlers_3mf import router as router_3mf, extract_colors_from_3mf, group_similar_colors, rgb_to_color_name, generate_color_palette
+from handlers_3mf import (
+    router as router_3mf,
+    extract_colors_from_3mf,
+    group_similar_colors,
+    generate_color_palette,
+    BAMBU_COLORS,
+    find_closest_colors,
+    hex_to_rgb,
+    rgb_to_hex
+)
 from config import BOT_TOKEN, BAMBU_EMAIL, BAMBU_PASSWORD
 from google_sheets import SheetManager, moscow_now
 from datetime import datetime, timedelta
 import aiohttp
 import base64
-from io import BytesIO
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -167,31 +175,38 @@ async def upload_3mf_page(request: Request):
 async def analyze_3mf_api(file: UploadFile = File(...)):
     if not file.filename.lower().endswith('.3mf'):
         raise HTTPException(status_code=400, detail="Файл должен иметь расширение .3mf")
-
     try:
         file_bytes = await file.read()
         raw_colors = extract_colors_from_3mf(file_bytes)
         if not raw_colors:
             raise HTTPException(status_code=400, detail="Не удалось найти цвета в файле")
-
         grouped = group_similar_colors(raw_colors, tolerance=30)
-        color_list = []
+        result = []
         for rgb in grouped:
-            name = rgb_to_color_name(rgb)
-            if name.startswith('#'):
-                color_list.append(f"{name} (RGB {rgb[0]},{rgb[1]},{rgb[2]})")
-            else:
-                color_list.append(f"{name.capitalize()} (RGB {rgb[0]},{rgb[1]},{rgb[2]})")
-
+            hex_str = rgb_to_hex(rgb)
+            matches = find_closest_colors(hex_str, BAMBU_COLORS, top_n=5)
+            result.append({
+                "input_hex": hex_str,
+                "matches": [
+                    {
+                        "name": m[1]['name'],
+                        "hex": m[1]['hex'],
+                        "type": m[1]['type'],
+                        "code": m[1]['code'],
+                        "location": m[1]['location'],
+                        "distance": round(m[0], 2)
+                    }
+                    for m in matches
+                ]
+            })
         palette_img = generate_color_palette(grouped)
         palette_base64 = None
         if palette_img:
             palette_base64 = base64.b64encode(palette_img).decode('utf-8')
-
         return JSONResponse(content={
-            "colors": color_list,
+            "colors": result,
             "palette": palette_base64,
-            "count": len(grouped)
+            "count": len(result)
         })
     except Exception as e:
         logger.error(f"Ошибка анализа 3MF: {e}")
