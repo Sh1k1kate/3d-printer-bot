@@ -17,7 +17,7 @@
         .table-cell-wrap { max-width: 200px; white-space: normal; word-break: break-word; }
         @media (max-width: 768px) { .table-cell-wrap { max-width: 140px; } }
 
-        /* Календарь – компактный на десктопе */
+        /* Календарь – компактный */
         .calendar-wrapper { max-width: 600px; margin: 0 auto; }
         .calendar-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
         .calendar-day { aspect-ratio: 1; display: flex; align-items: center; justify-content: center; border-radius: 0.5rem; cursor: default; font-size: 0.8rem; background-color: transparent; transition: background 0.2s; }
@@ -29,7 +29,6 @@
         .calendar-day.has-tasks .day-number { background-color: rgba(59, 130, 246, 0.2); }
         .calendar-day.has-tasks.completed .day-number { background-color: rgba(34, 197, 94, 0.2); }
         .calendar-day.has-tasks.overdue .day-number { background-color: rgba(239, 68, 68, 0.2); }
-        /* На мобилках календарь шире */
         @media (max-width: 640px) {
             .calendar-wrapper { max-width: 100%; }
             .calendar-day { font-size: 0.9rem; }
@@ -49,7 +48,6 @@
         .month-nav button:hover { background-color: rgba(0,0,0,0.05); }
         .dark .month-nav button:hover { background-color: rgba(255,255,255,0.05); }
 
-        /* Тема – плавное переключение без мигания */
         .theme-toggle-btn { background: none; border: none; cursor: pointer; font-size: 1.2rem; padding: 0.25rem 0.75rem; border-radius: 0.5rem; }
         .theme-toggle-btn:hover { background-color: rgba(0,0,0,0.05); }
         .dark .theme-toggle-btn:hover { background-color: rgba(255,255,255,0.05); }
@@ -82,7 +80,7 @@
             <button class="tab-btn px-4 py-2 text-sm font-medium border-b-2 border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300" data-tab="tasks">📌 Задачи</button>
         </div>
 
-        <!-- Контент: Заказы (без изменений) -->
+        <!-- Контент: Заказы -->
         <div id="tab-orders" class="tab-content active">
             <!-- Фильтры и поиск -->
             <div class="flex flex-wrap items-center gap-4 mb-6 bg-white dark:bg-gray-800 p-4 rounded-lg shadow">
@@ -148,7 +146,7 @@
 
         <!-- Контент: Задачи (календарь) -->
         <div id="tab-tasks" class="tab-content">
-            <!-- Фильтры и поиск для задач -->
+            <!-- Фильтры и поиск -->
             <div class="flex flex-wrap items-center gap-4 mb-6 bg-white dark:bg-gray-800 p-4 rounded-lg shadow">
                 <div class="flex-1 min-w-[200px]">
                     <input type="text" id="search-input-tasks" placeholder="🔍 Поиск по задаче..." 
@@ -182,7 +180,7 @@
                 </div>
             </div>
 
-            <!-- Календарь – компактный -->
+            <!-- Календарь -->
             <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-4 calendar-wrapper">
                 <div class="month-nav">
                     <button onclick="changeMonth(-1)">◀</button>
@@ -204,12 +202,12 @@
                 <span class="ml-2 text-sm font-normal text-gray-500 dark:text-gray-400" id="printers-update"></span>
             </h2>
             <div id="printers-status" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 printers-grid">
-                <!-- Загружается через JS -->
+                <!-- загружается через JS -->
             </div>
         </div>
     </div>
 
-    <!-- Модальное окно для задач -->
+    <!-- Модальное окно -->
     <div id="task-modal" class="modal">
         <div class="modal-content">
             <div class="flex justify-between items-center mb-4">
@@ -257,7 +255,7 @@
             });
         });
 
-        // ---------- Данные заказов (без изменений) ----------
+        // ---------- Заказы ----------
         let allOrders = [];
         let currentOrderFilter = 'all';
         let orderSearchQuery = '';
@@ -397,7 +395,7 @@
         let currentTaskFilter = 'all';
         let taskSearchQuery = '';
         let calendarYear = new Date().getFullYear();
-        let calendarMonth = new Date().getMonth(); // 0-based
+        let calendarMonth = new Date().getMonth();
 
         function renderTasks(tasks) {
             allTasks = tasks;
@@ -415,11 +413,10 @@
             monthYear.textContent = new Date(year, month).toLocaleString('ru', { month: 'long', year: 'numeric' });
 
             const firstDay = new Date(year, month, 1);
-            const startWeekday = firstDay.getDay(); // 0 = воскресенье
+            const startWeekday = firstDay.getDay();
             const daysInMonth = new Date(year, month + 1, 0).getDate();
             const today = new Date();
 
-            // Фильтруем задачи по фильтру и поиску
             const filteredTasks = allTasks.filter(task => {
                 const matchesSearch = task.title.toLowerCase().includes(taskSearchQuery.toLowerCase()) ||
                                      (task.assignee && task.assignee.toLowerCase().includes(taskSearchQuery.toLowerCase()));
@@ -430,28 +427,24 @@
                 return matchesSearch && statusMatch;
             });
 
-            // Группируем задачи по дате
             const tasksByDate = {};
             filteredTasks.forEach(task => {
-                const date = task.deadline; // формат YYYY-MM-DD
+                const date = task.deadline;
                 if (!tasksByDate[date]) tasksByDate[date] = [];
                 tasksByDate[date].push(task);
             });
 
             const days = [];
-            const totalDays = daysInMonth;
-            // Заполняем пустые ячейки перед первым днём
             for (let i = 0; i < (startWeekday === 0 ? 6 : startWeekday - 1); i++) {
                 days.push({ day: null, isOtherMonth: true });
             }
-            for (let d = 1; d <= totalDays; d++) {
+            for (let d = 1; d <= daysInMonth; d++) {
                 const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
                 const hasTasks = tasksByDate[dateStr] && tasksByDate[dateStr].length > 0;
                 const isToday = (year === today.getFullYear() && month === today.getMonth() && d === today.getDate());
                 days.push({ day: d, dateStr, hasTasks, isToday, tasks: tasksByDate[dateStr] || [] });
             }
 
-            // Заполняем оставшиеся ячейки до конца недели
             const remaining = 7 - (days.length % 7);
             if (remaining < 7) {
                 for (let i = 0; i < remaining; i++) {
@@ -460,9 +453,7 @@
             }
 
             grid.innerHTML = days.map(day => {
-                if (day.day === null) {
-                    return `<div class="calendar-day"></div>`;
-                }
+                if (day.day === null) return `<div class="calendar-day"></div>`;
                 const isOtherMonth = day.isOtherMonth || false;
                 const hasTasks = day.hasTasks || false;
                 const isToday = day.isToday || false;
@@ -506,12 +497,10 @@
             const modalDate = document.getElementById('modal-date');
             const modalList = document.getElementById('modal-tasks-list');
 
-            // Форматируем дату для отображения
             const parts = dateStr.split('-');
             const dateObj = new Date(parts[0], parts[1]-1, parts[2]);
             modalDate.textContent = dateObj.toLocaleDateString('ru', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
 
-            // Находим задачи на эту дату (с учётом фильтров)
             const filteredTasks = allTasks.filter(task => {
                 const matchesSearch = task.title.toLowerCase().includes(taskSearchQuery.toLowerCase()) ||
                                      (task.assignee && task.assignee.toLowerCase().includes(taskSearchQuery.toLowerCase()));
@@ -544,7 +533,6 @@
             document.getElementById('task-modal').classList.remove('active');
         }
 
-        // Закрытие модального окна по клику вне его
         document.getElementById('task-modal').addEventListener('click', function(e) {
             if (e.target === this) closeModal();
         });
@@ -606,7 +594,7 @@
             document.getElementById('last-update').textContent = 'Обновлено: ' + new Date().toLocaleTimeString();
         }
 
-        // ---------- Поиск и фильтры для задач ----------
+        // ---------- Поиск и фильтры ----------
         document.getElementById('search-input-tasks').addEventListener('input', function() {
             taskSearchQuery = this.value;
             renderCalendar();
@@ -629,7 +617,7 @@
         document.addEventListener('DOMContentLoaded', function() {
             loadOrders();
             loadPrinters();
-            loadTasks(); // загружаем задачи сразу (они отобразятся при переключении)
+            loadTasks();
         });
 
         setInterval(refreshAll, 30000);
