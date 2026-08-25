@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>📐 Анализ 3MF-файла</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { transition: background-color 0.3s, color 0.3s; }
+        .file-drop-zone { border: 2px dashed #cbd5e1; padding: 2rem; text-align: center; border-radius: 0.5rem; transition: border-color 0.3s; cursor: pointer; }
+        .file-drop-zone:hover, .file-drop-zone.dragover { border-color: #3b82f6; background-color: rgba(59,130,246,0.05); }
+        .dark .file-drop-zone { border-color: #475569; }
+        .dark .file-drop-zone:hover, .dark .file-drop-zone.dragover { border-color: #60a5fa; background-color: rgba(96,165,250,0.05); }
+    </style>
+</head>
+<body class="bg-gray-100 dark:bg-gray-900 text-gray-800 dark:text-gray-200 font-sans antialiased">
+    <div class="container mx-auto px-4 py-8 max-w-2xl">
+        <header class="flex justify-between items-center mb-6">
+            <h1 class="text-3xl font-bold">📐 Анализ 3MF</h1>
+            <a href="/tracker" class="text-blue-500 hover:text-blue-600 dark:text-blue-400 dark:hover:text-blue-300 text-sm">← Назад к трекеру</a>
+        </header>
+
+        <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+            <p class="text-gray-600 dark:text-gray-400 mb-4">Загрузите 3MF-файл, и мы извлечём все цвета, сгруппируем оттенки и покажем палитру.</p>
+            <p class="text-xs text-gray-500 dark:text-gray-400 mb-4">Файл обрабатывается на сервере и не сохраняется после завершения анализа.</p>
+
+            <form id="upload-form" enctype="multipart/form-data">
+                <div class="file-drop-zone" id="drop-zone">
+                    <p class="text-gray-500 dark:text-gray-400">Перетащите файл сюда или <span class="text-blue-500 underline">выберите на компьютере</span></p>
+                    <input type="file" id="file-input" name="file" accept=".3mf" required class="hidden" />
+                    <p class="text-xs text-gray-400 dark:text-gray-500 mt-2" id="file-name">Файл не выбран</p>
+                </div>
+                <button type="submit" id="submit-btn"
+                        class="w-full mt-4 bg-blue-500 hover:bg-blue-600 text-white font-medium py-2 rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed">
+                    Анализировать
+                </button>
+            </form>
+
+            <div id="loading" class="mt-4 text-center hidden text-blue-500">⏳ Анализируем файл... Это может занять несколько секунд.</div>
+            <div id="result" class="mt-6 hidden"></div>
+        </div>
+
+        <footer class="mt-8 text-center text-sm text-gray-500 dark:text-gray-400">
+            <p>Все данные обрабатываются локально, файлы не передаются третьим лицам.</p>
+        </footer>
+    </div>
+
+    <script>
+        const fileInput = document.getElementById('file-input');
+        const dropZone = document.getElementById('drop-zone');
+        const fileNameDisplay = document.getElementById('file-name');
+        const submitBtn = document.getElementById('submit-btn');
+        const loadingDiv = document.getElementById('loading');
+        const resultDiv = document.getElementById('result');
+        const form = document.getElementById('upload-form');
+
+        // Drag & Drop
+        dropZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropZone.classList.add('dragover');
+        });
+        dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('dragover');
+            if (e.dataTransfer.files.length) {
+                fileInput.files = e.dataTransfer.files;
+                updateFileName();
+            }
+        });
+        dropZone.addEventListener('click', () => fileInput.click());
+        fileInput.addEventListener('change', updateFileName);
+
+        function updateFileName() {
+            if (fileInput.files.length) {
+                const f = fileInput.files[0];
+                fileNameDisplay.textContent = `📎 ${f.name} (${(f.size / 1024 / 1024).toFixed(2)} МБ)`;
+                submitBtn.disabled = false;
+            } else {
+                fileNameDisplay.textContent = 'Файл не выбран';
+                submitBtn.disabled = true;
+            }
+        }
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            if (!fileInput.files.length) return;
+
+            const file = fileInput.files[0];
+            const formData = new FormData();
+            formData.append('file', file);
+
+            loadingDiv.classList.remove('hidden');
+            resultDiv.classList.add('hidden');
+            resultDiv.innerHTML = '';
+            submitBtn.disabled = true;
+
+            try {
+                const response = await fetch('/api/analyze_3mf', {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await response.json();
+
+                loadingDiv.classList.add('hidden');
+                submitBtn.disabled = false;
+
+                if (!response.ok) {
+                    resultDiv.innerHTML = `<div class="text-red-600">❌ Ошибка: ${data.detail || 'Неизвестная ошибка'}</div>`;
+                    resultDiv.classList.remove('hidden');
+                    return;
+                }
+
+                let html = `<div class="mt-4"><h3 class="font-semibold">🎨 Найдено цветов: ${data.count}</h3><ul class="list-disc list-inside mt-2 space-y-1 text-sm">`;
+                data.colors.forEach(color => {
+                    html += `<li>${color}</li>`;
+                });
+                html += `</ul></div>`;
+
+                if (data.palette) {
+                    html += `<div class="mt-6"><h3 class="font-semibold">Палитра:</h3><img src="data:image/png;base64,${data.palette}" alt="Палитра цветов" class="mt-2 max-w-full border rounded-lg shadow"></div>`;
+                }
+
+                resultDiv.innerHTML = html;
+                resultDiv.classList.remove('hidden');
+
+            } catch (err) {
+                loadingDiv.classList.add('hidden');
+                submitBtn.disabled = false;
+                resultDiv.innerHTML = `<div class="text-red-600">❌ Ошибка соединения: ${err.message}</div>`;
+                resultDiv.classList.remove('hidden');
+            }
+        });
+    </script>
+</body>
+</html>
