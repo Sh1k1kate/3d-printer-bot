@@ -1,8 +1,7 @@
 import zipfile
-import xml.etree.ElementTree as ET
-from io import BytesIO
 import math
 import re
+from io import BytesIO
 from aiogram import Router, F
 from aiogram.types import Message, BufferedInputFile
 from aiogram.filters import Command
@@ -99,50 +98,29 @@ def find_closest_colors(input_hex, colors, top_n=5):
     distances.sort(key=lambda x: x[0])
     return distances[:top_n]
 
-# ---------- Парсер 3MF (улучшенный) ----------
+# ---------- Парсер 3MF ----------
 def extract_colors_from_3mf(file_bytes: bytes) -> list:
-    """
-    Извлекает hex-цвета из 3MF-файла.
-    Ищет в project_settings.config (массив filament_colour или все hex-коды),
-    затем в .model файлах.
-    Поддерживает форматы #RRGGBB и RRGGBB.
-    """
     colors = []
     try:
         with zipfile.ZipFile(BytesIO(file_bytes)) as zf:
-            # 1. Ищем project_settings.config
             config_files = [f for f in zf.namelist() if f.lower().endswith('project_settings.config')]
             if config_files:
                 with zf.open(config_files[0]) as cf:
                     content = cf.read().decode('utf-8', errors='ignore')
-                    logger.info(f"Найден config файл, размер: {len(content)} символов")
-
-                    # Ищем массив filament_colour
                     match = re.search(r'"filament_colour":\s*\[([\s\S]*?)\]', content)
                     if match:
                         hexes = re.findall(r'#[A-Fa-f0-9]{6}', match.group(1))
                         if hexes:
-                            logger.info(f"Найдены hex-коды в filament_colour: {hexes}")
                             return [h.upper() for h in set(hexes)]
-                        # Если не нашли #, попробуем найти 6-значные hex без #
                         hexes_no_hash = re.findall(r'\b([A-Fa-f0-9]{6})\b', match.group(1))
                         if hexes_no_hash:
-                            logger.info(f"Найдены hex-коды без # в filament_colour: {hexes_no_hash}")
                             return ['#' + h.upper() for h in set(hexes_no_hash)]
-
-                    # Если не нашли массив, ищем все hex-коды во всём config
                     hexes_all = re.findall(r'#[A-Fa-f0-9]{6}', content)
                     if hexes_all:
-                        logger.info(f"Найдены hex-коды во всём config: {len(hexes_all)} шт.")
                         return [h.upper() for h in set(hexes_all)]
-
-                    # Попробуем без #
                     hexes_no_hash_all = re.findall(r'\b([A-Fa-f0-9]{6})\b', content)
                     if hexes_no_hash_all:
-                        logger.info(f"Найдены hex-коды без # во всём config: {len(hexes_no_hash_all)} шт.")
                         return ['#' + h.upper() for h in set(hexes_no_hash_all)]
-
-            # 2. Ищем в .model файлах
             model_files = [f for f in zf.namelist() if f.endswith('.model')]
             for mf in model_files:
                 with zf.open(mf) as f:
@@ -153,20 +131,40 @@ def extract_colors_from_3mf(file_bytes: bytes) -> list:
                     hexes_no_hash = re.findall(r'\b([A-Fa-f0-9]{6})\b', content)
                     if hexes_no_hash:
                         colors.extend(['#' + h.upper() for h in set(hexes_no_hash)])
-
     except Exception as e:
         logger.error(f"Ошибка парсинга 3MF: {e}")
         return []
+    return list(set(colors))
 
-    unique_colors = list(set(colors))
-    logger.info(f"Всего найдено уникальных цветов: {len(unique_colors)}")
-    return unique_colors
+def normalize_color(rgb):
+    """
+    Приводит очень светлые/тёмные цвета к чистому белому/чёрному, 
+    а также объединяет очень близкие оттенки серого.
+    """
+    r, g, b = rgb
+    # Если цвет близок к чёрному (сумма < 50) -> чёрный
+    if r + g + b < 50:
+        return (0, 0, 0)
+    # Если цвет близок к белому (сумма > 700) -> белый
+    if r + g + b > 700:
+        return (255, 255, 255)
+    # Если цвет почти серый (все каналы близки) и яркость средняя -> серый
+    if max(r,g,b) - min(r,g,b) < 20:
+        avg = (r + g + b) // 3
+        return (avg, avg, avg)
+    return rgb
 
-def group_similar_colors(colors, tolerance=30):
+def group_similar_colors(colors, tolerance=50):
+    """
+    Группирует близкие цвета по евклидову расстоянию в RGB.
+    Использует tolerance=50 (было 30) для более агрессивной группировки.
+    """
     if not colors:
         return []
+    # Сначала нормализуем цвета
+    normalized = [normalize_color(rgb) for rgb in colors]
     groups = []
-    for rgb in colors:
+    for rgb in normalized:
         if not isinstance(rgb, tuple) or len(rgb) != 3:
             continue
         found = False
@@ -246,7 +244,7 @@ async def handle_3mf_file(message: Message):
             )
             return
         raw_colors_rgb = [hex_to_rgb(h) for h in raw_colors_hex]
-        grouped = group_similar_colors(raw_colors_rgb, tolerance=30)
+        grouped = group_similar_colors(raw_colors_rgb, tolerance=50)
         color_list = []
         for rgb in grouped:
             hex_str = rgb_to_hex(rgb)
