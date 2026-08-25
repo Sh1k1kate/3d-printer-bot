@@ -43,7 +43,6 @@ class AccessMiddleware(BaseMiddleware):
             return
         return await handler(event, data)
 
-# Регистрируем middleware
 router.message.middleware(AccessMiddleware())
 router.callback_query.middleware(AccessMiddleware())
 
@@ -1295,8 +1294,10 @@ async def view_task(callback: CallbackQuery):
         await callback.answer("Задача не найдена", show_alert=True)
         return
     text = f"📌 *{task['title']}*\n"
-    text += f"📅 Срок: {task['deadline']} {task['time']}\n"
-    text += f"👤 Исполнитель: {task['assignee'] if task['assignee'] else 'Общая'}\n"
+    text += f"📅 Срок: {task['deadline']}"
+    if task.get('time'):
+        text += f" {task['time']}"
+    text += f"\n👤 Исполнитель: {task['assignee'] if task['assignee'] else 'Общая'}\n"
     text += f"Статус: {'✅ Выполнена' if task['status'] != 'active' else '⏳ Активна'}"
     try:
         await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=task_actions_keyboard(task_id))
