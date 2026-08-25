@@ -7,6 +7,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.types import Update
 from aiogram.fsm.storage.memory import MemoryStorage
 from handlers import router
+from handlers_3mf import router as router_3mf
 from config import BOT_TOKEN, BAMBU_EMAIL, BAMBU_PASSWORD
 from google_sheets import SheetManager, moscow_now
 from datetime import datetime, timedelta
@@ -20,7 +21,7 @@ if not BOT_TOKEN:
     logger.error("BOT_TOKEN не задан в переменных окружения!")
     raise ValueError("BOT_TOKEN is required")
 
-# ---------- Глобальный экземпляр SheetManager (инициализируется один раз) ----------
+# ---------- Глобальный экземпляр SheetManager ----------
 try:
     sheet_manager = SheetManager()
     logger.info("SheetManager успешно инициализирован")
@@ -32,6 +33,7 @@ except Exception as e:
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 dp.include_router(router)
+dp.include_router(router_3mf)
 
 # ---------- FastAPI app ----------
 app = FastAPI()
@@ -186,7 +188,7 @@ async def get_tasks_api():
     if not sheet_manager:
         return JSONResponse(content={"error": "SheetManager не инициализирован"}, status_code=500)
     try:
-        tasks = sheet_manager.get_active_tasks()  # все активные задачи
+        tasks = sheet_manager.get_active_tasks()
         result = []
         for task in tasks:
             result.append({
@@ -243,7 +245,6 @@ async def check_tasks():
                         logger.warning(f"Нет подписчиков для общей задачи {task_id}")
                         continue
 
-                # Утреннее уведомление в 9:00
                 if now.hour == 9 and now.minute == 0 and task["notified_morning"] == "0":
                     for recipient in recipients:
                         try:
@@ -257,7 +258,6 @@ async def check_tasks():
                     sheet_manager.update_task_notification(task_id, 'notified_morning', '1')
                     logger.info(f"Отправлено утреннее уведомление для задачи {task_id}")
 
-                # Уведомления за 60, 30, 15, 0 минут
                 notifications = [
                     (60, 'notified_60'),
                     (30, 'notified_30'),
