@@ -1,7 +1,8 @@
 import zipfile
+import xml.etree.ElementTree as ET
+from io import BytesIO
 import math
 import re
-from io import BytesIO
 from aiogram import Router, F
 from aiogram.types import Message, BufferedInputFile
 from aiogram.filters import Command
@@ -52,7 +53,7 @@ BAMBU_COLORS = [
     {"type":"PETG Translucent","name":"Inland Clear","hex":"#F0F2F5","code":0,"location":"PETG Translucent 01"}
 ]
 
-# ---------- Цветовые функции ----------
+# ---------- Улучшенные цветовые функции ----------
 def hex_to_rgb(hex_str):
     hex_str = hex_str.strip().upper().replace('#', '')
     if len(hex_str) == 6:
@@ -63,6 +64,7 @@ def rgb_to_hex(rgb):
     return f"#{rgb[0]:02X}{rgb[1]:02X}{rgb[2]:02X}"
 
 def rgb_to_lab(r, g, b):
+    """Конвертирует RGB в LAB (D65)."""
     r /= 255.0
     g /= 255.0
     b /= 255.0
@@ -72,9 +74,13 @@ def rgb_to_lab(r, g, b):
     x = r * 0.4124 + g * 0.3576 + b * 0.1805
     y = r * 0.2126 + g * 0.7152 + b * 0.0722
     z = r * 0.0193 + g * 0.1192 + b * 0.9505
-    x *= 100; y *= 100; z *= 100
+    x *= 100
+    y *= 100
+    z *= 100
     xn, yn, zn = 95.047, 100.000, 108.883
-    x /= xn; y /= yn; z /= zn
+    x /= xn
+    y /= yn
+    z /= zn
     fx = x ** (1/3) if x > 0.008856 else (7.787 * x + 16/116)
     fy = y ** (1/3) if y > 0.008856 else (7.787 * y + 16/116)
     fz = z ** (1/3) if z > 0.008856 else (7.787 * z + 16/116)
@@ -84,6 +90,7 @@ def rgb_to_lab(r, g, b):
     return (l, a, b)
 
 def delta_e_2000(lab1, lab2):
+    # Приблизительно: евклидово расстояние в LAB (достаточно для группировки)
     return math.sqrt((lab1[0]-lab2[0])**2 + (lab1[1]-lab2[1])**2 + (lab1[2]-lab2[2])**2)
 
 def find_closest_colors(input_hex, colors, top_n=5):
@@ -103,24 +110,32 @@ def extract_colors_from_3mf(file_bytes: bytes) -> list:
     colors = []
     try:
         with zipfile.ZipFile(BytesIO(file_bytes)) as zf:
+            # Ищем project_settings.config
             config_files = [f for f in zf.namelist() if f.lower().endswith('project_settings.config')]
             if config_files:
                 with zf.open(config_files[0]) as cf:
                     content = cf.read().decode('utf-8', errors='ignore')
+                    # Ищем массив filament_colour
                     match = re.search(r'"filament_colour":\s*\[([\s\S]*?)\]', content)
                     if match:
                         hexes = re.findall(r'#[A-Fa-f0-9]{6}', match.group(1))
                         if hexes:
+                            logger.info(f"[3MF] Найдено {len(hexes)} цветов в filament_colour")
                             return [h.upper() for h in set(hexes)]
                         hexes_no_hash = re.findall(r'\b([A-Fa-f0-9]{6})\b', match.group(1))
                         if hexes_no_hash:
+                            logger.info(f"[3MF] Найдено {len(hexes_no_hash)} цветов без # в filament_colour")
                             return ['#' + h.upper() for h in set(hexes_no_hash)]
+                    # Если не нашли массив, ищем все hex-коды во всём config
                     hexes_all = re.findall(r'#[A-Fa-f0-9]{6}', content)
                     if hexes_all:
+                        logger.info(f"[3MF] Найдено {len(hexes_all)} цветов во всём config")
                         return [h.upper() for h in set(hexes_all)]
                     hexes_no_hash_all = re.findall(r'\b([A-Fa-f0-9]{6})\b', content)
                     if hexes_no_hash_all:
+                        logger.info(f"[3MF] Найдено {len(hexes_no_hash_all)} цветов без # во всём config")
                         return ['#' + h.upper() for h in set(hexes_no_hash_all)]
+            # 2. Ищем в .model файлах
             model_files = [f for f in zf.namelist() if f.endswith('.model')]
             for mf in model_files:
                 with zf.open(mf) as f:
@@ -134,53 +149,86 @@ def extract_colors_from_3mf(file_bytes: bytes) -> list:
     except Exception as e:
         logger.error(f"Ошибка парсинга 3MF: {e}")
         return []
-    return list(set(colors))
+    unique = list(set(colors))
+    logger.info(f"[3MF] Всего уникальных цветов: {len(unique)}")
+    return unique
 
-def normalize_color(rgb):
+def group_similar_colors(colors_rgb, tolerance=20, max_colors=10):
     """
-    Приводит очень светлые/тёмные цвета к чистому белому/чёрному, 
-    а также объединяет очень близкие оттенки серого.
+    Группирует RGB цвета на основе расстояния в LAB.
+    tolerance — порог Delta E (рекомендуется 15-25 для чёрного/серого).
+    max_colors — максимальное количество цветов на выходе.
     """
-    r, g, b = rgb
-    # Если цвет близок к чёрному (сумма < 50) -> чёрный
-    if r + g + b < 50:
-        return (0, 0, 0)
-    # Если цвет близок к белому (сумма > 700) -> белый
-    if r + g + b > 700:
-        return (255, 255, 255)
-    # Если цвет почти серый (все каналы близки) и яркость средняя -> серый
-    if max(r,g,b) - min(r,g,b) < 20:
-        avg = (r + g + b) // 3
-        return (avg, avg, avg)
-    return rgb
-
-def group_similar_colors(colors, tolerance=50):
-    """
-    Группирует близкие цвета по евклидову расстоянию в RGB.
-    Использует tolerance=50 (было 30) для более агрессивной группировки.
-    """
-    if not colors:
+    if not colors_rgb:
         return []
-    # Сначала нормализуем цвета
-    normalized = [normalize_color(rgb) for rgb in colors]
-    groups = []
-    for rgb in normalized:
-        if not isinstance(rgb, tuple) or len(rgb) != 3:
-            continue
+
+    # Конвертируем все цвета в LAB
+    colors_lab = [rgb_to_lab(r, g, b) for (r, g, b) in colors_rgb]
+
+    # Группировка: итеративно объединяем ближайшие пары
+    groups = []  # каждый элемент — список индексов
+    for i, lab in enumerate(colors_lab):
         found = False
         for group in groups:
-            avg = tuple(int(sum(c[i] for c in group) / len(group)) for i in range(3))
-            if math.sqrt(sum((rgb[i] - avg[i])**2 for i in range(3))) < tolerance:
-                group.append(rgb)
+            avg_lab = tuple(sum(colors_lab[idx][k] for idx in group) / len(group) for k in range(3))
+            if delta_e_2000(lab, avg_lab) < tolerance:
+                group.append(i)
                 found = True
                 break
         if not found:
-            groups.append([rgb])
-    averaged = []
+            groups.append([i])
+
+    # Если групп слишком много, уменьшаем их, увеличивая порог итеративно
+    while len(groups) > max_colors:
+        min_dist = float('inf')
+        merge_pair = None
+        for i in range(len(groups)):
+            for j in range(i+1, len(groups)):
+                lab_i = tuple(sum(colors_lab[idx][k] for idx in groups[i]) / len(groups[i]) for k in range(3))
+                lab_j = tuple(sum(colors_lab[idx][k] for idx in groups[j]) / len(groups[j]) for k in range(3))
+                dist = delta_e_2000(lab_i, lab_j)
+                if dist < min_dist:
+                    min_dist = dist
+                    merge_pair = (i, j)
+        if merge_pair is None:
+            break
+        i, j = merge_pair
+        groups[i].extend(groups[j])
+        del groups[j]
+
+    # Вычисляем средний RGB для каждой группы
+    result_rgb = []
     for group in groups:
-        avg = tuple(int(sum(c[i] for c in group) / len(group)) for i in range(3))
-        averaged.append(avg)
-    return averaged
+        avg_r = int(sum(colors_rgb[idx][0] for idx in group) / len(group))
+        avg_g = int(sum(colors_rgb[idx][1] for idx in group) / len(group))
+        avg_b = int(sum(colors_rgb[idx][2] for idx in group) / len(group))
+        result_rgb.append((avg_r, avg_g, avg_b))
+
+    # Пост-обработка: объединение очень тёмных/светлых/серых
+    final_colors = []
+    for rgb in result_rgb:
+        r, g, b = rgb
+        brightness = (r + g + b) / 3
+        if brightness < 30:
+            if (0,0,0) not in final_colors:
+                final_colors.append((0,0,0))
+            continue
+        if brightness > 225:
+            if (255,255,255) not in final_colors:
+                final_colors.append((255,255,255))
+            continue
+        if abs(r - g) < 10 and abs(g - b) < 10 and abs(r - b) < 10:
+            gray = int(brightness)
+            if (gray, gray, gray) not in final_colors:
+                final_colors.append((gray, gray, gray))
+            continue
+        final_colors.append(rgb)
+
+    unique = []
+    for c in final_colors:
+        if c not in unique:
+            unique.append(c)
+    return unique
 
 def generate_color_palette(colors):
     from PIL import Image, ImageDraw
@@ -244,7 +292,7 @@ async def handle_3mf_file(message: Message):
             )
             return
         raw_colors_rgb = [hex_to_rgb(h) for h in raw_colors_hex]
-        grouped = group_similar_colors(raw_colors_rgb, tolerance=50)
+        grouped = group_similar_colors(raw_colors_rgb, tolerance=20, max_colors=10)
         color_list = []
         for rgb in grouped:
             hex_str = rgb_to_hex(rgb)
