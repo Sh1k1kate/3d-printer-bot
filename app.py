@@ -170,7 +170,7 @@ async def tracker_page(request: Request):
 async def upload_3mf_page(request: Request):
     return templates.TemplateResponse("upload_3mf.html", {"request": request})
 
-# ---------- API анализа 3MF ----------
+# ---------- API анализа 3MF (возвращает уникальные матчи) ----------
 @app.post("/api/analyze_3mf")
 async def analyze_3mf_api(file: UploadFile = File(...)):
     if not file.filename.lower().endswith('.3mf'):
@@ -182,32 +182,27 @@ async def analyze_3mf_api(file: UploadFile = File(...)):
             raise HTTPException(status_code=400, detail="Не удалось найти цвета в файле")
         raw_colors_rgb = [hex_to_rgb(h) for h in raw_colors_hex]
         grouped = group_similar_colors(raw_colors_rgb, tolerance=20, max_colors=10)
-        result = []
+        # Подбираем уникальные матчи из базы
+        unique_matches = []
+        seen_hex = set()
         for rgb in grouped:
             hex_str = rgb_to_hex(rgb)
-            matches = find_closest_colors(hex_str, BAMBU_COLORS, top_n=5)
-            result.append({
-                "input_hex": hex_str,
-                "matches": [
-                    {
-                        "name": m[1]['name'],
-                        "hex": m[1]['hex'],
-                        "type": m[1]['type'],
-                        "code": m[1]['code'],
-                        "location": m[1]['location'],
-                        "distance": round(m[0], 2)
-                    }
-                    for m in matches
-                ]
-            })
+            matches = find_closest_colors(hex_str, BAMBU_COLORS, top_n=1)
+            if matches:
+                match = matches[0][1]
+                if match['hex'] not in seen_hex:
+                    seen_hex.add(match['hex'])
+                    unique_matches.append(match)
+        if not unique_matches:
+            raise HTTPException(status_code=400, detail="Не удалось подобрать цвета из базы Bambu Lab")
         palette_img = generate_color_palette(grouped)
         palette_base64 = None
         if palette_img:
             palette_base64 = base64.b64encode(palette_img).decode('utf-8')
         return JSONResponse(content={
-            "colors": result,
+            "colors": unique_matches,  # теперь это список уникальных матчей
             "palette": palette_base64,
-            "count": len(result)
+            "count": len(unique_matches)
         })
     except Exception as e:
         logger.error(f"Ошибка анализа 3MF: {e}")
