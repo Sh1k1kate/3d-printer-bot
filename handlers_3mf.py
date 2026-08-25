@@ -64,23 +64,39 @@ def rgb_to_hex(rgb):
     return f"#{rgb[0]:02X}{rgb[1]:02X}{rgb[2]:02X}"
 
 def rgb_to_lab(r, g, b):
-    # Упрощённо: конвертируем в XYZ, потом в Lab
-    r /= 255.0; g /= 255.0; b /= 255.0
-    r = r > 0.04045 ? ((r + 0.055) / 1.055) ** 2.4 : r / 12.92
-    g = g > 0.04045 ? ((g + 0.055) / 1.055) ** 2.4 : g / 12.92
-    b = b > 0.04045 ? ((b + 0.055) / 1.055) ** 2.4 : b / 12.92
+    # Конвертируем в XYZ, потом в Lab
+    r /= 255.0
+    g /= 255.0
+    b /= 255.0
+
+    # Гамма-коррекция
+    r = ((r + 0.055) / 1.055) ** 2.4 if r > 0.04045 else r / 12.92
+    g = ((g + 0.055) / 1.055) ** 2.4 if g > 0.04045 else g / 12.92
+    b = ((b + 0.055) / 1.055) ** 2.4 if b > 0.04045 else b / 12.92
+
+    # XYZ (D65)
     x = r * 0.4124 + g * 0.3576 + b * 0.1805
     y = r * 0.2126 + g * 0.7152 + b * 0.0722
     z = r * 0.0193 + g * 0.1192 + b * 0.9505
-    x *= 100; y *= 100; z *= 100
+    x *= 100
+    y *= 100
+    z *= 100
+
+    # Reference white D65
     xn, yn, zn = 95.047, 100.000, 108.883
-    x /= xn; y /= yn; z /= zn
-    fx = x > 0.008856 ? x ** (1/3) : (7.787 * x + 16/116)
-    fy = y > 0.008856 ? y ** (1/3) : (7.787 * y + 16/116)
-    fz = z > 0.008856 ? z ** (1/3) : (7.787 * z + 16/116)
+    x /= xn
+    y /= yn
+    z /= zn
+
+    # Преобразование в Lab
+    fx = x ** (1/3) if x > 0.008856 else (7.787 * x + 16/116)
+    fy = y ** (1/3) if y > 0.008856 else (7.787 * y + 16/116)
+    fz = z ** (1/3) if z > 0.008856 else (7.787 * z + 16/116)
+
     l = 116 * fy - 16
     a = 500 * (fx - fy)
     b = 200 * (fy - fz)
+
     return (l, a, b)
 
 def delta_e_2000(lab1, lab2):
@@ -133,21 +149,14 @@ def extract_colors_from_3mf(file_bytes: bytes) -> list:
     return list(set(colors))
 
 def group_similar_colors(colors, tolerance=30):
-    """
-    Принимает список RGB-кортежей (числа), группирует близкие по RGB.
-    Возвращает список усреднённых RGB-кортежей.
-    """
     if not colors:
         return []
-    # Проверяем, что все элементы — кортежи чисел
     groups = []
     for rgb in colors:
-        # rgb должен быть кортежем (r, g, b) с числами
         if not isinstance(rgb, tuple) or len(rgb) != 3:
             continue
         found = False
         for group in groups:
-            # вычисляем средний цвет группы
             avg = tuple(int(sum(c[i] for c in group) / len(group)) for i in range(3))
             if math.sqrt(sum((rgb[i] - avg[i])**2 for i in range(3))) < tolerance:
                 group.append(rgb)
@@ -222,7 +231,6 @@ async def handle_3mf_file(message: Message):
                 "Проверьте, что файл содержит цветные данные."
             )
             return
-        # Преобразуем hex в RGB
         raw_colors_rgb = [hex_to_rgb(h) for h in raw_colors_hex]
         grouped = group_similar_colors(raw_colors_rgb, tolerance=30)
         color_list = []
