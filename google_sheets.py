@@ -29,7 +29,6 @@ class SheetManager:
             self.sheet_orders = self.sheet.add_worksheet(title="Заказы", rows=1000, cols=8)
             self.sheet_orders.append_row(["Номер заказа", "Позиция", "Кол-во заказано", "Кол-во напечатано", "Срок заказа", "Дата последнего изменения", "Выполнен", "Заказчик"])
         else:
-            # Проверяем, есть ли колонка "Заказчик"
             headers = self.sheet_orders.row_values(1)
             if "Заказчик" not in headers:
                 last_col = len(headers) + 1
@@ -213,7 +212,6 @@ class SheetManager:
 
     # ---------- Заказы ----------
     def init_sheet(self):
-        # Уже всё создано в __init__, но оставляем метод для совместимости
         pass
 
     def get_next_order_number(self):
@@ -331,17 +329,18 @@ class SheetManager:
                 continue
             title = row[1]
             deadline = row[2]
+            time_str = row[3] if len(row) > 3 else ""
             assignee = row[4] if row[4] else None
             status = row[5]
             if status != "active":
                 continue
             if user_id is not None:
                 if assignee is not None and assignee.isdigit() and int(assignee) == user_id:
-                    tasks.append((task_id, title, deadline, assignee, status))
+                    tasks.append((task_id, title, deadline, time_str, assignee, status))
                 elif assignee is None:
-                    tasks.append((task_id, title, deadline, assignee, status))
+                    tasks.append((task_id, title, deadline, time_str, assignee, status))
             else:
-                tasks.append((task_id, title, deadline, assignee, status))
+                tasks.append((task_id, title, deadline, time_str, assignee, status))
         return tasks
 
     def get_task_by_id(self, task_id):
