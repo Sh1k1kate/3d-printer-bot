@@ -10,3 +10,4 @@ aiohttp==3.9.5
 webcolors==24.8.0
 numpy==2.2.4
 Pillow==11.1.0
+python-multipart==0.0.20
