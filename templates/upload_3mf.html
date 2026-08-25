@@ -1,136 +1,285 @@
-<!DOCTYPE html>
-<html lang="ru">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>📐 Анализ 3MF-файла</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <style>
-        body { transition: background-color 0.3s, color 0.3s; }
-        .file-drop-zone { border: 2px dashed #cbd5e1; padding: 2rem; text-align: center; border-radius: 0.5rem; transition: border-color 0.3s; cursor: pointer; }
-        .file-drop-zone:hover, .file-drop-zone.dragover { border-color: #3b82f6; background-color: rgba(59,130,246,0.05); }
-        .dark .file-drop-zone { border-color: #475569; }
-        .dark .file-drop-zone:hover, .dark .file-drop-zone.dragover { border-color: #60a5fa; background-color: rgba(96,165,250,0.05); }
-    </style>
-</head>
-<body class="bg-gray-100 dark:bg-gray-900 text-gray-800 dark:text-gray-200 font-sans antialiased">
-    <div class="container mx-auto px-4 py-8 max-w-2xl">
-        <header class="flex justify-between items-center mb-6">
-            <h1 class="text-3xl font-bold">📐 Анализ 3MF</h1>
-            <a href="/tracker" class="text-blue-500 hover:text-blue-600 dark:text-blue-400 dark:hover:text-blue-300 text-sm">← Назад к трекеру</a>
-        </header>
+import os
+import logging
+from fastapi import FastAPI, Request, UploadFile, File, HTTPException
+from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.templating import Jinja2Templates
+from aiogram import Bot, Dispatcher
+from aiogram.types import Update
+from aiogram.fsm.storage.memory import MemoryStorage
+from handlers import router
+from handlers_3mf import (
+    router as router_3mf,
+    extract_colors_from_3mf,
+    group_similar_colors,
+    generate_color_palette,
+    BAMBU_COLORS,
+    find_closest_colors,
+    hex_to_rgb,
+    rgb_to_hex
+)
+from config import BOT_TOKEN, BAMBU_EMAIL, BAMBU_PASSWORD
+from google_sheets import SheetManager, moscow_now
+from datetime import datetime, timedelta
+import aiohttp
+import base64
 
-        <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
-            <p class="text-gray-600 dark:text-gray-400 mb-4">Загрузите 3MF-файл, и мы извлечём все цвета, сгруппируем оттенки и покажем палитру.</p>
-            <p class="text-xs text-gray-500 dark:text-gray-400 mb-4">Файл обрабатывается на сервере и не сохраняется после завершения анализа.</p>
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-            <form id="upload-form" enctype="multipart/form-data">
-                <div class="file-drop-zone" id="drop-zone">
-                    <p class="text-gray-500 dark:text-gray-400">Перетащите файл сюда или <span class="text-blue-500 underline">выберите на компьютере</span></p>
-                    <input type="file" id="file-input" name="file" accept=".3mf" required class="hidden" />
-                    <p class="text-xs text-gray-400 dark:text-gray-500 mt-2" id="file-name">Файл не выбран</p>
-                </div>
-                <button type="submit" id="submit-btn"
-                        class="w-full mt-4 bg-blue-500 hover:bg-blue-600 text-white font-medium py-2 rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed">
-                    Анализировать
-                </button>
-            </form>
+if not BOT_TOKEN:
+    logger.error("BOT_TOKEN не задан в переменных окружения!")
+    raise ValueError("BOT_TOKEN is required")
 
-            <div id="loading" class="mt-4 text-center hidden text-blue-500">⏳ Анализируем файл... Это может занять несколько секунд.</div>
-            <div id="result" class="mt-6 hidden"></div>
-        </div>
+# ---------- Глобальный экземпляр SheetManager ----------
+try:
+    sheet_manager = SheetManager()
+    logger.info("SheetManager успешно инициализирован")
+except Exception as e:
+    logger.error(f"Ошибка инициализации SheetManager: {e}")
+    sheet_manager = None
 
-        <footer class="mt-8 text-center text-sm text-gray-500 dark:text-gray-400">
-            <p>Все данные обрабатываются локально, файлы не передаются третьим лицам.</p>
-        </footer>
-    </div>
+# ---------- Telegram bot ----------
+bot = Bot(token=BOT_TOKEN)
+dp = Dispatcher(storage=MemoryStorage())
+dp.include_router(router)
+dp.include_router(router_3mf)
 
-    <script>
-        const fileInput = document.getElementById('file-input');
-        const dropZone = document.getElementById('drop-zone');
-        const fileNameDisplay = document.getElementById('file-name');
-        const submitBtn = document.getElementById('submit-btn');
-        const loadingDiv = document.getElementById('loading');
-        const resultDiv = document.getElementById('result');
-        const form = document.getElementById('upload-form');
+# ---------- FastAPI app ----------
+app = FastAPI()
+templates = Jinja2Templates(directory="templates")
 
-        // Drag & Drop
-        dropZone.addEventListener('dragover', (e) => {
-            e.preventDefault();
-            dropZone.classList.add('dragover');
-        });
-        dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
-        dropZone.addEventListener('drop', (e) => {
-            e.preventDefault();
-            dropZone.classList.remove('dragover');
-            if (e.dataTransfer.files.length) {
-                fileInput.files = e.dataTransfer.files;
-                updateFileName();
-            }
-        });
-        dropZone.addEventListener('click', () => fileInput.click());
-        fileInput.addEventListener('change', updateFileName);
+# ---------- Bambu Lab Cloud API ----------
+class BambuCloudAPI:
+    # ... (оставляем без изменений, уже было ранее)
+    pass
 
-        function updateFileName() {
-            if (fileInput.files.length) {
-                const f = fileInput.files[0];
-                fileNameDisplay.textContent = `📎 ${f.name} (${(f.size / 1024 / 1024).toFixed(2)} МБ)`;
-                submitBtn.disabled = false;
-            } else {
-                fileNameDisplay.textContent = 'Файл не выбран';
-                submitBtn.disabled = true;
-            }
-        }
+_bambu_api = None
+def get_bambu_api():
+    global _bambu_api
+    if _bambu_api is None:
+        _bambu_api = BambuCloudAPI()
+    return _bambu_api
 
-        form.addEventListener('submit', async (e) => {
-            e.preventDefault();
-            if (!fileInput.files.length) return;
+def get_days_left(deadline):
+    try:
+        due = datetime.strptime(deadline, "%Y-%m-%d")
+        diff = (due - datetime.now()).days
+        if diff < 0:
+            return "Просрочено"
+        elif diff == 0:
+            return "Сегодня"
+        elif diff == 1:
+            return "Завтра"
+        else:
+            return f"{diff} дн."
+    except:
+        return "—"
 
-            const file = fileInput.files[0];
-            const formData = new FormData();
-            formData.append('file', file);
+# ---------- Вебхук ----------
+@app.post("/webhook")
+async def webhook(request: Request):
+    try:
+        update_data = await request.json()
+        update = Update(**update_data)
+        await dp.feed_update(bot, update)
+        return {"status": "ok"}
+    except Exception as e:
+        logger.error(f"Webhook error: {e}", exc_info=True)
+        return {"status": "error"}
 
-            loadingDiv.classList.remove('hidden');
-            resultDiv.classList.add('hidden');
-            resultDiv.innerHTML = '';
-            submitBtn.disabled = true;
+# ---------- Главная ----------
+@app.get("/")
+async def root():
+    return {"status": "3D Printer Bot is running"}
 
-            try {
-                const response = await fetch('/api/analyze_3mf', {
-                    method: 'POST',
-                    body: formData
-                });
-                const data = await response.json();
+# ---------- Трекер ----------
+@app.get("/tracker", response_class=HTMLResponse)
+async def tracker_page(request: Request):
+    return templates.TemplateResponse("tracker.html", {"request": request})
 
-                loadingDiv.classList.add('hidden');
-                submitBtn.disabled = false;
+# ---------- Страница загрузки 3MF ----------
+@app.get("/upload_3mf", response_class=HTMLResponse)
+async def upload_3mf_page(request: Request):
+    return templates.TemplateResponse("upload_3mf.html", {"request": request})
 
-                if (!response.ok) {
-                    resultDiv.innerHTML = `<div class="text-red-600">❌ Ошибка: ${data.detail || 'Неизвестная ошибка'}</div>`;
-                    resultDiv.classList.remove('hidden');
-                    return;
-                }
+# ---------- API анализа 3MF ----------
+@app.post("/api/analyze_3mf")
+async def analyze_3mf_api(file: UploadFile = File(...)):
+    if not file.filename.lower().endswith('.3mf'):
+        raise HTTPException(status_code=400, detail="Файл должен иметь расширение .3mf")
+    try:
+        file_bytes = await file.read()
+        raw_colors = extract_colors_from_3mf(file_bytes)
+        if not raw_colors:
+            raise HTTPException(status_code=400, detail="Не удалось найти цвета в файле")
+        grouped = group_similar_colors(raw_colors, tolerance=30)
+        result = []
+        for rgb in grouped:
+            hex_str = rgb_to_hex(rgb)
+            matches = find_closest_colors(hex_str, BAMBU_COLORS, top_n=5)
+            result.append({
+                "input_hex": hex_str,
+                "matches": [
+                    {
+                        "name": m[1]['name'],
+                        "hex": m[1]['hex'],
+                        "type": m[1]['type'],
+                        "code": m[1]['code'],
+                        "location": m[1]['location'],
+                        "distance": round(m[0], 2)
+                    }
+                    for m in matches
+                ]
+            })
+        palette_img = generate_color_palette(grouped)
+        palette_base64 = None
+        if palette_img:
+            palette_base64 = base64.b64encode(palette_img).decode('utf-8')
+        return JSONResponse(content={
+            "colors": result,
+            "palette": palette_base64,
+            "count": len(result)
+        })
+    except Exception as e:
+        logger.error(f"Ошибка анализа 3MF: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
-                let html = `<div class="mt-4"><h3 class="font-semibold">🎨 Найдено цветов: ${data.count}</h3><ul class="list-disc list-inside mt-2 space-y-1 text-sm">`;
-                data.colors.forEach(color => {
-                    html += `<li>${color}</li>`;
-                });
-                html += `</ul></div>`;
+# ---------- API заказов ----------
+@app.get("/api/orders")
+async def get_orders_api():
+    if not sheet_manager:
+        return JSONResponse(content={"error": "SheetManager не инициализирован"}, status_code=500)
+    try:
+        orders = sheet_manager.get_active_orders()
+        result = []
+        for order in orders:
+            if len(order) >= 8:
+                result.append({
+                    "id": order[0],
+                    "position": order[1],
+                    "ordered": int(order[2]),
+                    "printed": int(order[3]),
+                    "deadline": order[4],
+                    "modified": order[5],
+                    "status": order[6],
+                    "customer": order[7] if order[7] else "",
+                    "progress": round(int(order[3]) / int(order[2]) * 100) if int(order[2]) > 0 else 0
+                })
+        return JSONResponse(content={"orders": result})
+    except Exception as e:
+        logger.error(f"API error: {e}", exc_info=True)
+        return JSONResponse(content={"error": str(e)}, status_code=500)
 
-                if (data.palette) {
-                    html += `<div class="mt-6"><h3 class="font-semibold">Палитра:</h3><img src="data:image/png;base64,${data.palette}" alt="Палитра цветов" class="mt-2 max-w-full border rounded-lg shadow"></div>`;
-                }
+# ---------- API задач ----------
+@app.get("/api/tasks")
+async def get_tasks_api():
+    if not sheet_manager:
+        return JSONResponse(content={"error": "SheetManager не инициализирован"}, status_code=500)
+    try:
+        tasks = sheet_manager.get_active_tasks()
+        result = []
+        for task in tasks:
+            result.append({
+                "id": task[0],
+                "title": task[1],
+                "deadline": task[2],
+                "time": task[3] if len(task) > 3 else "",
+                "assignee": task[4] if task[4] else "Общая",
+                "status": task[5],
+                "time_left": get_days_left(task[2])
+            })
+        return JSONResponse(content={"tasks": result})
+    except Exception as e:
+        logger.error(f"API tasks error: {e}", exc_info=True)
+        return JSONResponse(content={"error": str(e)}, status_code=500)
 
-                resultDiv.innerHTML = html;
-                resultDiv.classList.remove('hidden');
+# ---------- API принтеров ----------
+@app.get("/api/printers")
+async def get_printers_api():
+    try:
+        api = get_bambu_api()
+        printers = await api.get_printers()
+        return JSONResponse(content={"printers": printers})
+    except Exception as e:
+        logger.error(f"Ошибка получения принтеров: {e}", exc_info=True)
+        return JSONResponse(content={"error": str(e), "printers": []}, status_code=500)
 
-            } catch (err) {
-                loadingDiv.classList.add('hidden');
-                submitBtn.disabled = false;
-                resultDiv.innerHTML = `<div class="text-red-600">❌ Ошибка соединения: ${err.message}</div>`;
-                resultDiv.classList.remove('hidden');
-            }
-        });
-    </script>
-</body>
-</html>
+# ---------- Проверка задач (cron) ----------
+@app.get("/check_tasks")
+async def check_tasks():
+    if not sheet_manager:
+        return JSONResponse(content={"error": "SheetManager не инициализирован"}, status_code=500)
+    try:
+        logger.info("Начало проверки задач")
+        tasks = sheet_manager.get_tasks_for_notification()
+        logger.info(f"Найдено задач для проверки: {len(tasks)}")
+        now = moscow_now()
+        notified_count = 0
+
+        for task in tasks:
+            try:
+                deadline_dt = task["deadline_dt"]
+                diff_minutes = (deadline_dt - now).total_seconds() / 60
+                assignee = task["assignee"]
+                task_id = task["id"]
+                title = task["title"]
+
+                recipients = []
+                if assignee and str(assignee).isdigit():
+                    recipients = [int(assignee)]
+                else:
+                    recipients = sheet_manager.get_all_subscribers()
+                    if not recipients:
+                        logger.warning(f"Нет подписчиков для общей задачи {task_id}")
+                        continue
+
+                if now.hour == 9 and now.minute == 0 and task["notified_morning"] == "0":
+                    for recipient in recipients:
+                        try:
+                            await bot.send_message(
+                                recipient,
+                                f"🌅 Напоминание: сегодня задача '{title}' должна быть выполнена до {deadline_dt.strftime('%H:%M')}!"
+                            )
+                            notified_count += 1
+                        except Exception as e:
+                            logger.error(f"Ошибка отправки утреннего уведомления пользователю {recipient}: {e}")
+                    sheet_manager.update_task_notification(task_id, 'notified_morning', '1')
+                    logger.info(f"Отправлено утреннее уведомление для задачи {task_id}")
+
+                notifications = [
+                    (60, 'notified_60'),
+                    (30, 'notified_30'),
+                    (15, 'notified_15'),
+                    (0, 'notified_0')
+                ]
+                for minutes, field in notifications:
+                    if abs(diff_minutes - minutes) < 0.5 and task[field] == "0":
+                        for recipient in recipients:
+                            try:
+                                if minutes == 0:
+                                    text = f"🔔 Срок выполнения задачи '{title}' истёк (до {deadline_dt.strftime('%H:%M')})!"
+                                else:
+                                    text = f"⏰ Через {minutes} минут задача '{title}' должна быть выполнена (до {deadline_dt.strftime('%H:%M')})!"
+                                await bot.send_message(recipient, text)
+                                notified_count += 1
+                            except Exception as e:
+                                logger.error(f"Ошибка отправки уведомления за {minutes} минут пользователю {recipient}: {e}")
+                        sheet_manager.update_task_notification(task_id, field, '1')
+                        logger.info(f"Отправлено уведомление за {minutes} минут для задачи {task_id}")
+                    elif diff_minutes < -0.5 and task[field] == "0":
+                        sheet_manager.update_task_notification(task_id, field, '1')
+                        logger.info(f"Задача {task_id}: пропущено уведомление {field}, т.к. время прошло")
+            except Exception as e:
+                logger.error(f"Ошибка обработки задачи {task.get('id', 'unknown')}: {e}", exc_info=True)
+
+        logger.info(f"Проверка завершена, отправлено уведомлений: {notified_count}")
+        return JSONResponse(content={"status": "ok", "notified": notified_count})
+    except Exception as e:
+        logger.error(f"Критическая ошибка в /check_tasks: {e}", exc_info=True)
+        return JSONResponse(content={"status": "error", "message": str(e)}, status_code=500)
+
+# ---------- Запуск ----------
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
