@@ -179,12 +179,14 @@ async def get_tasks_api():
         tasks = sheet.get_active_tasks()  # все активные задачи
         result = []
         for task in tasks:
+            # task: (id, title, deadline, time, assignee, status)
             result.append({
                 "id": task[0],
                 "title": task[1],
                 "deadline": task[2],
-                "assignee": task[3] if task[3] else "Общая",
-                "status": task[4],
+                "time": task[3] if len(task) > 3 else "",
+                "assignee": task[4] if task[4] else "Общая",
+                "status": task[5],
                 "time_left": get_days_left(task[2])
             })
         return JSONResponse(content={"tasks": result})
@@ -206,8 +208,77 @@ async def get_printers_api():
 # ---------- Проверка задач (cron) ----------
 @app.get("/check_tasks")
 async def check_tasks():
-    # Ваш существующий код
-    return {"status": "ok"}
+    try:
+        logger.info("Начало проверки задач")
+        sheet = SheetManager()
+        tasks = sheet.get_tasks_for_notification()
+        logger.info(f"Найдено задач для проверки: {len(tasks)}")
+        now = moscow_now()
+        notified_count = 0
+
+        for task in tasks:
+            try:
+                deadline_dt = task["deadline_dt"]
+                diff_minutes = (deadline_dt - now).total_seconds() / 60
+                assignee = task["assignee"]
+                task_id = task["id"]
+                title = task["title"]
+
+                recipients = []
+                if assignee and str(assignee).isdigit():
+                    recipients = [int(assignee)]
+                else:
+                    recipients = sheet.get_all_subscribers()
+                    if not recipients:
+                        logger.warning(f"Нет подписчиков для общей задачи {task_id}")
+                        continue
+
+                # Утреннее уведомление в 9:00
+                if now.hour == 9 and now.minute == 0 and task["notified_morning"] == "0":
+                    for recipient in recipients:
+                        try:
+                            await bot.send_message(
+                                recipient,
+                                f"🌅 Напоминание: сегодня задача '{title}' должна быть выполнена до {deadline_dt.strftime('%H:%M')}!"
+                            )
+                            notified_count += 1
+                        except Exception as e:
+                            logger.error(f"Ошибка отправки утреннего уведомления пользователю {recipient}: {e}")
+                    sheet.update_task_notification(task_id, 'notified_morning', '1')
+                    logger.info(f"Отправлено утреннее уведомление для задачи {task_id}")
+
+                # Уведомления за 60, 30, 15, 0 минут
+                notifications = [
+                    (60, 'notified_60'),
+                    (30, 'notified_30'),
+                    (15, 'notified_15'),
+                    (0, 'notified_0')
+                ]
+                for minutes, field in notifications:
+                    if abs(diff_minutes - minutes) < 0.5 and task[field] == "0":
+                        for recipient in recipients:
+                            try:
+                                if minutes == 0:
+                                    text = f"🔔 Срок выполнения задачи '{title}' истёк (до {deadline_dt.strftime('%H:%M')})!"
+                                else:
+                                    text = f"⏰ Через {minutes} минут задача '{title}' должна быть выполнена (до {deadline_dt.strftime('%H:%M')})!"
+                                await bot.send_message(recipient, text)
+                                notified_count += 1
+                            except Exception as e:
+                                logger.error(f"Ошибка отправки уведомления за {minutes} минут пользователю {recipient}: {e}")
+                        sheet.update_task_notification(task_id, field, '1')
+                        logger.info(f"Отправлено уведомление за {minutes} минут для задачи {task_id}")
+                    elif diff_minutes < -0.5 and task[field] == "0":
+                        sheet.update_task_notification(task_id, field, '1')
+                        logger.info(f"Задача {task_id}: пропущено уведомление {field}, т.к. время прошло")
+            except Exception as e:
+                logger.error(f"Ошибка обработки задачи {task.get('id', 'unknown')}: {e}", exc_info=True)
+
+        logger.info(f"Проверка завершена, отправлено уведомлений: {notified_count}")
+        return JSONResponse(content={"status": "ok", "notified": notified_count})
+    except Exception as e:
+        logger.error(f"Критическая ошибка в /check_tasks: {e}", exc_info=True)
+        return JSONResponse(content={"status": "error", "message": str(e)}, status_code=500)
 
 # ---------- Запуск ----------
 if __name__ == "__main__":
