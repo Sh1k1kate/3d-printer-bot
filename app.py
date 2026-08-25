@@ -1,18 +1,19 @@
 import os
 import logging
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, UploadFile, File, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from aiogram import Bot, Dispatcher
 from aiogram.types import Update
 from aiogram.fsm.storage.memory import MemoryStorage
 from handlers import router
-from handlers_3mf import router as router_3mf
+from handlers_3mf import router as router_3mf, extract_colors_from_3mf, group_similar_colors, rgb_to_color_name, generate_color_palette
 from config import BOT_TOKEN, BAMBU_EMAIL, BAMBU_PASSWORD
 from google_sheets import SheetManager, moscow_now
 from datetime import datetime, timedelta
 import aiohttp
-import asyncio
+import base64
+from io import BytesIO
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -155,6 +156,46 @@ async def root():
 @app.get("/tracker", response_class=HTMLResponse)
 async def tracker_page(request: Request):
     return templates.TemplateResponse("tracker.html", {"request": request})
+
+# ---------- Страница загрузки 3MF ----------
+@app.get("/upload_3mf", response_class=HTMLResponse)
+async def upload_3mf_page(request: Request):
+    return templates.TemplateResponse("upload_3mf.html", {"request": request})
+
+# ---------- API анализа 3MF ----------
+@app.post("/api/analyze_3mf")
+async def analyze_3mf_api(file: UploadFile = File(...)):
+    if not file.filename.lower().endswith('.3mf'):
+        raise HTTPException(status_code=400, detail="Файл должен иметь расширение .3mf")
+
+    try:
+        file_bytes = await file.read()
+        raw_colors = extract_colors_from_3mf(file_bytes)
+        if not raw_colors:
+            raise HTTPException(status_code=400, detail="Не удалось найти цвета в файле")
+
+        grouped = group_similar_colors(raw_colors, tolerance=30)
+        color_list = []
+        for rgb in grouped:
+            name = rgb_to_color_name(rgb)
+            if name.startswith('#'):
+                color_list.append(f"{name} (RGB {rgb[0]},{rgb[1]},{rgb[2]})")
+            else:
+                color_list.append(f"{name.capitalize()} (RGB {rgb[0]},{rgb[1]},{rgb[2]})")
+
+        palette_img = generate_color_palette(grouped)
+        palette_base64 = None
+        if palette_img:
+            palette_base64 = base64.b64encode(palette_img).decode('utf-8')
+
+        return JSONResponse(content={
+            "colors": color_list,
+            "palette": palette_base64,
+            "count": len(grouped)
+        })
+    except Exception as e:
+        logger.error(f"Ошибка анализа 3MF: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 # ---------- API заказов ----------
 @app.get("/api/orders")
