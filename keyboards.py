@@ -163,8 +163,16 @@ def tasks_list_keyboard(tasks, page=0, per_page=5):
     start = page * per_page
     end = min(start + per_page, len(tasks))
     for task in tasks[start:end]:
-        task_id, title, deadline, assignee, status = task
-        text = f"{title} (до {deadline})"
+        # Обработка 5 или 6 полей
+        if len(task) == 6:
+            task_id, title, deadline, time_str, assignee, status = task
+        else:
+            task_id, title, deadline, assignee, status = task
+            time_str = ""
+        text = f"{title} (до {deadline}"
+        if time_str:
+            text += f" {time_str}"
+        text += ")"
         if assignee:
             text += f" 👤{assignee}"
         buttons.append([InlineKeyboardButton(text=text, callback_data=f"view_task_{task_id}")])
@@ -199,7 +207,7 @@ def assignee_keyboard(subscribers, page=0, per_page=5):
     ])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
-# ---------- НОВЫЕ КЛАВИАТУРЫ ДЛЯ ДОБАВЛЕНИЯ/РЕДАКТИРОВАНИЯ МОДЕЛИ (с разделителем |) ----------
+# ---------- Добавление модели ----------
 def add_model_action_keyboard():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="➕ Добавить деталь", callback_data="add_detail")],
@@ -216,7 +224,6 @@ def detail_param_keyboard(detail_index, model_name):
     ])
 
 def edit_part_keyboard(parts_list, model_name):
-    """Клавиатура выбора детали для редактирования."""
     buttons = []
     for i, det_name in enumerate(parts_list):
         buttons.append([InlineKeyboardButton(text=det_name, callback_data=f"edit_part_{model_name}|{i}")])
@@ -224,7 +231,6 @@ def edit_part_keyboard(parts_list, model_name):
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 def edit_param_keyboard(model_name, det_name):
-    """Клавиатура выбора параметра для изменения (разделитель |)."""
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📝 Название", callback_data=f"edit_param_{model_name}|{det_name}|name")],
         [InlineKeyboardButton(text="📦 Кол-во на палете", callback_data=f"edit_param_{model_name}|{det_name}|on_pallet")],
