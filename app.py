@@ -20,6 +20,14 @@ if not BOT_TOKEN:
     logger.error("BOT_TOKEN не задан в переменных окружения!")
     raise ValueError("BOT_TOKEN is required")
 
+# ---------- Глобальный экземпляр SheetManager (инициализируется один раз) ----------
+try:
+    sheet_manager = SheetManager()
+    logger.info("SheetManager успешно инициализирован")
+except Exception as e:
+    logger.error(f"Ошибка инициализации SheetManager: {e}")
+    sheet_manager = None
+
 # ---------- Telegram bot ----------
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
@@ -149,9 +157,10 @@ async def tracker_page(request: Request):
 # ---------- API заказов ----------
 @app.get("/api/orders")
 async def get_orders_api():
+    if not sheet_manager:
+        return JSONResponse(content={"error": "SheetManager не инициализирован"}, status_code=500)
     try:
-        sheet = SheetManager()
-        orders = sheet.get_active_orders()
+        orders = sheet_manager.get_active_orders()
         result = []
         for order in orders:
             if len(order) >= 8:
@@ -174,12 +183,12 @@ async def get_orders_api():
 # ---------- API задач ----------
 @app.get("/api/tasks")
 async def get_tasks_api():
+    if not sheet_manager:
+        return JSONResponse(content={"error": "SheetManager не инициализирован"}, status_code=500)
     try:
-        sheet = SheetManager()
-        tasks = sheet.get_active_tasks()  # все активные задачи
+        tasks = sheet_manager.get_active_tasks()  # все активные задачи
         result = []
         for task in tasks:
-            # task: (id, title, deadline, time, assignee, status)
             result.append({
                 "id": task[0],
                 "title": task[1],
@@ -208,10 +217,11 @@ async def get_printers_api():
 # ---------- Проверка задач (cron) ----------
 @app.get("/check_tasks")
 async def check_tasks():
+    if not sheet_manager:
+        return JSONResponse(content={"error": "SheetManager не инициализирован"}, status_code=500)
     try:
         logger.info("Начало проверки задач")
-        sheet = SheetManager()
-        tasks = sheet.get_tasks_for_notification()
+        tasks = sheet_manager.get_tasks_for_notification()
         logger.info(f"Найдено задач для проверки: {len(tasks)}")
         now = moscow_now()
         notified_count = 0
@@ -228,7 +238,7 @@ async def check_tasks():
                 if assignee and str(assignee).isdigit():
                     recipients = [int(assignee)]
                 else:
-                    recipients = sheet.get_all_subscribers()
+                    recipients = sheet_manager.get_all_subscribers()
                     if not recipients:
                         logger.warning(f"Нет подписчиков для общей задачи {task_id}")
                         continue
@@ -244,7 +254,7 @@ async def check_tasks():
                             notified_count += 1
                         except Exception as e:
                             logger.error(f"Ошибка отправки утреннего уведомления пользователю {recipient}: {e}")
-                    sheet.update_task_notification(task_id, 'notified_morning', '1')
+                    sheet_manager.update_task_notification(task_id, 'notified_morning', '1')
                     logger.info(f"Отправлено утреннее уведомление для задачи {task_id}")
 
                 # Уведомления за 60, 30, 15, 0 минут
@@ -266,10 +276,10 @@ async def check_tasks():
                                 notified_count += 1
                             except Exception as e:
                                 logger.error(f"Ошибка отправки уведомления за {minutes} минут пользователю {recipient}: {e}")
-                        sheet.update_task_notification(task_id, field, '1')
+                        sheet_manager.update_task_notification(task_id, field, '1')
                         logger.info(f"Отправлено уведомление за {minutes} минут для задачи {task_id}")
                     elif diff_minutes < -0.5 and task[field] == "0":
-                        sheet.update_task_notification(task_id, field, '1')
+                        sheet_manager.update_task_notification(task_id, field, '1')
                         logger.info(f"Задача {task_id}: пропущено уведомление {field}, т.к. время прошло")
             except Exception as e:
                 logger.error(f"Ошибка обработки задачи {task.get('id', 'unknown')}: {e}", exc_info=True)
