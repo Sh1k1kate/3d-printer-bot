@@ -64,7 +64,6 @@ def rgb_to_hex(rgb):
     return f"#{rgb[0]:02X}{rgb[1]:02X}{rgb[2]:02X}"
 
 def rgb_to_lab(r, g, b):
-    """Конвертирует RGB в LAB (D65)."""
     r /= 255.0
     g /= 255.0
     b /= 255.0
@@ -90,10 +89,9 @@ def rgb_to_lab(r, g, b):
     return (l, a, b)
 
 def delta_e_2000(lab1, lab2):
-    # Приблизительно: евклидово расстояние в LAB (достаточно для группировки)
     return math.sqrt((lab1[0]-lab2[0])**2 + (lab1[1]-lab2[1])**2 + (lab1[2]-lab2[2])**2)
 
-def find_closest_colors(input_hex, colors, top_n=5):
+def find_closest_colors(input_hex, colors, top_n=1):
     input_rgb = hex_to_rgb(input_hex)
     input_lab = rgb_to_lab(*input_rgb)
     distances = []
@@ -110,12 +108,10 @@ def extract_colors_from_3mf(file_bytes: bytes) -> list:
     colors = []
     try:
         with zipfile.ZipFile(BytesIO(file_bytes)) as zf:
-            # Ищем project_settings.config
             config_files = [f for f in zf.namelist() if f.lower().endswith('project_settings.config')]
             if config_files:
                 with zf.open(config_files[0]) as cf:
                     content = cf.read().decode('utf-8', errors='ignore')
-                    # Ищем массив filament_colour
                     match = re.search(r'"filament_colour":\s*\[([\s\S]*?)\]', content)
                     if match:
                         hexes = re.findall(r'#[A-Fa-f0-9]{6}', match.group(1))
@@ -126,7 +122,6 @@ def extract_colors_from_3mf(file_bytes: bytes) -> list:
                         if hexes_no_hash:
                             logger.info(f"[3MF] Найдено {len(hexes_no_hash)} цветов без # в filament_colour")
                             return ['#' + h.upper() for h in set(hexes_no_hash)]
-                    # Если не нашли массив, ищем все hex-коды во всём config
                     hexes_all = re.findall(r'#[A-Fa-f0-9]{6}', content)
                     if hexes_all:
                         logger.info(f"[3MF] Найдено {len(hexes_all)} цветов во всём config")
@@ -135,7 +130,6 @@ def extract_colors_from_3mf(file_bytes: bytes) -> list:
                     if hexes_no_hash_all:
                         logger.info(f"[3MF] Найдено {len(hexes_no_hash_all)} цветов без # во всём config")
                         return ['#' + h.upper() for h in set(hexes_no_hash_all)]
-            # 2. Ищем в .model файлах
             model_files = [f for f in zf.namelist() if f.endswith('.model')]
             for mf in model_files:
                 with zf.open(mf) as f:
@@ -154,19 +148,10 @@ def extract_colors_from_3mf(file_bytes: bytes) -> list:
     return unique
 
 def group_similar_colors(colors_rgb, tolerance=20, max_colors=10):
-    """
-    Группирует RGB цвета на основе расстояния в LAB.
-    tolerance — порог Delta E (рекомендуется 15-25 для чёрного/серого).
-    max_colors — максимальное количество цветов на выходе.
-    """
     if not colors_rgb:
         return []
-
-    # Конвертируем все цвета в LAB
     colors_lab = [rgb_to_lab(r, g, b) for (r, g, b) in colors_rgb]
-
-    # Группировка: итеративно объединяем ближайшие пары
-    groups = []  # каждый элемент — список индексов
+    groups = []
     for i, lab in enumerate(colors_lab):
         found = False
         for group in groups:
@@ -177,8 +162,6 @@ def group_similar_colors(colors_rgb, tolerance=20, max_colors=10):
                 break
         if not found:
             groups.append([i])
-
-    # Если групп слишком много, уменьшаем их, увеличивая порог итеративно
     while len(groups) > max_colors:
         min_dist = float('inf')
         merge_pair = None
@@ -195,16 +178,12 @@ def group_similar_colors(colors_rgb, tolerance=20, max_colors=10):
         i, j = merge_pair
         groups[i].extend(groups[j])
         del groups[j]
-
-    # Вычисляем средний RGB для каждой группы
     result_rgb = []
     for group in groups:
         avg_r = int(sum(colors_rgb[idx][0] for idx in group) / len(group))
         avg_g = int(sum(colors_rgb[idx][1] for idx in group) / len(group))
         avg_b = int(sum(colors_rgb[idx][2] for idx in group) / len(group))
         result_rgb.append((avg_r, avg_g, avg_b))
-
-    # Пост-обработка: объединение очень тёмных/светлых/серых
     final_colors = []
     for rgb in result_rgb:
         r, g, b = rgb
@@ -223,7 +202,6 @@ def group_similar_colors(colors_rgb, tolerance=20, max_colors=10):
                 final_colors.append((gray, gray, gray))
             continue
         final_colors.append(rgb)
-
     unique = []
     for c in final_colors:
         if c not in unique:
@@ -252,7 +230,7 @@ def generate_color_palette(colors):
     img.save(img_bytes, format='PNG')
     return img_bytes.getvalue()
 
-# ---------- Обработчики Telegram ----------
+# ---------- Обработчики Telegram (с уникальными матчами) ----------
 @router.message(Command("analyze_3mf"))
 async def cmd_analyze_3mf(message: Message):
     await message.answer(
@@ -260,9 +238,8 @@ async def cmd_analyze_3mf(message: Message):
         "Просто отправьте мне файл с расширением `.3mf`, и я:\n"
         "• Извлеку все цвета из модели\n"
         "• Сгруппирую близкие оттенки\n"
-        "• Назову каждый цвет\n"
+        "• Подберу соответствующие цвета из базы Bambu Lab\n"
         "• Покажу палитру\n\n"
-        "Поддерживаются цвета вершин, граней и материалов.\n\n"
         "⚠️ Максимальный размер файла — 50 МБ.",
         parse_mode="Markdown"
     )
@@ -293,12 +270,25 @@ async def handle_3mf_file(message: Message):
             return
         raw_colors_rgb = [hex_to_rgb(h) for h in raw_colors_hex]
         grouped = group_similar_colors(raw_colors_rgb, tolerance=20, max_colors=10)
-        color_list = []
+        # Подбираем уникальные цвета из базы
+        unique_matches = []
+        seen_hex = set()
         for rgb in grouped:
             hex_str = rgb_to_hex(rgb)
-            closest = find_closest_colors(hex_str, BAMBU_COLORS, top_n=1)[0][1]
-            color_list.append(f"• {closest['name']} ({hex_str}) — {closest['type']} [{closest['location']}]")
-        reply = "🎨 Найдены цвета:\n" + "\n".join(color_list)
+            matches = find_closest_colors(hex_str, BAMBU_COLORS, top_n=1)
+            if matches:
+                match = matches[0][1]
+                if match['hex'] not in seen_hex:
+                    seen_hex.add(match['hex'])
+                    unique_matches.append(match)
+        if not unique_matches:
+            await processing_msg.edit_text("❌ Не удалось подобрать цвета из базы Bambu Lab.")
+            return
+        color_list = []
+        for m in unique_matches:
+            color_list.append(f"• {m['name']} ({m['hex']}) — {m['type']} [{m['location']}]")
+        reply = "🎨 Найдены цвета в модели (из базы Bambu Lab):\n" + "\n".join(color_list)
+        # Для палитры используем сгруппированные RGB (оригинальные цвета модели)
         palette_img = generate_color_palette(grouped)
         if palette_img:
             await processing_msg.delete()
