@@ -64,26 +64,55 @@ def rgb_to_hex(rgb):
     return f"#{rgb[0]:02X}{rgb[1]:02X}{rgb[2]:02X}"
 
 def rgb_to_lab(r, g, b):
-    r /= 255.0; g /= 255.0; b /= 255.0
-    r = r > 0.04045 ? pow((r + 0.055) / 1.055, 2.4) : r / 12.92
-    g = g > 0.04045 ? pow((g + 0.055) / 1.055, 2.4) : g / 12.92
-    b = b > 0.04045 ? pow((b + 0.055) / 1.055, 2.4) : b / 12.92
+    # Упрощённо: конвертируем в XYZ, потом в Lab, используем D65
+    r /= 255.0
+    g /= 255.0
+    b /= 255.0
+    # gamma correction
+    if r > 0.04045:
+        r = pow((r + 0.055) / 1.055, 2.4)
+    else:
+        r = r / 12.92
+    if g > 0.04045:
+        g = pow((g + 0.055) / 1.055, 2.4)
+    else:
+        g = g / 12.92
+    if b > 0.04045:
+        b = pow((b + 0.055) / 1.055, 2.4)
+    else:
+        b = b / 12.92
+    # XYZ
     x = r * 0.4124 + g * 0.3576 + b * 0.1805
     y = r * 0.2126 + g * 0.7152 + b * 0.0722
     z = r * 0.0193 + g * 0.1192 + b * 0.9505
-    x *= 100; y *= 100; z *= 100
+    x *= 100
+    y *= 100
+    z *= 100
+    # Reference white D65
     xn, yn, zn = 95.047, 100.000, 108.883
-    x /= xn; y /= yn; z /= zn
-    fx = x > 0.008856 ? pow(x, 1/3) : (7.787 * x + 16/116)
-    fy = y > 0.008856 ? pow(y, 1/3) : (7.787 * y + 16/116)
-    fz = z > 0.008856 ? pow(z, 1/3) : (7.787 * z + 16/116)
+    x /= xn
+    y /= yn
+    z /= zn
+    # Lab
+    if x > 0.008856:
+        fx = pow(x, 1/3)
+    else:
+        fx = 7.787 * x + 16/116
+    if y > 0.008856:
+        fy = pow(y, 1/3)
+    else:
+        fy = 7.787 * y + 16/116
+    if z > 0.008856:
+        fz = pow(z, 1/3)
+    else:
+        fz = 7.787 * z + 16/116
     l = 116 * fy - 16
     a = 500 * (fx - fy)
     b = 200 * (fy - fz)
     return (l, a, b)
 
 def delta_e_2000(lab1, lab2):
-    # Упрощённо: евклидово расстояние в Lab
+    # Приблизительно: евклидово расстояние в Lab
     return math.sqrt((lab1[0]-lab2[0])**2 + (lab1[1]-lab2[1])**2 + (lab1[2]-lab2[2])**2)
 
 def find_closest_colors(input_hex, colors, top_n=5):
@@ -103,18 +132,22 @@ def extract_colors_from_3mf(file_bytes: bytes) -> list:
     colors = []
     try:
         with zipfile.ZipFile(BytesIO(file_bytes)) as zf:
+            # Ищем project_settings.config
             config_files = [f for f in zf.namelist() if f.lower().endswith('project_settings.config')]
             if config_files:
                 with zf.open(config_files[0]) as cf:
                     content = cf.read().decode('utf-8', errors='ignore')
+                    # Ищем массив filament_colour
                     match = re.search(r'"filament_colour":\s*\[([\s\S]*?)\]', content)
                     if match:
                         hexes = re.findall(r'#[A-Fa-f0-9]{6}', match.group(1))
                         if hexes:
                             return [h.upper() for h in set(hexes)]
+                    # Если не нашли, ищем все hex-коды в тексте
                     hexes = re.findall(r'#[A-Fa-f0-9]{6}', content)
                     if hexes:
                         return [h.upper() for h in set(hexes)]
+            # Если не нашли, ищем в .model файлах
             model_files = [f for f in zf.namelist() if f.endswith('.model')]
             for mf in model_files:
                 with zf.open(mf) as f:
@@ -128,6 +161,7 @@ def extract_colors_from_3mf(file_bytes: bytes) -> list:
     return list(set(colors))
 
 def group_similar_colors(colors, tolerance=30):
+    # Группировка по евклидову расстоянию в RGB
     groups = []
     for rgb in colors:
         found = False
