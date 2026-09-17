@@ -7,6 +7,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.types import Update
 from aiogram.fsm.storage.memory import MemoryStorage
 from handlers import routers
+from handlers.common import AccessMiddleware
 from config import BOT_TOKEN, BAMBU_EMAIL, BAMBU_PASSWORD
 from google_sheets import SheetManager, moscow_now
 from bambu_cloud import BambuCloudManager
@@ -31,6 +32,12 @@ except Exception as e:
 # ---------- Telegram bot ----------
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
+
+# ---------- Регистрируем middleware на уровне диспетчера ----------
+dp.message.middleware(AccessMiddleware())
+dp.callback_query.middleware(AccessMiddleware())
+
+# ---------- Подключаем роутеры ----------
 for router in routers:
     dp.include_router(router)
 
@@ -40,6 +47,7 @@ templates = Jinja2Templates(directory="templates")
 
 # ---------- Bambu Cloud Manager ----------
 bambu_cloud = BambuCloudManager()
+
 
 def get_days_left(deadline):
     try:
@@ -56,6 +64,7 @@ def get_days_left(deadline):
     except:
         return "—"
 
+
 # ---------- Вебхук ----------
 @app.post("/webhook")
 async def webhook(request: Request):
@@ -68,15 +77,34 @@ async def webhook(request: Request):
         logger.error(f"Webhook error: {e}")
         return {"status": "error"}
 
+
 # ---------- Главная ----------
 @app.get("/")
 async def root():
     return {"status": "3D Printer Bot is running"}
 
+
 # ---------- Трекер ----------
 @app.get("/tracker", response_class=HTMLResponse)
 async def tracker_page(request: Request):
     return templates.TemplateResponse("tracker.html", {"request": request})
+
+
+# ---------- Manifest для PWA ----------
+@app.get("/manifest.json")
+async def manifest():
+    return JSONResponse(content={
+        "name": "3D Printer Tracker",
+        "short_name": "3D Tracker",
+        "start_url": "/tracker",
+        "display": "standalone",
+        "background_color": "#ffffff",
+        "theme_color": "#3b82f6",
+        "icons": [
+            {"src": "/static/icon-192.png", "sizes": "192x192", "type": "image/png"}
+        ]
+    })
+
 
 # ---------- API заказов ----------
 @app.get("/api/orders")
@@ -112,6 +140,7 @@ async def get_orders_api(customer: str = "", from_date: str = "", to_date: str =
         logger.error(f"API error: {e}")
         return JSONResponse(content={"error": str(e)}, status_code=500)
 
+
 # ---------- API задач ----------
 @app.get("/api/tasks")
 async def get_tasks_api():
@@ -135,11 +164,13 @@ async def get_tasks_api():
         logger.error(f"API tasks error: {e}")
         return JSONResponse(content={"error": str(e)}, status_code=500)
 
+
 # ---------- API принтеров (Bambu Cloud) ----------
 @app.get("/api/printers")
 async def get_printers_api():
     printers = bambu_cloud.get_printers()
     return JSONResponse(content={"printers": printers})
+
 
 # ---------- Проверка задач (cron) ----------
 @app.get("/check_tasks")
@@ -202,6 +233,7 @@ async def check_tasks():
     except Exception as e:
         logger.error(f"Критическая ошибка в /check_tasks: {e}")
         return JSONResponse(content={"status": "error", "message": str(e)}, status_code=500)
+
 
 # ---------- Запуск ----------
 if __name__ == "__main__":
