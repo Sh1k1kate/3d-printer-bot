@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 router = Router()
 sheet = SheetManager()
 
+
 # ---------- Добавление набора ----------
 @router.message(F.text == "➕ Добавить набор")
 async def add_kit_start(message: Message, state: FSMContext):
@@ -25,6 +26,7 @@ async def add_kit_start(message: Message, state: FSMContext):
         return
     await message.answer("Введите *название набора*:", reply_markup=cancel_keyboard)
     await state.set_state(AddKit.waiting_for_kit_name)
+
 
 @router.message(AddKit.waiting_for_kit_name, F.text != "❌ Отмена")
 async def process_kit_name(message: Message, state: FSMContext):
@@ -42,9 +44,11 @@ async def process_kit_name(message: Message, state: FSMContext):
     )
     await state.set_state(AddKit.waiting_for_item)
 
+
 @router.callback_query(AddKit.waiting_for_item, F.data.startswith("add_kit_model_"))
 async def add_kit_select_model(callback: CallbackQuery, state: FSMContext):
-    data = callback.data[15:]
+    # ✅ Префикс "add_kit_model_" = 14 символов
+    data = callback.data[14:]
     if data.startswith("page_"):
         page = int(data.split('_')[1])
         models = sheet.get_all_models()
@@ -62,6 +66,7 @@ async def add_kit_select_model(callback: CallbackQuery, state: FSMContext):
     )
     await state.set_state(AddKit.waiting_for_quantity_for_item)
     await callback.answer()
+
 
 @router.message(AddKit.waiting_for_quantity_for_item, F.text != "❌ Отмена")
 async def add_kit_process_quantity(message: Message, state: FSMContext):
@@ -91,6 +96,7 @@ async def add_kit_process_quantity(message: Message, state: FSMContext):
     await message.answer("Выберите модель для добавления:", reply_markup=select_model_keyboard(models, prefix="add_kit_model"))
     await state.set_state(AddKit.waiting_for_item)
 
+
 @router.callback_query(AddKit.waiting_for_item, F.data == "add_kit_done")
 async def add_kit_done(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
@@ -104,6 +110,7 @@ async def add_kit_done(callback: CallbackQuery, state: FSMContext):
     await state.set_state(AddKit.waiting_for_price)
     await callback.answer()
 
+
 @router.message(AddKit.waiting_for_price, F.text != "❌ Отмена")
 async def process_kit_price(message: Message, state: FSMContext):
     try:
@@ -114,6 +121,7 @@ async def process_kit_price(message: Message, state: FSMContext):
     await state.update_data(kit_price=price)
     await message.answer("Введите *описание набора* (или 'нет', чтобы пропустить):", parse_mode="Markdown")
     await state.set_state(AddKit.waiting_for_description)
+
 
 @router.message(AddKit.waiting_for_description, F.text != "❌ Отмена")
 async def process_kit_description(message: Message, state: FSMContext):
@@ -128,10 +136,12 @@ async def process_kit_description(message: Message, state: FSMContext):
     await message.answer(f"✅ Набор *{kit_name}* успешно добавлен!", reply_markup=main_menu)
     await state.clear()
 
+
 @router.message(StateFilter(AddKit), F.text == "❌ Отмена")
 async def cancel_add_kit(message: Message, state: FSMContext):
     await state.clear()
     await message.answer("Добавление набора отменено.", reply_markup=main_menu)
+
 
 # ---------- Редактирование набора ----------
 @router.callback_query(F.data.startswith("edit_kit_"))
@@ -147,6 +157,7 @@ async def edit_kit_start(callback: CallbackQuery):
         reply_markup=kit_parameters_keyboard(kit_name)
     )
     await callback.answer()
+
 
 @router.callback_query(F.data.startswith("edit_kit_param_"))
 async def edit_kit_param_start(callback: CallbackQuery, state: FSMContext):
@@ -188,6 +199,7 @@ async def edit_kit_param_start(callback: CallbackQuery, state: FSMContext):
     else:
         await callback.answer("Неизвестный параметр")
 
+
 async def ask_edit_kit_value(callback, state, kit_name, param, current, prompt):
     await state.update_data(
         edit_kit_name=kit_name,
@@ -202,6 +214,7 @@ async def ask_edit_kit_value(callback, state, kit_name, param, current, prompt):
     await state.set_state(EditKit.waiting_for_new_value)
     await callback.answer()
 
+
 @router.callback_query(EditKit.waiting_for_item_edit, F.data == "edit_kit_add")
 async def edit_kit_add_model(callback: CallbackQuery, state: FSMContext):
     models = sheet.get_all_models()
@@ -215,8 +228,10 @@ async def edit_kit_add_model(callback: CallbackQuery, state: FSMContext):
     await state.update_data(edit_kit_action="add")
     await callback.answer()
 
+
 @router.callback_query(EditKit.waiting_for_item_edit, F.data.startswith("edit_kit_model_"))
 async def edit_kit_select_model(callback: CallbackQuery, state: FSMContext):
+    # ✅ Префикс "edit_kit_model_" = 15 символов
     data = callback.data[15:]
     if data.startswith("page_"):
         page = int(data.split('_')[1])
@@ -235,6 +250,7 @@ async def edit_kit_select_model(callback: CallbackQuery, state: FSMContext):
     )
     await state.set_state(EditKit.waiting_for_quantity_edit)
     await callback.answer()
+
 
 @router.message(EditKit.waiting_for_quantity_edit, F.text != "❌ Отмена")
 async def edit_kit_process_quantity(message: Message, state: FSMContext):
@@ -270,6 +286,7 @@ async def edit_kit_process_quantity(message: Message, state: FSMContext):
     )
     await state.set_state(EditKit.waiting_for_item_edit)
 
+
 @router.callback_query(EditKit.waiting_for_item_edit, F.data.startswith("remove_kit_item_"))
 async def edit_kit_remove_item(callback: CallbackQuery, state: FSMContext):
     index = int(callback.data.split('_')[-1])
@@ -290,6 +307,7 @@ async def edit_kit_remove_item(callback: CallbackQuery, state: FSMContext):
     )
     await callback.answer()
 
+
 @router.callback_query(EditKit.waiting_for_item_edit, F.data == "back_to_kit")
 async def edit_kit_back_to_kit(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
@@ -306,6 +324,7 @@ async def edit_kit_back_to_kit(callback: CallbackQuery, state: FSMContext):
             await callback.message.edit_text(text, reply_markup=kit_action_keyboard(kit_name))
     await state.clear()
     await callback.answer()
+
 
 @router.message(EditKit.waiting_for_new_value, F.text != "❌ Отмена")
 async def process_edit_kit_param(message: Message, state: FSMContext):
@@ -351,10 +370,12 @@ async def process_edit_kit_param(message: Message, state: FSMContext):
             await message.answer(text, reply_markup=kit_action_keyboard(kit_name))
     await message.answer("Вы можете продолжить редактирование.", reply_markup=main_menu)
 
+
 @router.message(StateFilter(EditKit), F.text == "❌ Отмена")
 async def cancel_edit_kit(message: Message, state: FSMContext):
     await state.clear()
     await message.answer("Редактирование набора отменено.", reply_markup=main_menu)
+
 
 # ---------- Просмотр набора ----------
 @router.callback_query(F.data.startswith("kit_"))
