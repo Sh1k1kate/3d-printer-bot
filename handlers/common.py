@@ -1,7 +1,9 @@
 from aiogram import Router, F, BaseMiddleware
+from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery
 from typing import Callable, Dict, Any, Awaitable
 from config import ALLOWED_USERS
+from keyboards import main_menu
 import logging
 import re
 
@@ -10,6 +12,7 @@ logger = logging.getLogger(__name__)
 router = Router()
 
 
+# ---------- Проверка доступа ----------
 def is_allowed(user_id: int) -> bool:
     if not ALLOWED_USERS:
         return True
@@ -33,6 +36,7 @@ class AccessMiddleware(BaseMiddleware):
         return await handler(event, data)
 
 
+# ---------- Безопасная работа с Markdown ----------
 def escape_markdown(text) -> str:
     """Экранирует спецсимволы Markdown V1 в пользовательских строках."""
     if text is None:
@@ -66,7 +70,6 @@ async def safe_edit(message, text: str, **kwargs):
             except Exception as e2:
                 logger.warning(f"Edit fallback error: {e2}")
                 return None
-        # Ошибки типа "message is not modified" — игнорируем
         logger.warning(f"Edit error: {e}")
         return None
 
@@ -89,6 +92,22 @@ async def ignore_callback(callback: CallbackQuery):
     await callback.answer()
 
 
+# ---------- Универсальный обработчик "❌ Отмена" ----------
+@router.message(F.text == "❌ Отмена")
+async def cancel_handler(message: Message, state: FSMContext):
+    """
+    Срабатывает в любом состоянии и вне его.
+    Всегда возвращает пользователя в главное меню.
+    """
+    current_state = await state.get_state()
+    if current_state is None:
+        # Пользователь вне какого-либо процесса — просто подтверждаем
+        await message.answer("Вы уже в главном меню.", reply_markup=main_menu)
+        return
+    await state.clear()
+    await message.answer("Операция отменена.", reply_markup=main_menu)
+
+
 # ---------- Fallback для необработанных callback ----------
 @router.callback_query()
 async def fallback_callback(callback: CallbackQuery):
@@ -102,15 +121,21 @@ async def fallback_callback(callback: CallbackQuery):
         pass
 
 
-# ---------- Fallback для сообщений ----------
+# ---------- Fallback для прочих сообщений ----------
 @router.message()
 async def fallback_message(message: Message):
     if message.text:
         logger.warning(f"Необработанное сообщение от {message.from_user.id}: {message.text[:50]}")
         if message.text.startswith("/"):
             await message.answer("🤔 Неизвестная команда. Введите /help для списка команд.")
+        else:
+            await message.answer(
+                "🤔 Я не понял команду. Используйте кнопки меню или введите /help.",
+                reply_markup=main_menu
+            )
 
 
+# ---------- Вспомогательные функции ----------
 def format_time(minutes: int) -> str:
     if minutes <= 0:
         return "—"
