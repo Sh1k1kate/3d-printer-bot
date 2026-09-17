@@ -22,7 +22,9 @@ class BambuCloudManager:
         self._lock = threading.Lock()
         self._mqtt_thread = None
         self._running = False
-        self._device_ids = []   # список серийников для pushall
+        self._device_ids = []
+        self._pushall_sent = False          # ← отправляем pushall только 1 раз
+        self._first_connect = True
         self._init_client()
 
     def _init_client(self):
@@ -44,11 +46,10 @@ class BambuCloudManager:
             if token:
                 self.client = BambuClient(token=str(token))
                 logger.info("Bambu Cloud client успешно инициализирован")
-                # Кэшируем список device_id для pushall
                 try:
                     devices = self.client.get_devices()
                     self._device_ids = [d.get("dev_id") for d in devices if d.get("dev_id")]
-                    logger.info(f"Загружено {len(self._device_ids)} device_id для pushall")
+                    logger.info(f"Загружено {len(self._device_ids)} device_id")
                 except Exception as e:
                     logger.error(f"Не удалось получить устройства: {e}")
                 self._start_mqtt()
@@ -93,9 +94,11 @@ class BambuCloudManager:
                 continue
 
             try:
+                # Уникальный client_id, чтобы брокер не путал с прошлыми сессиями
+                client_id = f"bambu_{uid_str}_{int(time.time())}"
                 client = mqtt.Client(
                     callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
-                    client_id=f"bambu_{uid_str}",
+                    client_id=client_id,
                     clean_session=True
                 )
                 client.username_pw_set(f"u_{uid_str}", token_str)
@@ -105,6 +108,7 @@ class BambuCloudManager:
                 client.on_connect = self._on_connect
                 client.on_message = self._on_paho_message
                 client.on_disconnect = self._on_disconnect
+                client.on_log = self._on_log  # диагностика
 
                 self.mqtt_client = client
                 logger.info(f"MQTT подключение: uid={uid_str}, host={MQTT_HOST}:{MQTT_PORT}")
@@ -114,38 +118,57 @@ class BambuCloudManager:
                 logger.error(f"Ошибка MQTT: {e}")
                 import traceback
                 logger.error(traceback.format_exc())
-                time.sleep(30)
+                time.sleep(15)
+
+    def _on_log(self, client, userdata, level, buf):
+        """Детальное логирование paho-mqtt."""
+        if level == mqtt.MQTT_LOG_ERR or level == mqtt.MQTT_LOG_WARNING:
+            logger.warning(f"[paho] {buf}")
 
     def _on_connect(self, client, userdata, flags, reason_code, properties=None):
         if reason_code == 0:
             logger.info("MQTT подключён. Подписываемся на device/+/report")
             client.subscribe("device/+/report")
 
-            # ⬇️ ЗАПРАШИВАЕМ ПОЛНОЕ СОСТОЯНИЕ ОТ КАЖДОГО ПРИНТЕРА
-            self._request_pushall()
+            # ✅ pushall отправляем ТОЛЬКО ОДИН РАЗ, с задержкой 5 сек
+            if not self._pushall_sent:
+                self._pushall_sent = True
+                threading.Thread(target=self._delayed_pushall, daemon=True).start()
         else:
             logger.error(f"MQTT ошибка подключения: reason_code={reason_code}")
 
-    def _request_pushall(self):
-        """Просим каждый принтер прислать текущее состояние (pushall)."""
-        if not self.mqtt_client:
-            return
-        for device_id in self._device_ids:
+    def _delayed_pushall(self):
+        """Отправляет pushall всем принтерам с задержками (не спамить брокер)."""
+        logger.info("Подготовка pushall через 5 секунд...")
+        time.sleep(5)
+
+        for i, device_id in enumerate(self._device_ids):
+            if not self._running:
+                return
             try:
-                topic = f"device/{device_id}/request"
-                payload = json.dumps({
-                    "pushing": {
-                        "sequence_id": "1",
-                        "command": "pushall"
-                    }
-                })
-                self.mqtt_client.publish(topic, payload)
-                logger.info(f"→ Отправлен pushall для {device_id}")
+                if self.mqtt_client and self.mqtt_client.is_connected():
+                    topic = f"device/{device_id}/request"
+                    payload = json.dumps({
+                        "pushing": {
+                            "sequence_id": str(i + 1),
+                            "command": "pushall"
+                        }
+                    })
+                    self.mqtt_client.publish(topic, payload, qos=1)
+                    logger.info(f"→ pushall {device_id}")
+                else:
+                    logger.warning("MQTT отключён, прерываю pushall")
+                    return
             except Exception as e:
-                logger.error(f"Ошибка pushall для {device_id}: {e}")
+                logger.error(f"Ошибка pushall {device_id}: {e}")
+            # ✅ Задержка 500мс между принтерами
+            time.sleep(0.5)
+
+        logger.info("✅ pushall отправлен всем принтерам")
 
     def _on_disconnect(self, client, userdata, flags, reason_code, properties=None):
-        logger.warning(f"MQTT отключён: reason_code={reason_code}. Переподключение...")
+        logger.warning(f"MQTT отключён: reason_code={reason_code}. Пауза 15 сек...")
+        time.sleep(15)  # ← даём брокеру забыть старую сессию
 
     def _on_paho_message(self, client, userdata, msg):
         try:
@@ -154,10 +177,7 @@ class BambuCloudManager:
                 return
             device_id = parts[1]
             data = json.loads(msg.payload.decode("utf-8"))
-
-            # ✅ Диагностика
-            logger.info(f"[MQTT RAW] {device_id}: {json.dumps(data)[:800]}")
-
+            logger.info(f"[MQTT RAW] {device_id}: {json.dumps(data)[:500]}")
             self._process_mqtt_data(device_id, data)
         except Exception as e:
             logger.error(f"Ошибка разбора MQTT сообщения: {e}")
@@ -169,7 +189,6 @@ class BambuCloudManager:
             print_data = data["print"]
 
             with self._lock:
-                # ---------- Статус ----------
                 status = self._status_cache.get(device_id, {})
                 for key in ("gcode_state", "mc_percent", "mc_remaining_time",
                             "subtask_name", "nozzle_temper", "nozzle_target_temper",
@@ -178,7 +197,6 @@ class BambuCloudManager:
                         status[key] = print_data.get(key)
                 self._status_cache[device_id] = status
 
-                # ---------- AMS ----------
                 if "ams" in print_data:
                     ams = print_data["ams"]
                     trays = []
@@ -199,9 +217,8 @@ class BambuCloudManager:
                     if trays:
                         self.ams_cache[device_id] = trays
                         self.ams_timestamp[device_id] = time.time()
-                        logger.info(f"✅ AMS обновлены для {device_id}: {len(trays)} катушек")
+                        logger.info(f"✅ AMS обновлены для {device_id}: {len(trays)}")
 
-                # ---------- Внешняя катушка ----------
                 if "vt_tray" in print_data:
                     vt = print_data["vt_tray"]
                     vt_type = vt.get("tray_type", "")
