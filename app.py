@@ -12,7 +12,7 @@ from handlers.common import AccessMiddleware
 from config import BOT_TOKEN, BAMBU_EMAIL, BAMBU_PASSWORD
 from google_sheets import SheetManager, moscow_now
 from bambu_cloud import BambuCloudManager
-from datetime import datetime, timedelta
+from datetime import datetime
 import aiohttp
 
 logging.basicConfig(level=logging.INFO)
@@ -34,11 +34,9 @@ except Exception as e:
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 
-# ---------- Middleware ----------
 dp.message.middleware(AccessMiddleware())
 dp.callback_query.middleware(AccessMiddleware())
 
-# ---------- Роутеры ----------
 for router in routers:
     dp.include_router(router)
 
@@ -97,9 +95,7 @@ async def manifest():
         "display": "standalone",
         "background_color": "#ffffff",
         "theme_color": "#3b82f6",
-        "icons": [
-            {"src": "/static/icon-192.png", "sizes": "192x192", "type": "image/png"}
-        ]
+        "icons": [{"src": "/static/icon-192.png", "sizes": "192x192", "type": "image/png"}]
     })
 
 
@@ -166,7 +162,6 @@ async def get_tasks_api():
         return JSONResponse(content={"error": str(e)}, status_code=500)
 
 
-# ✅ Не блокирует event loop
 @app.get("/api/printers")
 async def get_printers_api():
     printers = await run_in_threadpool(bambu_cloud.get_printers)
