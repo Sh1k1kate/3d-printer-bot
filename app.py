@@ -5,15 +5,14 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.concurrency import run_in_threadpool
 from fastapi.templating import Jinja2Templates
 from aiogram import Bot, Dispatcher
-from aiogram.types import Update
+from aiogram.types import Update, ErrorEvent
 from aiogram.fsm.storage.memory import MemoryStorage
 from handlers import routers
 from handlers.common import AccessMiddleware
-from config import BOT_TOKEN, BAMBU_EMAIL, BAMBU_PASSWORD
+from config import BOT_TOKEN
 from google_sheets import SheetManager, moscow_now
 from bambu_cloud import BambuCloudManager
 from datetime import datetime
-import aiohttp
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -22,7 +21,6 @@ if not BOT_TOKEN:
     logger.error("BOT_TOKEN не задан!")
     raise ValueError("BOT_TOKEN is required")
 
-# ---------- Глобальный SheetManager ----------
 try:
     sheet_manager = SheetManager()
     logger.info("SheetManager успешно инициализирован")
@@ -30,7 +28,6 @@ except Exception as e:
     logger.error(f"Ошибка инициализации SheetManager: {e}")
     sheet_manager = None
 
-# ---------- Telegram bot ----------
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 
@@ -40,11 +37,16 @@ dp.callback_query.middleware(AccessMiddleware())
 for router in routers:
     dp.include_router(router)
 
-# ---------- FastAPI ----------
+
+@dp.errors()
+async def errors_handler(event: ErrorEvent):
+    logger.error(f"Global error: {event.exception}", exc_info=event.exception)
+    return True
+
+
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
 
-# ---------- Bambu Cloud ----------
 bambu_cloud = BambuCloudManager()
 
 
@@ -213,7 +215,7 @@ async def check_tasks():
                         for recipient in recipients:
                             try:
                                 if minutes == 0:
-                                    text = f"🔔 Срок выполнения задачи '{title}' истёк (до {deadline_dt.strftime('%H:%M')})!"
+                                    text = f"🔔 Срок задачи '{title}' истёк (до {deadline_dt.strftime('%H:%M')})!"
                                 else:
                                     text = f"⏰ Через {minutes} минут задача '{title}' должна быть выполнена (до {deadline_dt.strftime('%H:%M')})!"
                                 await bot.send_message(recipient, text)
