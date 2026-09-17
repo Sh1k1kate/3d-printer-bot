@@ -13,15 +13,10 @@ def moscow_now():
     return datetime.now(MOSCOW_TZ)
 
 class SheetManager:
-    # Кеш для данных (статические переменные)
-    _cache = {
-        "orders": {"data": None, "timestamp": 0},
-        "tasks": {"data": None, "timestamp": 0}
-    }
-    _cache_ttl = 10  # секунд
+    _cache = {"orders": {"data": None, "timestamp": 0}, "tasks": {"data": None, "timestamp": 0}}
+    _cache_ttl = 10
 
     def __init__(self):
-        # Инициализация только один раз – при первом создании
         if not hasattr(self, '_initialized'):
             self._initialized = True
             scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
@@ -29,35 +24,42 @@ class SheetManager:
             self.client = gspread.authorize(creds)
             self.sheet = self.client.open_by_key(SPREADSHEET_ID)
 
-            # ---------- Лист "Время печати" ----------
+            # Лист "Время печати"
             try:
                 self.sheet_models = self.sheet.worksheet("Время печати")
             except gspread.exceptions.WorksheetNotFound:
                 self.sheet_models = self.sheet.add_worksheet(title="Время печати", rows=1000, cols=6)
                 self.sheet_models.append_row(["Название", "Детали", "Кол-во на палете", "Нужно на шт.", "Время палета (мин)", "Грамм на палет"])
 
-            # ---------- Лист "Заказы" ----------
+            # Лист "Заказы"
             try:
                 self.sheet_orders = self.sheet.worksheet("Заказы")
-            except gspread.exceptions.WorksheetNotFound:
+            except:
                 self.sheet_orders = self.sheet.add_worksheet(title="Заказы", rows=1000, cols=8)
                 self.sheet_orders.append_row(["Номер заказа", "Позиция", "Кол-во заказано", "Кол-во напечатано", "Срок заказа", "Дата последнего изменения", "Выполнен", "Заказчик"])
-            else:
-                headers = self.sheet_orders.row_values(1)
-                if "Заказчик" not in headers:
-                    last_col = len(headers) + 1
-                    self.sheet_orders.update_cell(1, last_col, "Заказчик")
 
-            # ---------- Лист "Наборы" ----------
+            # Лист "Наборы"
             try:
                 self.sheet_kits = self.sheet.worksheet("Наборы")
-            except gspread.exceptions.WorksheetNotFound:
+            except:
                 self.sheet_kits = self.sheet.add_worksheet(title="Наборы", rows=100, cols=4)
                 self.sheet_kits.append_row(["Название", "Состав", "Цена", "Описание"])
 
-            # ---------- Лист "Задачи" ----------
+            # Лист "Лог"
+            try:
+                self.sheet_log = self.sheet.worksheet("Лог")
+            except:
+                self.sheet_log = self.sheet.add_worksheet(title="Лог", rows=1000, cols=4)
+                self.sheet_log.append_row(["Время", "Пользователь", "Действие", "Детали"])
+
+            # Лист "Настройки"
+            try:
+                self.sheet_settings = self.sheet.worksheet("Настройки")
+            except:
+                self.sheet_settings = self.sheet.add_worksheet(title="Настройки", rows=100, cols=3)
+                self.sheet_settings.append_row(["user_id", "morning_time", "interval"])
+
             self.init_tasks_sheet()
-            # ---------- Лист "Подписчики" ----------
             self.init_subscribers_sheet()
 
     # ---------- Кеширование ----------
@@ -86,7 +88,43 @@ class SheetManager:
             for k in self._cache:
                 self._cache[k] = {"data": None, "timestamp": 0}
 
-    # ---------- Модели ----------
+    # ---------- Лог ----------
+    def log_action(self, user_id, action, details=""):
+        try:
+            now_str = moscow_now().strftime("%Y-%m-%d %H:%M:%S")
+            self.sheet_log.append_row([now_str, user_id, action, details])
+        except Exception as e:
+            logger.error(f"Ошибка записи лога: {e}")
+
+    # ---------- Настройки пользователя ----------
+    def get_user_settings(self, user_id):
+        try:
+            cell = self.sheet_settings.find(str(user_id), in_column=1)
+            if cell:
+                row = self.sheet_settings.row_values(cell.row)
+                return {"morning_time": row[1] if len(row) > 1 else "09:00", "interval": row[2] if len(row) > 2 else "60"}
+            else:
+                return {"morning_time": "09:00", "interval": "60"}
+        except:
+            return {"morning_time": "09:00", "interval": "60"}
+
+    def set_user_settings(self, user_id, morning_time=None, interval=None):
+        try:
+            cell = self.sheet_settings.find(str(user_id), in_column=1)
+            if cell:
+                if morning_time:
+                    self.sheet_settings.update_cell(cell.row, 2, morning_time)
+                if interval:
+                    self.sheet_settings.update_cell(cell.row, 3, interval)
+            else:
+                row = [user_id, morning_time or "09:00", interval or "60"]
+                self.sheet_settings.append_row(row)
+            return True
+        except Exception as e:
+            logger.error(f"Ошибка сохранения настроек: {e}")
+            return False
+
+    # ---------- Модели (полностью из предыдущей версии) ----------
     def _normalize_rows_with_index(self):
         records = self.sheet_models.get_all_values()
         if len(records) <= 1:
@@ -157,6 +195,7 @@ class SheetManager:
         value_to_write = str(new_value)
         try:
             self.sheet_models.update_cell(row_index, col, value_to_write)
+            self._invalidate_cache()
             return True
         except Exception as e:
             logger.error(f"Error updating {field} at {col}{row_index}: {e}")
@@ -179,7 +218,8 @@ class SheetManager:
         end_row = start_row + len(rows_to_add) - 1
         cell_range = f"A{start_row}:F{end_row}"
         self.sheet_models.update(cell_range, rows_to_add, value_input_option="USER_ENTERED")
-        self._invalidate_cache()  # сбрасываем кеш
+        self._invalidate_cache()
+        self.log_action("system", "Добавление модели", model_name)
 
     def delete_part(self, model_name, det_name):
         rows = self._normalize_rows_with_index()
@@ -190,7 +230,7 @@ class SheetManager:
                 return True
         return False
 
-    # ---------- Наборы ----------
+    # ---------- Наборы (полностью из предыдущей версии) ----------
     def get_all_kits(self):
         records = self.sheet_kits.get_all_values()
         if len(records) <= 1:
@@ -207,6 +247,7 @@ class SheetManager:
     def add_kit(self, kit_name, items_text, price, description):
         self.sheet_kits.append_row([kit_name, items_text, price, description])
         self._invalidate_cache()
+        self.log_action("system", "Добавление набора", kit_name)
 
     def update_kit_field(self, kit_name, field, new_value):
         col_map = {'name': 1, 'items': 2, 'price': 3, 'desc': 4}
@@ -255,11 +296,7 @@ class SheetManager:
             items.append((name.strip(), qty))
         return items
 
-    # ---------- Заказы ----------
-    def init_sheet(self):
-        # уже сделано в __init__
-        pass
-
+    # ---------- Заказы (с логом) ----------
     def get_next_order_number(self):
         records = self.sheet_orders.get_all_values()
         if len(records) <= 1:
@@ -280,11 +317,8 @@ class SheetManager:
         row = [order_num, position, quantity, 0, deadline_str, now_str, "Нет", customer]
         self.sheet_orders.append_row(row)
         self._invalidate_cache("orders")
+        self.log_action("system", f"Создание заказа №{order_num}", f"{position} x{quantity} для {customer}")
         return order_num
-
-    def get_user_orders(self):
-        # Используем кеш для заказов
-        return self._get_cached("orders", self._fetch_orders)
 
     def _fetch_orders(self):
         records = self.sheet_orders.get_all_values()
@@ -296,6 +330,9 @@ class SheetManager:
                 row.append("")
             result.append(row)
         return result
+
+    def get_user_orders(self):
+        return self._get_cached("orders", self._fetch_orders)
 
     def get_active_orders(self):
         all_orders = self.get_user_orders()
@@ -314,6 +351,7 @@ class SheetManager:
             now_str = moscow_now().strftime("%Y-%m-%d %H:%M:%S")
             self.sheet_orders.update_cell(cell.row, 6, now_str)
             self._invalidate_cache("orders")
+            self.log_action("system", f"Обновление печати заказа №{order_num}", f"Напечатано {printed_qty}")
             return True
         return False
 
@@ -324,25 +362,28 @@ class SheetManager:
             now_str = moscow_now().strftime("%Y-%m-%d %H:%M:%S")
             self.sheet_orders.update_cell(cell.row, 6, now_str)
             self._invalidate_cache("orders")
+            self.log_action("system", f"Заказ №{order_num} выполнен", "")
             return True
         return False
 
     def get_order_by_number(self, order_num):
-        # Можно использовать кеш или прямой поиск
         orders = self.get_user_orders()
         for order in orders:
             if order[0] == str(order_num):
                 return order
         return None
 
-    # ---------- Задачи ----------
+    # ---------- Задачи (с автозаказом и логом) ----------
     def init_tasks_sheet(self):
         try:
             self.sheet_tasks = self.sheet.worksheet("Задачи")
-        except gspread.exceptions.WorksheetNotFound:
+        except:
             self.sheet_tasks = self.sheet.add_worksheet(title="Задачи", rows=1000, cols=13)
-            self.sheet_tasks.append_row(["ID", "Название", "Срок", "Время", "Исполнитель (user_id)", "Статус", "Создана",
-                                         "notified_60", "notified_30", "notified_15", "notified_0", "notified_morning", "notified_day"])
+            self.sheet_tasks.append_row([
+                "ID", "Название", "Срок", "Время", "Исполнитель (user_id)",
+                "Статус", "Создана", "notified_60", "notified_30", "notified_15",
+                "notified_0", "notified_morning", "notified_day"
+            ])
 
     def get_next_task_id(self):
         records = self.sheet_tasks.get_all_values()
@@ -362,14 +403,16 @@ class SheetManager:
         task_id = self.get_next_task_id()
         now_str = moscow_now().strftime("%Y-%m-%d %H:%M:%S")
         status = "active"
-        row = [task_id, title, deadline, time_str, assignee_user_id if assignee_user_id else "", status, now_str,
-               "0", "0", "0", "0", "0", "0"]
+        row = [
+            task_id, title, deadline, time_str,
+            assignee_user_id if assignee_user_id else "",
+            status, now_str,
+            "0", "0", "0", "0", "0", "0"
+        ]
         self.sheet_tasks.append_row(row)
         self._invalidate_cache("tasks")
+        self.log_action("system", f"Создание задачи #{task_id}", title)
         return task_id
-
-    def get_active_tasks(self, user_id=None):
-        return self._get_cached("tasks", self._fetch_tasks, user_id)
 
     def _fetch_tasks(self, user_id=None):
         records = self.sheet_tasks.get_all_values()
@@ -398,6 +441,9 @@ class SheetManager:
             else:
                 tasks.append((task_id, title, deadline, time_str, assignee, status))
         return tasks
+
+    def get_active_tasks(self, user_id=None):
+        return self._get_cached("tasks", self._fetch_tasks, user_id)
 
     def get_task_by_id(self, task_id):
         cell = self.sheet_tasks.find(str(task_id), in_column=1)
@@ -493,7 +539,7 @@ class SheetManager:
     def init_subscribers_sheet(self):
         try:
             self.sheet_subscribers = self.sheet.worksheet("Подписчики")
-        except gspread.exceptions.WorksheetNotFound:
+        except:
             self.sheet_subscribers = self.sheet.add_worksheet(title="Подписчики", rows=1000, cols=2)
             self.sheet_subscribers.append_row(["user_id", "name"])
 
@@ -502,7 +548,7 @@ class SheetManager:
             cell = self.sheet_subscribers.find(str(user_id), in_column=1)
             if cell:
                 return False
-        except gspread.exceptions.CellNotFound:
+        except:
             pass
         if not name:
             name = f"Пользователь {user_id}"
@@ -515,7 +561,7 @@ class SheetManager:
             if cell:
                 self.sheet_subscribers.delete_rows(cell.row)
                 return True
-        except gspread.exceptions.CellNotFound:
+        except:
             pass
         return False
 
