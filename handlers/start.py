@@ -30,7 +30,12 @@ async def set_commands(bot):
 
 @router.message(Command("start"))
 async def cmd_start(message: Message):
-    sheet.init_sheet()
+    try:
+        if hasattr(sheet, "init_sheet"):
+            sheet.init_sheet()
+    except Exception as e:
+        logger.warning(f"init_sheet failed: {e}")
+
     user_id = message.from_user.id
     name = message.from_user.full_name or str(user_id)
     if sheet.add_subscriber(user_id, name):
@@ -46,7 +51,6 @@ async def cmd_start(message: Message):
         reply_markup=main_menu
     )
     await set_commands(message.bot)
-
 
 @router.message(Command("help"))
 async def cmd_help(message: Message):
