@@ -17,6 +17,8 @@
     .break-word { word-break: break-word; }
     .table-cell-wrap { max-width: 200px; white-space: normal; word-break: break-word; }
     @media (max-width: 768px) { .table-cell-wrap { max-width: 140px; } }
+    .kpi-card { transition: transform 0.2s; }
+    .kpi-card:hover { transform: translateY(-3px); }
   </style>
 </head>
 <body class="bg-gray-100 dark:bg-gray-900 text-gray-800 dark:text-gray-200 font-sans antialiased">
@@ -42,24 +44,13 @@
     </header>
 
     <!-- Вкладки -->
-    <div class="flex border-b border-gray-200 dark:border-gray-700 mb-6">
-      <button class="tab-btn px-4 py-2 text-sm font-medium border-b-2 border-blue-500 text-blue-600 dark:text-blue-400" data-tab="orders">📋 Заказы</button>
-      <button class="tab-btn px-4 py-2 text-sm font-medium border-b-2 border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300" data-tab="tasks">📌 Задачи</button>
+    <div class="flex border-b border-gray-200 dark:border-gray-700 mb-6 overflow-x-auto">
+      <button class="tab-btn px-4 py-2 text-sm font-medium border-b-2 border-blue-500 text-blue-600 dark:text-blue-400 whitespace-nowrap" data-tab="orders">📋 Заказы</button>
+      <button class="tab-btn px-4 py-2 text-sm font-medium border-b-2 border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 whitespace-nowrap" data-tab="tasks">📌 Задачи</button>
+      <button class="tab-btn px-4 py-2 text-sm font-medium border-b-2 border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 whitespace-nowrap" data-tab="infographics">📊 Инфографика</button>
     </div>
 
-    <!-- Дашборд с графиками -->
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
-      <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-4">
-        <h2 class="text-lg font-semibold mb-2">📊 Прогресс заказов</h2>
-        <canvas id="progressChart" height="150"></canvas>
-      </div>
-      <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-4">
-        <h2 class="text-lg font-semibold mb-2">📊 Статус задач</h2>
-        <canvas id="taskChart" height="150"></canvas>
-      </div>
-    </div>
-
-    <!-- Контент: Заказы -->
+    <!-- ==================== ВКЛАДКА: ЗАКАЗЫ ==================== -->
     <div id="tab-orders" class="tab-content active">
       <!-- Расширенные фильтры -->
       <div class="flex flex-wrap items-center gap-4 mb-6 bg-white dark:bg-gray-800 p-4 rounded-lg shadow">
@@ -129,7 +120,7 @@
       </div>
     </div>
 
-    <!-- Контент: Задачи -->
+    <!-- ==================== ВКЛАДКА: ЗАДАЧИ ==================== -->
     <div id="tab-tasks" class="tab-content">
       <div class="flex flex-wrap items-center gap-4 mb-6 bg-white dark:bg-gray-800 p-4 rounded-lg shadow">
         <div class="flex-1 min-w-[200px]">
@@ -183,6 +174,74 @@
         </div>
       </div>
     </div>
+
+    <!-- ==================== ВКЛАДКА: ИНФОГРАФИКА ==================== -->
+    <div id="tab-infographics" class="tab-content">
+      <!-- KPI карточки -->
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+        <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-4 text-center kpi-card">
+          <div class="text-3xl font-bold text-blue-600 dark:text-blue-400" id="kpi-orders">0</div>
+          <div class="text-xs uppercase text-gray-500 dark:text-gray-400 mt-1">Всего заказов</div>
+        </div>
+        <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-4 text-center kpi-card">
+          <div class="text-3xl font-bold text-green-600 dark:text-green-400" id="kpi-progress">0%</div>
+          <div class="text-xs uppercase text-gray-500 dark:text-gray-400 mt-1">Общий прогресс</div>
+        </div>
+        <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-4 text-center kpi-card">
+          <div class="text-3xl font-bold text-yellow-600 dark:text-yellow-400" id="kpi-tasks">0</div>
+          <div class="text-xs uppercase text-gray-500 dark:text-gray-400 mt-1">Активных задач</div>
+        </div>
+        <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-4 text-center kpi-card">
+          <div class="text-3xl font-bold text-purple-600 dark:text-purple-400" id="kpi-printers">0</div>
+          <div class="text-xs uppercase text-gray-500 dark:text-gray-400 mt-1">Активных принтеров</div>
+        </div>
+      </div>
+
+      <!-- Графики: строка 1 -->
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
+        <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-4">
+          <h2 class="text-lg font-semibold mb-3">📊 Статусы заказов</h2>
+          <div class="h-64"><canvas id="chartOrderStatus"></canvas></div>
+        </div>
+        <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-4">
+          <h2 class="text-lg font-semibold mb-3">📊 Статусы задач</h2>
+          <div class="h-64"><canvas id="chartTaskStatus"></canvas></div>
+        </div>
+      </div>
+
+      <!-- Графики: строка 2 -->
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
+        <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-4">
+          <h2 class="text-lg font-semibold mb-3">📈 Прогресс заказов</h2>
+          <div class="h-64"><canvas id="chartOrderProgress"></canvas></div>
+        </div>
+        <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-4">
+          <h2 class="text-lg font-semibold mb-3">👥 Задачи по исполнителям</h2>
+          <div class="h-64"><canvas id="chartTaskAssignees"></canvas></div>
+        </div>
+      </div>
+
+      <!-- Графики: строка 3 -->
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
+        <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-4">
+          <h2 class="text-lg font-semibold mb-3">🏆 Топ заказчиков</h2>
+          <div class="h-64"><canvas id="chartCustomers"></canvas></div>
+        </div>
+        <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-4">
+          <h2 class="text-lg font-semibold mb-3">🖨️ Прогресс принтеров</h2>
+          <div class="h-64"><canvas id="chartPrinters"></canvas></div>
+        </div>
+      </div>
+
+      <!-- Таблица катушек (AMS) -->
+      <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-4 mb-8">
+        <h2 class="text-lg font-semibold mb-3">🧵 Катушки филамента (AMS)</h2>
+        <div id="filament-list" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          <p class="text-gray-500 dark:text-gray-400">Загрузка данных...</p>
+        </div>
+      </div>
+    </div>
+
   </div>
 
   <script>
@@ -211,49 +270,16 @@
         document.getElementById('tab-'+tabId).classList.add('active');
         if (tabId === 'tasks') loadTasks();
         else if (tabId === 'orders') loadOrders();
+        else if (tabId === 'infographics') loadInfographics();
       });
     });
 
-    // ---------- Данные и фильтры ----------
-    let allOrders = [], allTasks = [];
+    // ---------- Глобальные данные ----------
+    let allOrders = [], allTasks = [], allPrinters = [];
     let currentOrderFilter = 'all', orderSearchQuery = '', customerFilter = '', dateFrom = '', dateTo = '';
     let currentTaskFilter = 'all', taskSearchQuery = '';
 
-    // ---------- Графики ----------
-    async function loadCharts() {
-      const respOrders = await fetch('/api/orders');
-      const dataOrders = await respOrders.json();
-      const orders = dataOrders.orders || [];
-      const dates = orders.map(o => o.deadline);
-      const progress = orders.map(o => o.progress);
-      new Chart(document.getElementById('progressChart'), {
-        type: 'bar',
-        data: {
-          labels: dates,
-          datasets: [{ label: 'Прогресс (%)', data: progress, backgroundColor: 'rgba(59,130,246,0.5)' }]
-        },
-        options: { responsive: true, maintainAspectRatio: true }
-      });
-
-      const respTasks = await fetch('/api/tasks');
-      const dataTasks = await respTasks.json();
-      const tasks = dataTasks.tasks || [];
-      const statusCounts = { active: 0, completed: 0, overdue: 0 };
-      tasks.forEach(t => {
-        if (t.status === 'completed') statusCounts.completed++;
-        else if (new Date(t.deadline) < new Date()) statusCounts.overdue++;
-        else statusCounts.active++;
-      });
-      new Chart(document.getElementById('taskChart'), {
-        type: 'doughnut',
-        data: {
-          labels: ['Активные', 'Выполнены', 'Просрочены'],
-          datasets: [{ data: [statusCounts.active, statusCounts.completed, statusCounts.overdue], backgroundColor: ['#fbbf24', '#34d399', '#f87171'] }]
-        }
-      });
-    }
-
-    // ---------- Загрузка данных ----------
+    // ---------- ЗАКАЗЫ ----------
     async function loadOrders() {
       const params = new URLSearchParams();
       if (customerFilter) params.append('customer', customerFilter);
@@ -264,13 +290,6 @@
       allOrders = data.orders || [];
       applyOrderFilters();
       populateCustomerFilter();
-    }
-
-    async function loadTasks() {
-      const resp = await fetch('/api/tasks');
-      const data = await resp.json();
-      allTasks = data.tasks || [];
-      applyTaskFilters();
     }
 
     function populateCustomerFilter() {
@@ -301,7 +320,6 @@
       loadOrders();
     }
 
-    // ---------- Фильтры заказов ----------
     function applyOrderFilters() {
       const filtered = allOrders.filter(o => {
         const search = o.position.toLowerCase().includes(orderSearchQuery.toLowerCase()) || (o.customer && o.customer.toLowerCase().includes(orderSearchQuery.toLowerCase()));
@@ -333,7 +351,6 @@
       const empty = document.getElementById('empty-state-orders');
       if (!orders.length) { tbody.innerHTML = ''; cards.innerHTML = ''; empty.classList.remove('hidden'); return; }
       empty.classList.add('hidden');
-      // Таблица
       tbody.innerHTML = orders.map(o => `
         <tr class="hover:bg-gray-50 dark:hover:bg-gray-700 transition">
           <td class="px-4 py-3 whitespace-nowrap text-sm font-medium">${o.id}</td>
@@ -347,7 +364,6 @@
           <td class="px-4 py-3 whitespace-nowrap"><span class="px-2 py-1 text-xs font-semibold rounded-full ${getStatusClass(o.status)}">${getStatusText(o.status)}</span></td>
         </tr>
       `).join('');
-      // Карточки
       cards.innerHTML = orders.map(o => `
         <div class="bg-gray-50 dark:bg-gray-700 p-4 rounded-lg shadow card-hover transition">
           <div class="flex justify-between items-start">
@@ -374,7 +390,14 @@
       document.getElementById('avg-progress').textContent = avg + '%';
     }
 
-    // ---------- Фильтры задач ----------
+    // ---------- ЗАДАЧИ ----------
+    async function loadTasks() {
+      const resp = await fetch('/api/tasks');
+      const data = await resp.json();
+      allTasks = data.tasks || [];
+      applyTaskFilters();
+    }
+
     function applyTaskFilters() {
       const filtered = allTasks.filter(t => {
         const search = t.title.toLowerCase().includes(taskSearchQuery.toLowerCase()) || (t.assignee && t.assignee.toLowerCase().includes(taskSearchQuery.toLowerCase()));
@@ -425,6 +448,190 @@
       document.getElementById('overdue-tasks').textContent = overdue;
     }
 
+    // ---------- ИНФОГРАФИКА ----------
+    let charts = {};
+
+    async function loadPrintersData() {
+      try {
+        const resp = await fetch('/api/printers');
+        const data = await resp.json();
+        allPrinters = data.printers || [];
+      } catch (e) {
+        console.error('Ошибка загрузки принтеров:', e);
+        allPrinters = [];
+      }
+    }
+
+    async function loadInfographics() {
+      // Подгружаем свежие данные
+      await Promise.all([loadOrders(), loadTasks(), loadPrintersData()]);
+
+      // ---------- KPI ----------
+      const totalOrders = allOrders.length;
+      const avgProgress = totalOrders ? Math.round(allOrders.reduce((s,o)=>s+o.progress,0)/totalOrders) : 0;
+      const activeTasks = allTasks.filter(t => t.status !== 'completed').length;
+      const activePrinters = allPrinters.filter(p => p.status === 'printing' || p.status === 'RUNNING' || p.status === 'running').length;
+
+      document.getElementById('kpi-orders').textContent = totalOrders;
+      document.getElementById('kpi-progress').textContent = avgProgress + '%';
+      document.getElementById('kpi-tasks').textContent = activeTasks;
+      document.getElementById('kpi-printers').textContent = activePrinters;
+
+      // ---------- Уничтожаем старые графики ----------
+      Object.values(charts).forEach(c => c.destroy());
+      charts = {};
+
+      // ---------- График 1: Статусы заказов ----------
+      const orderActive = allOrders.filter(o => o.status.toLowerCase() !== 'да' && new Date(o.deadline) >= new Date()).length;
+      const orderCompleted = allOrders.filter(o => o.status.toLowerCase() === 'да').length;
+      const orderOverdue = allOrders.filter(o => o.status.toLowerCase() !== 'да' && new Date(o.deadline) < new Date()).length;
+      charts.orderStatus = new Chart(document.getElementById('chartOrderStatus'), {
+        type: 'doughnut',
+        data: {
+          labels: ['В работе', 'Выполнены', 'Просрочены'],
+          datasets: [{
+            data: [orderActive, orderCompleted, orderOverdue],
+            backgroundColor: ['#3b82f6', '#22c55e', '#ef4444']
+          }]
+        },
+        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } } }
+      });
+
+      // ---------- График 2: Статусы задач ----------
+      const taskActive = allTasks.filter(t => t.status !== 'completed' && new Date(t.deadline) >= new Date()).length;
+      const taskCompleted = allTasks.filter(t => t.status === 'completed').length;
+      const taskOverdue = allTasks.filter(t => t.status !== 'completed' && new Date(t.deadline) < new Date()).length;
+      charts.taskStatus = new Chart(document.getElementById('chartTaskStatus'), {
+        type: 'doughnut',
+        data: {
+          labels: ['Активные', 'Выполнены', 'Просрочены'],
+          datasets: [{
+            data: [taskActive, taskCompleted, taskOverdue],
+            backgroundColor: ['#fbbf24', '#22c55e', '#ef4444']
+          }]
+        },
+        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } } }
+      });
+
+      // ---------- График 3: Прогресс заказов (bar) ----------
+      const orderLabels = allOrders.map(o => `№${o.id}`);
+      const orderProgress = allOrders.map(o => o.progress);
+      charts.orderProgress = new Chart(document.getElementById('chartOrderProgress'), {
+        type: 'bar',
+        data: {
+          labels: orderLabels,
+          datasets: [{
+            label: 'Прогресс (%)',
+            data: orderProgress,
+            backgroundColor: '#3b82f6'
+          }]
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          scales: { y: { beginAtZero: true, max: 100 } },
+          plugins: { legend: { display: false } }
+        }
+      });
+
+      // ---------- График 4: Задачи по исполнителям ----------
+      const assigneeCounts = {};
+      allTasks.forEach(t => {
+        const key = t.assignee || 'Общая';
+        assigneeCounts[key] = (assigneeCounts[key] || 0) + 1;
+      });
+      const assigneeLabels = Object.keys(assigneeCounts);
+      const assigneeData = Object.values(assigneeCounts);
+      charts.taskAssignees = new Chart(document.getElementById('chartTaskAssignees'), {
+        type: 'bar',
+        data: {
+          labels: assigneeLabels,
+          datasets: [{
+            label: 'Задач',
+            data: assigneeData,
+            backgroundColor: '#8b5cf6'
+          }]
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } } },
+          plugins: { legend: { display: false } }
+        }
+      });
+
+      // ---------- График 5: Топ заказчиков ----------
+      const customerCounts = {};
+      allOrders.forEach(o => {
+        const key = o.customer || 'Без заказчика';
+        customerCounts[key] = (customerCounts[key] || 0) + 1;
+      });
+      const sortedCustomers = Object.entries(customerCounts).sort((a, b) => b[1] - a[1]).slice(0, 5);
+      charts.customers = new Chart(document.getElementById('chartCustomers'), {
+        type: 'bar',
+        data: {
+          labels: sortedCustomers.map(c => c[0]),
+          datasets: [{
+            label: 'Заказов',
+            data: sortedCustomers.map(c => c[1]),
+            backgroundColor: '#f97316'
+          }]
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } } },
+          plugins: { legend: { display: false } }
+        }
+      });
+
+      // ---------- График 6: Прогресс принтеров ----------
+      const printerLabels = allPrinters.map(p => p.name || p.id);
+      const printerProgress = allPrinters.map(p => p.progress || 0);
+      charts.printers = new Chart(document.getElementById('chartPrinters'), {
+        type: 'bar',
+        data: {
+          labels: printerLabels.length ? printerLabels : ['Нет данных'],
+          datasets: [{
+            label: 'Прогресс печати (%)',
+            data: printerProgress.length ? printerProgress : [0],
+            backgroundColor: '#10b981'
+          }]
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          scales: { y: { beginAtZero: true, max: 100 } },
+          plugins: { legend: { display: false } }
+        }
+      });
+
+      // ---------- Список катушек (AMS) ----------
+      renderFilaments();
+    }
+
+    function renderFilaments() {
+      const container = document.getElementById('filament-list');
+      let allTrays = [];
+      allPrinters.forEach(p => {
+        if (p.ams && p.ams.trays) {
+          p.ams.trays.forEach(t => {
+            allTrays.push({ printer: p.name || p.id, ...t });
+          });
+        }
+      });
+      if (!allTrays.length) {
+        container.innerHTML = '<p class="text-gray-500 dark:text-gray-400">Нет данных о катушках (AMS не обнаружен или API недоступен).</p>';
+        return;
+      }
+      container.innerHTML = allTrays.map(t => `
+        <div class="bg-gray-50 dark:bg-gray-700 p-3 rounded-lg shadow flex items-center gap-3">
+          <div class="w-10 h-10 rounded-full border-2 border-gray-300" style="background:${t.color};"></div>
+          <div class="flex-1 min-w-0">
+            <div class="font-medium truncate">${t.type}</div>
+            <div class="text-xs text-gray-500 dark:text-gray-400">Принтер: ${t.printer}</div>
+            <div class="text-xs text-gray-500 dark:text-gray-400">Остаток: ${t.remaining_mm} мм</div>
+          </div>
+        </div>
+      `).join('');
+    }
+
     // ---------- Helper ----------
     function getStatusClass(status) { return status.toLowerCase() === 'да' ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300' : 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300'; }
     function getStatusText(status) { return status.toLowerCase() === 'да' ? '✅ Выполнен' : '⏳ В работе'; }
@@ -447,13 +654,17 @@
     document.getElementById('search-input-tasks').addEventListener('input', function() { taskSearchQuery = this.value; applyTaskFilters(); });
 
     // ---------- Обновление ----------
-    function refreshAll() { loadOrders(); loadTasks(); loadCharts(); document.getElementById('last-update').textContent = 'Обновлено: '+new Date().toLocaleTimeString(); }
+    function refreshAll() {
+      const activeTab = document.querySelector('.tab-content.active').id;
+      if (activeTab === 'tab-orders') loadOrders();
+      else if (activeTab === 'tab-tasks') loadTasks();
+      else if (activeTab === 'tab-infographics') loadInfographics();
+      document.getElementById('last-update').textContent = 'Обновлено: '+new Date().toLocaleTimeString();
+    }
 
     // ---------- Инициализация ----------
     document.addEventListener('DOMContentLoaded', function() {
       loadOrders();
-      loadTasks();
-      loadCharts();
       setInterval(refreshAll, 30000);
     });
   </script>
