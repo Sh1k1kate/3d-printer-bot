@@ -126,7 +126,7 @@ def calendar_keyboard(year, month, prefix="cal_order"):
     start_weekday = first_day.weekday()
     month_days = (datetime(year, month+1, 1) - timedelta(days=1)).day if month < 12 else (datetime(year+1, 1, 1) - timedelta(days=1)).day
     month_names = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь",
-                   "Июль", "Август", "Сентябрь", "Окторябрь", "Ноябрь", "Декабрь"]
+                   "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"]
     header = f"{month_names[month-1]} {year}"
     nav_buttons = [
         InlineKeyboardButton(text="◀️", callback_data=f"{prefix}_prev_{year}_{month}"),
@@ -163,7 +163,6 @@ def tasks_list_keyboard(tasks, page=0, per_page=5):
     start = page * per_page
     end = min(start + per_page, len(tasks))
     for task in tasks[start:end]:
-        # Обработка 5 или 6 полей
         if len(task) == 6:
             task_id, title, deadline, time_str, assignee, status = task
         else:
