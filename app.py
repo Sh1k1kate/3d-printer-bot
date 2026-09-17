@@ -30,10 +30,8 @@ except Exception as e:
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
-
 dp.message.middleware(AccessMiddleware())
 dp.callback_query.middleware(AccessMiddleware())
-
 for router in routers:
     dp.include_router(router)
 
@@ -46,7 +44,6 @@ async def errors_handler(event: ErrorEvent):
 
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
-
 bambu_cloud = BambuCloudManager()
 
 
@@ -166,6 +163,7 @@ async def get_tasks_api():
 
 @app.get("/api/printers")
 async def get_printers_api():
+    """Возвращает полную телеметрию принтеров: статус, прогресс, температуры, AMS."""
     printers = await run_in_threadpool(bambu_cloud.get_printers)
     return JSONResponse(content={"printers": printers})
 
@@ -175,11 +173,9 @@ async def check_tasks():
     if not sheet_manager:
         return JSONResponse(content={"error": "SheetManager не инициализирован"}, status_code=500)
     try:
-        logger.info("Начало проверки задач")
         tasks = sheet_manager.get_tasks_for_notification()
         now = moscow_now()
         notified_count = 0
-
         for task in tasks:
             try:
                 deadline_dt = task["deadline_dt"]
@@ -187,28 +183,17 @@ async def check_tasks():
                 assignee = task["assignee"]
                 task_id = task["id"]
                 title = task["title"]
-
                 user_settings = sheet_manager.get_user_settings(assignee) if assignee else None
                 morning_hour = int(user_settings.get("morning_time", "09:00").split(':')[0]) if user_settings else 9
-
-                recipients = []
-                if assignee and str(assignee).isdigit():
-                    recipients = [int(assignee)]
-                else:
-                    recipients = sheet_manager.get_all_subscribers()
-
+                recipients = [int(assignee)] if (assignee and str(assignee).isdigit()) else sheet_manager.get_all_subscribers()
                 if now.hour == morning_hour and now.minute == 0 and task["notified_morning"] == "0":
                     for recipient in recipients:
                         try:
-                            await bot.send_message(
-                                recipient,
-                                f"🌅 Напоминание: сегодня задача '{title}' должна быть выполнена до {deadline_dt.strftime('%H:%M')}!"
-                            )
+                            await bot.send_message(recipient, f"🌅 Напоминание: сегодня задача '{title}' должна быть выполнена до {deadline_dt.strftime('%H:%M')}!")
                             notified_count += 1
                         except Exception as e:
                             logger.error(f"Ошибка утреннего уведомления: {e}")
                     sheet_manager.update_task_notification(task_id, 'notified_morning', '1')
-
                 notifications = [(60, 'notified_60'), (30, 'notified_30'), (15, 'notified_15'), (0, 'notified_0')]
                 for minutes, field in notifications:
                     if abs(diff_minutes - minutes) < 0.5 and task[field] == "0":
@@ -225,7 +210,6 @@ async def check_tasks():
                         sheet_manager.update_task_notification(task_id, field, '1')
             except Exception as e:
                 logger.error(f"Ошибка обработки задачи {task.get('id')}: {e}")
-
         return JSONResponse(content={"status": "ok", "notified": notified_count})
     except Exception as e:
         logger.error(f"Критическая ошибка в /check_tasks: {e}")
