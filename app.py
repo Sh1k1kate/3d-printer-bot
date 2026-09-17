@@ -1,7 +1,5 @@
 import os
 import logging
-import json
-import paho.mqtt.client as mqtt
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
@@ -9,11 +7,11 @@ from aiogram import Bot, Dispatcher
 from aiogram.types import Update
 from aiogram.fsm.storage.memory import MemoryStorage
 from handlers import routers
-from config import BOT_TOKEN, BAMBU_EMAIL, BAMBU_PASSWORD, MQTT_BROKER, MQTT_PORT
+from config import BOT_TOKEN, BAMBU_EMAIL, BAMBU_PASSWORD
 from google_sheets import SheetManager, moscow_now
+from bambu_cloud import BambuCloudManager
 from datetime import datetime, timedelta
 import aiohttp
-import threading
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -40,64 +38,8 @@ for router in routers:
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
 
-# ---------- MQTT клиент для Bambu Lab ----------
-class BambuMQTT:
-    def __init__(self, broker, port=1883):
-        self.broker = broker
-        self.port = port
-        self.client = mqtt.Client()
-        self.client.on_connect = self.on_connect
-        self.client.on_message = self.on_message
-        self.status = {}
-        self.connected = False
-
-    def connect(self):
-        try:
-            self.client.connect(self.broker, self.port, 60)
-            self.client.loop_start()
-            self.connected = True
-            logger.info(f"MQTT подключён к {self.broker}:{self.port}")
-        except Exception as e:
-            logger.error(f"Ошибка подключения MQTT: {e}")
-
-    def on_connect(self, client, userdata, flags, rc):
-        if rc == 0:
-            client.subscribe("device/+/status")
-            logger.info("Подписан на топики принтеров")
-        else:
-            logger.error(f"Ошибка подключения MQTT: код {rc}")
-
-    def on_message(self, client, userdata, msg):
-        try:
-            payload = json.loads(msg.payload)
-            # Сохраняем статус принтера
-            topic_parts = msg.topic.split('/')
-            if len(topic_parts) >= 2:
-                device_id = topic_parts[1]
-                self.status[device_id] = payload
-                logger.debug(f"Обновлён статус {device_id}: {payload}")
-        except Exception as e:
-            logger.error(f"Ошибка парсинга MQTT: {e}")
-
-    def get_printers(self):
-        # Преобразуем статус в список принтеров
-        printers = []
-        for device_id, data in self.status.items():
-            printers.append({
-                "id": device_id,
-                "name": data.get("name", device_id),
-                "status": data.get("status", "offline"),
-                "progress": data.get("progress", 0),
-                "model": data.get("model", ""),
-                "current_job": data.get("job", {})
-            })
-        return printers
-
-# Инициализация MQTT (если заданы переменные окружения)
-mqtt_client = None
-if os.getenv("MQTT_BROKER"):
-    mqtt_client = BambuMQTT(os.getenv("MQTT_BROKER"), int(os.getenv("MQTT_PORT", 1883)))
-    mqtt_client.connect()
+# ---------- Bambu Cloud Manager ----------
+bambu_cloud = BambuCloudManager()
 
 def get_days_left(deadline):
     try:
@@ -136,7 +78,7 @@ async def root():
 async def tracker_page(request: Request):
     return templates.TemplateResponse("tracker.html", {"request": request})
 
-# ---------- API заказов (с фильтрацией) ----------
+# ---------- API заказов ----------
 @app.get("/api/orders")
 async def get_orders_api(customer: str = "", from_date: str = "", to_date: str = ""):
     if not sheet_manager:
@@ -193,15 +135,11 @@ async def get_tasks_api():
         logger.error(f"API tasks error: {e}")
         return JSONResponse(content={"error": str(e)}, status_code=500)
 
-# ---------- API принтеров (MQTT) ----------
+# ---------- API принтеров (Bambu Cloud) ----------
 @app.get("/api/printers")
 async def get_printers_api():
-    if mqtt_client and mqtt_client.connected:
-        printers = mqtt_client.get_printers()
-        return JSONResponse(content={"printers": printers})
-    else:
-        # fallback: если MQTT не настроен, пробуем облачное API (уже не используется)
-        return JSONResponse(content={"printers": [], "error": "MQTT не подключён"})
+    printers = bambu_cloud.get_printers()
+    return JSONResponse(content={"printers": printers})
 
 # ---------- Проверка задач (cron) ----------
 @app.get("/check_tasks")
@@ -222,7 +160,6 @@ async def check_tasks():
                 task_id = task["id"]
                 title = task["title"]
 
-                # Получаем настройки пользователя для утреннего уведомления
                 user_settings = sheet_manager.get_user_settings(assignee) if assignee else None
                 morning_hour = int(user_settings.get("morning_time", "09:00").split(':')[0]) if user_settings else 9
 
@@ -232,7 +169,6 @@ async def check_tasks():
                 else:
                     recipients = sheet_manager.get_all_subscribers()
 
-                # Утреннее уведомление (по настройкам пользователя)
                 if now.hour == morning_hour and now.minute == 0 and task["notified_morning"] == "0":
                     for recipient in recipients:
                         try:
@@ -245,7 +181,6 @@ async def check_tasks():
                             logger.error(f"Ошибка утреннего уведомления: {e}")
                     sheet_manager.update_task_notification(task_id, 'notified_morning', '1')
 
-                # Уведомления за 60, 30, 15, 0 минут
                 notifications = [(60, 'notified_60'), (30, 'notified_30'), (15, 'notified_15'), (0, 'notified_0')]
                 for minutes, field in notifications:
                     if abs(diff_minutes - minutes) < 0.5 and task[field] == "0":
