@@ -15,8 +15,9 @@ class BambuCloudManager:
     def __init__(self):
         self.client = None
         self.mqtt = None
-        self.ams_cache = {}          # device_id -> данные AMS
-        self.ams_timestamp = {}      # device_id -> время последнего обновления
+        self.ams_cache = {}
+        self.ams_timestamp = {}
+        self._status_cache = {}
         self._lock = threading.Lock()
         self._mqtt_thread = None
         self._running = False
@@ -39,7 +40,8 @@ class BambuCloudManager:
                     password=BAMBU_PASSWORD
                 )
             if token:
-                self.client = BambuClient(token=token)
+                # ✅ Приводим токен к строке (может прийти int)
+                self.client = BambuClient(token=str(token))
                 logger.info("Bambu Cloud client успешно инициализирован")
                 self._start_mqtt()
             else:
@@ -49,7 +51,6 @@ class BambuCloudManager:
             self.client = None
 
     def _start_mqtt(self):
-        """Запускает фоновый поток с MQTT-подпиской."""
         if not self.client:
             return
         self._running = True
@@ -58,28 +59,47 @@ class BambuCloudManager:
         logger.info("MQTT поток запущен")
 
     def _mqtt_loop(self):
-        """Постоянное подключение к MQTT с переподключением."""
         while self._running:
             try:
                 from bambulab import MQTTClient
 
-                user_info = self.client.get_user_info()
-                uid = user_info.get("uid")
-                if not uid:
-                    logger.error("Не удалось получить UID пользователя для MQTT")
+                # ✅ Получаем UID и приводим к строке
+                try:
+                    user_info = self.client.get_user_info()
+                except Exception as e:
+                    logger.error(f"Не удалось получить user_info: {e}")
                     time.sleep(30)
                     continue
 
+                if isinstance(user_info, dict):
+                    uid = user_info.get("uid") or user_info.get("user_id")
+                else:
+                    uid = getattr(user_info, "uid", None)
+
+                if not uid:
+                    logger.error(f"Не удалось получить UID пользователя (получено: {user_info})")
+                    time.sleep(30)
+                    continue
+
+                # ✅ Приводим все параметры к строкам
+                uid_str = str(uid).strip()
+                token_str = str(self.client.token).strip()
+
+                if not uid_str.isdigit():
+                    logger.warning(f"UID не является числом: {uid_str}")
+
                 mqtt = MQTTClient(
-                    username=uid,
-                    access_token=self.client.token,
+                    username=uid_str,
+                    access_token=token_str,
                     device_id=None,
                     on_message=self._on_mqtt_message
                 )
-                logger.info("Подключаемся к MQTT Bambu Lab...")
+                logger.info(f"Подключаемся к MQTT Bambu Lab (uid={uid_str[:5]}...)")
                 mqtt.connect(blocking=True)
             except Exception as e:
                 logger.error(f"Ошибка MQTT: {e}. Переподключение через 30 сек...")
+                import traceback
+                logger.error(traceback.format_exc())
                 time.sleep(30)
 
     def _on_mqtt_message(self, device_id, data):
@@ -89,14 +109,13 @@ class BambuCloudManager:
                 return
             print_data = data["print"]
 
-            # Основные поля статуса
             with self._lock:
+                # AMS данные
                 if "ams" in print_data:
                     ams = print_data["ams"]
                     trays = []
                     for unit in ams.get("ams", []):
                         for tray in unit.get("tray", []):
-                            # Пропускаем пустые слоты
                             if tray.get("state") == 0 or tray.get("tray_type") == "Empty":
                                 continue
                             trays.append({
@@ -107,13 +126,12 @@ class BambuCloudManager:
                                 "nozzle_temp_min": tray.get("nozzle_temp_min"),
                                 "nozzle_temp_max": tray.get("nozzle_temp_max"),
                             })
-                    self.ams_cache[device_id] = trays
-                    self.ams_timestamp[device_id] = time.time()
+                    if trays:
+                        self.ams_cache[device_id] = trays
+                        self.ams_timestamp[device_id] = time.time()
 
-                # Обновляем статус печати, если пришёл
+                # Статус печати
                 if "gcode_state" in print_data:
-                    if not hasattr(self, "_status_cache"):
-                        self._status_cache = {}
                     self._status_cache[device_id] = {
                         "gcode_state": print_data.get("gcode_state"),
                         "mc_percent": print_data.get("mc_percent", 0),
@@ -124,24 +142,19 @@ class BambuCloudManager:
             logger.error(f"Ошибка обработки MQTT сообщения: {e}")
 
     def get_printers(self):
-        """Возвращает список принтеров с данными AMS из кэша MQTT."""
         if not self.client:
             return []
         try:
             devices = self.client.get_devices()
             printers = []
-            now = time.time()
             for d in devices:
                 device_id = d.get("dev_id")
                 name = d.get("name")
 
-                # Данные AMS из MQTT-кэша
                 with self._lock:
                     trays = self.ams_cache.get(device_id, [])
-                    last_update = self.ams_timestamp.get(device_id, 0)
-                    status_cache = getattr(self, "_status_cache", {}).get(device_id, {})
+                    status_cache = self._status_cache.get(device_id, {})
 
-                # Если данные MQTT ещё не пришли, берём из REST (базовые)
                 if not trays:
                     try:
                         ams_info = self.client.get_ams_filaments(device_id)
@@ -157,17 +170,28 @@ class BambuCloudManager:
                     except Exception:
                         trays = []
 
-                # Определяем статус (из MQTT или из REST)
                 status = status_cache.get("gcode_state") or d.get("print_status", "UNKNOWN")
                 progress = status_cache.get("mc_percent") or d.get("print_progress", 0)
                 remaining = status_cache.get("mc_remaining_time")
+
+                # Сопоставление кодов моделей в человеческие имена
+                model_code = d.get("dev_model_name", "")
+                model_map = {
+                    "N2S": "A1",
+                    "N1": "A1 mini",
+                    "C11": "P1P",
+                    "C12": "P1S",
+                    "BL-P001": "X1 Carbon",
+                    "BL-P002": "X1",
+                }
+                model_name = model_map.get(model_code, model_code)
 
                 printers.append({
                     "id": device_id,
                     "name": name,
                     "status": status,
                     "progress": progress,
-                    "model": d.get("dev_model_name"),
+                    "model": model_name,
                     "remaining_time": remaining,
                     "ams": {
                         "has_ams": len(trays) > 0,
