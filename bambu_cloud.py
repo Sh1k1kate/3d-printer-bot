@@ -8,7 +8,12 @@ from config import BAMBU_EMAIL, BAMBU_PASSWORD, BAMBU_TOKEN, BAMBU_REGION
 
 logger = logging.getLogger(__name__)
 
-MQTT_HOST = "us.mqtt.bambulab.com"
+# Список брокеров по регионам — попробуем по очереди
+MQTT_HOSTS = [
+    "us.mqtt.bambulab.com",
+    "eu.mqtt.bambulab.com",
+    "cn.mqtt.bambulab.com",
+]
 MQTT_PORT = 8883
 
 
@@ -23,8 +28,8 @@ class BambuCloudManager:
         self._mqtt_thread = None
         self._running = False
         self._device_ids = []
-        self._pushall_sent = False          # ← отправляем pushall только 1 раз
-        self._first_connect = True
+        self._pushall_sent = False
+        self._received_topics = set()
         self._init_client()
 
     def _init_client(self):
@@ -87,14 +92,16 @@ class BambuCloudManager:
         return str(uid).strip(), token
 
     def _mqtt_loop(self):
+        """Перебирает брокеры по регионам, если не удаётся подключиться."""
+        host_index = 0
         while self._running:
             uid_str, token_str = self._get_credentials()
             if not uid_str or not token_str:
                 time.sleep(30)
                 continue
 
+            host = MQTT_HOSTS[host_index]
             try:
-                # Уникальный client_id, чтобы брокер не путал с прошлыми сессиями
                 client_id = f"bambu_{uid_str}_{int(time.time())}"
                 client = mqtt.Client(
                     callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
@@ -108,29 +115,30 @@ class BambuCloudManager:
                 client.on_connect = self._on_connect
                 client.on_message = self._on_paho_message
                 client.on_disconnect = self._on_disconnect
-                client.on_log = self._on_log  # диагностика
+                client.on_log = self._on_log
 
                 self.mqtt_client = client
-                logger.info(f"MQTT подключение: uid={uid_str}, host={MQTT_HOST}:{MQTT_PORT}")
-                client.connect(MQTT_HOST, MQTT_PORT, 60)
+                logger.info(f"MQTT подключение: uid={uid_str}, host={host}:{MQTT_PORT}")
+                client.connect(host, MQTT_PORT, 60)
                 client.loop_forever()
             except Exception as e:
-                logger.error(f"Ошибка MQTT: {e}")
-                import traceback
-                logger.error(traceback.format_exc())
-                time.sleep(15)
+                logger.error(f"Ошибка MQTT на {host}: {e}")
+                # Следующий брокер
+                host_index = (host_index + 1) % len(MQTT_HOSTS)
+                logger.info(f"Переключаюсь на {MQTT_HOSTS[host_index]}")
+                time.sleep(10)
 
     def _on_log(self, client, userdata, level, buf):
-        """Детальное логирование paho-mqtt."""
-        if level == mqtt.MQTT_LOG_ERR or level == mqtt.MQTT_LOG_WARNING:
+        if level in (mqtt.MQTT_LOG_ERR, mqtt.MQTT_LOG_WARNING):
             logger.warning(f"[paho] {buf}")
 
     def _on_connect(self, client, userdata, flags, reason_code, properties=None):
         if reason_code == 0:
-            logger.info("MQTT подключён. Подписываемся на device/+/report")
-            client.subscribe("device/+/report")
+            logger.info("MQTT подключён.")
+            # ✅ Подписка на ВСЕ топики — диагностика
+            client.subscribe("#", qos=1)
+            logger.info("Подписка на # (все топики) + device/+/report")
 
-            # ✅ pushall отправляем ТОЛЬКО ОДИН РАЗ, с задержкой 5 сек
             if not self._pushall_sent:
                 self._pushall_sent = True
                 threading.Thread(target=self._delayed_pushall, daemon=True).start()
@@ -138,7 +146,6 @@ class BambuCloudManager:
             logger.error(f"MQTT ошибка подключения: reason_code={reason_code}")
 
     def _delayed_pushall(self):
-        """Отправляет pushall всем принтерам с задержками (не спамить брокер)."""
         logger.info("Подготовка pushall через 5 секунд...")
         time.sleep(5)
 
@@ -148,10 +155,13 @@ class BambuCloudManager:
             try:
                 if self.mqtt_client and self.mqtt_client.is_connected():
                     topic = f"device/{device_id}/request"
+                    # ✅ Правильный формат для облака
                     payload = json.dumps({
                         "pushing": {
                             "sequence_id": str(i + 1),
-                            "command": "pushall"
+                            "command": "pushall",
+                            "version": 1,
+                            "push_target": 1
                         }
                     })
                     self.mqtt_client.publish(topic, payload, qos=1)
@@ -161,22 +171,33 @@ class BambuCloudManager:
                     return
             except Exception as e:
                 logger.error(f"Ошибка pushall {device_id}: {e}")
-            # ✅ Задержка 500мс между принтерами
             time.sleep(0.5)
 
         logger.info("✅ pushall отправлен всем принтерам")
 
+        # ⏳ Через 15 секунд — отчёт о принятых топиках
+        time.sleep(15)
+        logger.info(f"📊 Принято топиков: {len(self._received_topics)}")
+        for t in list(self._received_topics)[:10]:
+            logger.info(f"   📥 {t}")
+
     def _on_disconnect(self, client, userdata, flags, reason_code, properties=None):
         logger.warning(f"MQTT отключён: reason_code={reason_code}. Пауза 15 сек...")
-        time.sleep(15)  # ← даём брокеру забыть старую сессию
+        time.sleep(15)
 
     def _on_paho_message(self, client, userdata, msg):
         try:
+            # ✅ Логируем КАЖДЫЙ полученный топик (диагностика)
+            self._received_topics.add(msg.topic)
+            logger.info(f"[MQTT TOPIC] {msg.topic}")
+
             parts = msg.topic.split("/")
-            if len(parts) < 3:
+            if len(parts) < 3 or parts[0] != "device":
                 return
             device_id = parts[1]
             data = json.loads(msg.payload.decode("utf-8"))
+
+            # Показываем первые 500 символов
             logger.info(f"[MQTT RAW] {device_id}: {json.dumps(data)[:500]}")
             self._process_mqtt_data(device_id, data)
         except Exception as e:
@@ -211,29 +232,24 @@ class BambuCloudManager:
                                 "type": tray_type,
                                 "color": tray.get("tray_color", "00000000"),
                                 "remaining": tray.get("remain", 0),
-                                "nozzle_temp_min": tray.get("nozzle_temp_min"),
-                                "nozzle_temp_max": tray.get("nozzle_temp_max"),
                             })
                     if trays:
                         self.ams_cache[device_id] = trays
-                        self.ams_timestamp[device_id] = time.time()
                         logger.info(f"✅ AMS обновлены для {device_id}: {len(trays)}")
 
                 if "vt_tray" in print_data:
                     vt = print_data["vt_tray"]
                     vt_type = vt.get("tray_type", "")
                     if vt_type and vt_type != "Empty":
-                        vt_tray = {
+                        existing = self.ams_cache.get(device_id, [])
+                        existing = [t for t in existing if t.get("tray_id") != 254]
+                        existing.append({
                             "tray_id": 254,
                             "type": vt_type,
                             "color": vt.get("tray_color", "00000000"),
                             "remaining": vt.get("remain", 0),
-                        }
-                        existing = self.ams_cache.get(device_id, [])
-                        existing = [t for t in existing if t.get("tray_id") != 254]
-                        existing.append(vt_tray)
+                        })
                         self.ams_cache[device_id] = existing
-                        logger.info(f"✅ Внешняя катушка для {device_id}: {vt_type}")
         except Exception as e:
             logger.error(f"Ошибка обработки MQTT данных от {device_id}: {e}")
 
@@ -269,11 +285,9 @@ class BambuCloudManager:
                         trays = []
 
                 model_code = d.get("dev_model_name", "")
-                model_map = {
-                    "N2S": "A1", "N1": "A1 mini",
-                    "C11": "P1P", "C12": "P1S",
-                    "BL-P001": "X1 Carbon", "BL-P002": "X1",
-                }
+                model_map = {"N2S": "A1", "N1": "A1 mini",
+                             "C11": "P1P", "C12": "P1S",
+                             "BL-P001": "X1 Carbon", "BL-P002": "X1"}
                 model_name = model_map.get(model_code, model_code)
 
                 printers.append({
