@@ -20,7 +20,7 @@ cancel_keyboard = ReplyKeyboardMarkup(
     resize_keyboard=True
 )
 
-# ---------- Список элементов (модели + наборы) ----------
+
 def items_inline_keyboard(models, kits):
     buttons = []
     for model in models:
@@ -29,7 +29,7 @@ def items_inline_keyboard(models, kits):
         buttons.append([InlineKeyboardButton(text=f"🎁 Набор: {kit}", callback_data=f"kit_{kit}")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
-# ---------- Карточка модели ----------
+
 def model_action_keyboard(model_name):
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🧮 Посчитать необходимое количество", callback_data=f"calc_{model_name}")],
@@ -38,7 +38,7 @@ def model_action_keyboard(model_name):
         [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_items")]
     ])
 
-# ---------- Редактирование модели ----------
+
 def parts_inline_keyboard(model_name, parts_list):
     """Клавиатура выбора детали для редактирования (разделитель |)."""
     buttons = []
@@ -47,23 +47,26 @@ def parts_inline_keyboard(model_name, parts_list):
     buttons.append([InlineKeyboardButton(text="🔙 Назад к модели", callback_data=f"model_{model_name}")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
+
 def part_parameters_keyboard(model_name, det_name):
+    """✅ Исправлено: разделитель | вместо _ (чтобы совпадать с обработчиком edit_param_selected)."""
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📝 Название детали", callback_data=f"edit_param_{model_name}_{det_name}_name")],
-        [InlineKeyboardButton(text="📦 Кол-во на палете", callback_data=f"edit_param_{model_name}_{det_name}_on_pallet")],
-        [InlineKeyboardButton(text="🔢 Кол-во на единицу модели", callback_data=f"edit_param_{model_name}_{det_name}_per_unit")],
-        [InlineKeyboardButton(text="⏱ Время палета (часы минуты)", callback_data=f"edit_param_{model_name}_{det_name}_time")],
-        [InlineKeyboardButton(text="⚖️ Грамм на палет", callback_data=f"edit_param_{model_name}_{det_name}_grams")],
+        [InlineKeyboardButton(text="📝 Название детали", callback_data=f"edit_param_{model_name}|{det_name}|name")],
+        [InlineKeyboardButton(text="📦 Кол-во на палете", callback_data=f"edit_param_{model_name}|{det_name}|on_pallet")],
+        [InlineKeyboardButton(text="🔢 Кол-во на единицу", callback_data=f"edit_param_{model_name}|{det_name}|per_unit")],
+        [InlineKeyboardButton(text="⏱ Время палета", callback_data=f"edit_param_{model_name}|{det_name}|time")],
+        [InlineKeyboardButton(text="⚖️ Грамм на палет", callback_data=f"edit_param_{model_name}|{det_name}|grams")],
         [InlineKeyboardButton(text="🔙 Назад к деталям", callback_data=f"edit_model_{model_name}")]
     ])
 
-# ---------- Карточка набора ----------
+
 def kit_action_keyboard(kit_name):
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🛒 Заказать этот набор", callback_data=f"order_kit_{kit_name}")],
         [InlineKeyboardButton(text="✏️ Редактировать набор", callback_data=f"edit_kit_{kit_name}")],
         [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_items")]
     ])
+
 
 def kit_parameters_keyboard(kit_name):
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -74,7 +77,7 @@ def kit_parameters_keyboard(kit_name):
         [InlineKeyboardButton(text="🔙 Назад к набору", callback_data=f"kit_{kit_name}")]
     ])
 
-# ---------- Выбор моделей для набора (с пагинацией) ----------
+
 def select_model_keyboard(models, page=0, per_page=10, prefix="add_kit_model"):
     total = len(models)
     start = page * per_page
@@ -94,6 +97,7 @@ def select_model_keyboard(models, page=0, per_page=10, prefix="add_kit_model"):
         buttons.append([InlineKeyboardButton(text="✅ Готово", callback_data="add_kit_done")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
+
 def show_current_items_keyboard(items):
     buttons = []
     for i, (model, qty) in enumerate(items):
@@ -105,7 +109,7 @@ def show_current_items_keyboard(items):
     buttons.append([InlineKeyboardButton(text="🔙 Назад к набору", callback_data="back_to_kit")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
-# ---------- Заказы ----------
+
 def my_orders_inline_keyboard(orders):
     buttons = []
     for order in orders:
@@ -116,6 +120,7 @@ def my_orders_inline_keyboard(orders):
     buttons.append([InlineKeyboardButton(text="🔙 Главное меню", callback_data="main_menu")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
+
 def edit_order_keyboard(order_num):
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📦 Изменить напечатанное количество", callback_data=f"printed_{order_num}")],
@@ -123,7 +128,7 @@ def edit_order_keyboard(order_num):
         [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_orders")]
     ])
 
-# ---------- Календарь ----------
+
 def calendar_keyboard(year, month, prefix="cal_order"):
     first_day = datetime(year, month, 1)
     start_weekday = first_day.weekday()
@@ -153,13 +158,14 @@ def calendar_keyboard(year, month, prefix="cal_order"):
         buttons.append(row)
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
-# ---------- Задачи ----------
+
 def task_actions_keyboard(task_id):
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="👤 Взять задачу", callback_data=f"take_task_{task_id}")],
         [InlineKeyboardButton(text="✅ Отметить выполненной", callback_data=f"complete_task_{task_id}")],
         [InlineKeyboardButton(text="🔙 Назад к списку", callback_data="back_to_tasks")]
     ])
+
 
 def tasks_list_keyboard(tasks, page=0, per_page=5):
     buttons = []
@@ -188,7 +194,7 @@ def tasks_list_keyboard(tasks, page=0, per_page=5):
     buttons.append([InlineKeyboardButton(text="➕ Создать задачу", callback_data="create_task")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
-# ---------- Выбор исполнителя ----------
+
 def assignee_keyboard(subscribers, page=0, per_page=5):
     total = len(subscribers)
     start = page * per_page
@@ -209,12 +215,13 @@ def assignee_keyboard(subscribers, page=0, per_page=5):
     ])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
-# ---------- Добавление модели ----------
+
 def add_model_action_keyboard():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="➕ Добавить деталь", callback_data="add_detail")],
         [InlineKeyboardButton(text="✅ Завершить добавление", callback_data="finish_model")]
     ])
+
 
 def detail_param_keyboard(detail_index, model_name):
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -225,6 +232,7 @@ def detail_param_keyboard(detail_index, model_name):
         [InlineKeyboardButton(text="✅ Готово (деталь сохранена)", callback_data=f"save_detail_{detail_index}")]
     ])
 
+
 def edit_part_keyboard(parts_list, model_name):
     """Клавиатура выбора детали для редактирования (разделитель |)."""
     buttons = []
@@ -232,6 +240,7 @@ def edit_part_keyboard(parts_list, model_name):
         buttons.append([InlineKeyboardButton(text=det_name, callback_data=f"edit_part_{model_name}|{i}")])
     buttons.append([InlineKeyboardButton(text="🔙 Назад", callback_data=f"model_{model_name}")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
+
 
 def edit_param_keyboard(model_name, det_name):
     """Клавиатура выбора параметра для изменения (разделитель |)."""
