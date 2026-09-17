@@ -15,7 +15,5 @@ else:
 # Bambu Lab Cloud API (опционально, если используется)
 BAMBU_EMAIL = os.getenv("BAMBU_EMAIL", "")
 BAMBU_PASSWORD = os.getenv("BAMBU_PASSWORD", "")
-
-# MQTT для локальных принтеров Bambu Lab
-MQTT_BROKER = os.getenv("MQTT_BROKER", "")
-MQTT_PORT = int(os.getenv("MQTT_PORT", "1883"))
+BAMBU_TOKEN = os.getenv("BAMBU_TOKEN", "")  # готовый токен (можно получить через CLI)
+BAMBU_REGION = os.getenv("BAMBU_REGION", "global")  # "global" или "china"
