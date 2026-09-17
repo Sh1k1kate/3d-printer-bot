@@ -22,9 +22,9 @@ class BambuCloudManager:
     def __init__(self):
         self.client = None
         self.mqtt_client = None
-        self.ams_cache = {}
+        self.ams_cache = {}          # device_id -> список катушек
         self.ams_timestamp = {}
-        self._status_cache = {}
+        self._status_cache = {}      # device_id -> полный статус
         self._lock = threading.Lock()
         self._mqtt_thread = None
         self._running = False
@@ -65,7 +65,6 @@ class BambuCloudManager:
         logger.info("MQTT поток запущен")
 
     def _get_credentials(self):
-        """Возвращает (uid, token) или (None, None)."""
         try:
             user_info = self.client.get_user_info()
         except Exception as e:
@@ -85,7 +84,6 @@ class BambuCloudManager:
         return str(uid).strip(), token
 
     def _mqtt_loop(self):
-        """Постоянное подключение к облачному MQTT Bambu Lab через paho-mqtt 2.x."""
         while self._running:
             uid_str, token_str = self._get_credentials()
             if not uid_str or not token_str:
@@ -93,19 +91,15 @@ class BambuCloudManager:
                 continue
 
             try:
-                # ✅ paho-mqtt 2.x требует callback_api_version
                 client = mqtt.Client(
                     callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
                     client_id=f"bambu_{uid_str}",
                     clean_session=True
                 )
-                # Username = u_<uid>, Password = access_token
                 client.username_pw_set(f"u_{uid_str}", token_str)
-                # TLS без строгой проверки сертификата
                 client.tls_set(cert_reqs=ssl.CERT_NONE)
                 client.tls_insecure_set(True)
 
-                # ✅ Callbacks для paho 2.x
                 client.on_connect = self._on_connect
                 client.on_message = self._on_paho_message
                 client.on_disconnect = self._on_disconnect
@@ -119,9 +113,7 @@ class BambuCloudManager:
                 logger.error(traceback.format_exc())
                 time.sleep(30)
 
-    # ---------- Callbacks paho-mqtt 2.x ----------
     def _on_connect(self, client, userdata, flags, reason_code, properties=None):
-        """Callback подключения (paho 2.x)."""
         if reason_code == 0:
             logger.info("MQTT подключён. Подписываемся на device/+/report")
             client.subscribe("device/+/report")
@@ -129,41 +121,66 @@ class BambuCloudManager:
             logger.error(f"MQTT ошибка подключения: reason_code={reason_code}")
 
     def _on_disconnect(self, client, userdata, flags, reason_code, properties=None):
-        """Callback отключения (paho 2.x)."""
         logger.warning(f"MQTT отключён: reason_code={reason_code}. Переподключение...")
 
     def _on_paho_message(self, client, userdata, msg):
-        """Извлекает device_id из топика и передаёт в обработчик."""
         try:
-            # Топик: device/{device_id}/report
             parts = msg.topic.split("/")
             if len(parts) < 3:
                 return
             device_id = parts[1]
             data = json.loads(msg.payload.decode("utf-8"))
+
+            # ✅ Диагностика: логируем первые 800 символов каждого сообщения
+            # Уберите, когда увидите нужные поля
+            logger.info(f"[MQTT RAW] {device_id}: {json.dumps(data)[:800]}")
+
             self._process_mqtt_data(device_id, data)
         except Exception as e:
             logger.error(f"Ошибка разбора MQTT сообщения: {e}")
 
     def _process_mqtt_data(self, device_id, data):
-        """Обрабатывает данные телеметрии от одного принтера."""
+        """Извлекает телеметрию и AMS из сообщения принтера."""
         try:
             if not data or "print" not in data:
                 return
             print_data = data["print"]
 
             with self._lock:
+                # ---------- Основной статус ----------
+                status = self._status_cache.get(device_id, {})
+                if "gcode_state" in print_data:
+                    status["gcode_state"] = print_data.get("gcode_state")
+                if "mc_percent" in print_data:
+                    status["mc_percent"] = print_data.get("mc_percent", 0)
+                if "mc_remaining_time" in print_data:
+                    status["mc_remaining_time"] = print_data.get("mc_remaining_time")
+                if "subtask_name" in print_data:
+                    status["subtask_name"] = print_data.get("subtask_name", "")
+                if "nozzle_temper" in print_data:
+                    status["nozzle_temper"] = print_data.get("nozzle_temper")
+                if "nozzle_target_temper" in print_data:
+                    status["nozzle_target_temper"] = print_data.get("nozzle_target_temper")
+                if "bed_temper" in print_data:
+                    status["bed_temper"] = print_data.get("bed_temper")
+                if "bed_target_temper" in print_data:
+                    status["bed_target_temper"] = print_data.get("bed_target_temper")
+                self._status_cache[device_id] = status
+
                 # ---------- AMS ----------
                 if "ams" in print_data:
                     ams = print_data["ams"]
                     trays = []
                     for unit in ams.get("ams", []):
                         for tray in unit.get("tray", []):
-                            if tray.get("state") == 0 or tray.get("tray_type") in (None, "", "Empty"):
+                            state = tray.get("state", 0)
+                            tray_type = tray.get("tray_type", "")
+                            # Пропускаем пустые слоты: state=0 или type=Empty
+                            if state == 0 or tray_type in (None, "", "Empty"):
                                 continue
                             trays.append({
                                 "tray_id": tray.get("id"),
-                                "type": tray.get("tray_type", "—"),
+                                "type": tray_type,
                                 "color": tray.get("tray_color", "00000000"),
                                 "remaining": tray.get("remain", 0),
                                 "nozzle_temp_min": tray.get("nozzle_temp_min"),
@@ -172,21 +189,33 @@ class BambuCloudManager:
                     if trays:
                         self.ams_cache[device_id] = trays
                         self.ams_timestamp[device_id] = time.time()
-                        logger.info(f"AMS обновлены для {device_id}: {len(trays)} катушек")
+                        logger.info(f"✅ AMS обновлены для {device_id}: {len(trays)} катушек")
+                    else:
+                        logger.debug(f"AMS пустой для {device_id} (нет активных катушек)")
 
-                # ---------- Статус печати ----------
-                if "gcode_state" in print_data:
-                    self._status_cache[device_id] = {
-                        "gcode_state": print_data.get("gcode_state"),
-                        "mc_percent": print_data.get("mc_percent", 0),
-                        "mc_remaining_time": print_data.get("mc_remaining_time"),
-                        "subtask_name": print_data.get("subtask_name", ""),
-                    }
+                # ---------- Внешняя катушка (external spool) ----------
+                if "vt_tray" in print_data:
+                    vt = print_data["vt_tray"]
+                    vt_type = vt.get("tray_type", "")
+                    if vt_type and vt_type != "Empty":
+                        vt_tray = {
+                            "tray_id": 254,
+                            "type": vt_type,
+                            "color": vt.get("tray_color", "00000000"),
+                            "remaining": vt.get("remain", 0),
+                        }
+                        # Добавляем внешнюю катушку к списку
+                        existing = self.ams_cache.get(device_id, [])
+                        # Удаляем старую внешнюю катушку, если была
+                        existing = [t for t in existing if t.get("tray_id") != 254]
+                        existing.append(vt_tray)
+                        self.ams_cache[device_id] = existing
+                        logger.info(f"✅ Внешняя катушка обновлена для {device_id}: {vt_type}")
         except Exception as e:
             logger.error(f"Ошибка обработки MQTT данных от {device_id}: {e}")
 
     def get_printers(self):
-        """Возвращает список принтеров с данными AMS из кэша MQTT."""
+        """Возвращает список принтеров с полной телеметрией и AMS."""
         if not self.client:
             return []
         try:
@@ -200,6 +229,7 @@ class BambuCloudManager:
                     trays = self.ams_cache.get(device_id, [])
                     status_cache = self._status_cache.get(device_id, {})
 
+                # Fallback через REST, если MQTT-данных ещё нет
                 if not trays:
                     try:
                         ams_info = self.client.get_ams_filaments(device_id)
@@ -217,10 +247,6 @@ class BambuCloudManager:
                     except Exception:
                         trays = []
 
-                status = status_cache.get("gcode_state") or d.get("print_status", "UNKNOWN")
-                progress = status_cache.get("mc_percent") or d.get("print_progress", 0)
-                remaining = status_cache.get("mc_remaining_time")
-
                 model_code = d.get("dev_model_name", "")
                 model_map = {
                     "N2S": "A1",
@@ -235,10 +261,15 @@ class BambuCloudManager:
                 printers.append({
                     "id": device_id,
                     "name": name,
-                    "status": status,
-                    "progress": progress,
+                    "status": status_cache.get("gcode_state") or d.get("print_status", "UNKNOWN"),
+                    "progress": status_cache.get("mc_percent") or d.get("print_progress", 0),
                     "model": model_name,
-                    "remaining_time": remaining,
+                    "remaining_time": status_cache.get("mc_remaining_time"),
+                    "subtask_name": status_cache.get("subtask_name", ""),
+                    "nozzle_temper": status_cache.get("nozzle_temper"),
+                    "nozzle_target_temper": status_cache.get("nozzle_target_temper"),
+                    "bed_temper": status_cache.get("bed_temper"),
+                    "bed_target_temper": status_cache.get("bed_target_temper"),
                     "ams": {
                         "has_ams": len(trays) > 0,
                         "total_trays": len(trays),
