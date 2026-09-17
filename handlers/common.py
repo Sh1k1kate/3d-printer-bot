@@ -1,4 +1,4 @@
-from aiogram import BaseMiddleware
+from aiogram import Router, F, BaseMiddleware
 from aiogram.types import Message, CallbackQuery
 from typing import Callable, Dict, Any, Awaitable
 from config import ALLOWED_USERS
@@ -7,6 +7,8 @@ import re
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
+
+router = Router()
 
 
 def is_allowed(user_id: int) -> bool:
@@ -22,10 +24,29 @@ class AccessMiddleware(BaseMiddleware):
         event: Message,
         data: Dict[str, Any]
     ) -> Any:
-        if not is_allowed(event.from_user.id):
-            await event.answer("⛔ Доступ запрещён. Вы не авторизованы для использования этого бота.")
+        user_id = getattr(event.from_user, "id", None) if hasattr(event, "from_user") else None
+        if user_id and not is_allowed(user_id):
+            if isinstance(event, CallbackQuery):
+                await event.answer("⛔ Доступ запрещён.", show_alert=True)
+            else:
+                await event.answer("⛔ Доступ запрещён. Вы не авторизованы для использования этого бота.")
             return
         return await handler(event, data)
+
+
+# ---------- Общий обработчик для callback "ignore" ----------
+@router.callback_query(F.data == "ignore")
+async def ignore_callback(callback: CallbackQuery):
+    """Игнорируем нажатия на пустые ячейки календаря и заголовки."""
+    await callback.answer()
+
+
+# ---------- Fallback для необработанных callback ----------
+@router.callback_query()
+async def fallback_callback(callback: CallbackQuery):
+    """Логируем неизвестный callback, чтобы понять, что не обрабатывается."""
+    logger.warning(f"Необработанный callback: {callback.data} (от {callback.from_user.id})")
+    await callback.answer()
 
 
 def format_time(minutes: int) -> str:
