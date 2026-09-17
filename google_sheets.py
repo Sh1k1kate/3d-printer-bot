@@ -586,7 +586,14 @@ class SheetManager:
                 name = row[1] if len(row) > 1 and row[1] else f"Пользователь {user_id}"
                 subscribers.append((user_id, name))
         return subscribers
-
     # ---------- Общие ----------
+    def init_sheet(self):
+        """
+        Заглушка для совместимости.
+        Все листы уже создаются в __init__, но метод остаётся,
+        чтобы старый код start.py не падал.
+        """
+        pass
+
     def get_all_items(self):
         return self.get_all_models(), self.get_all_kits()
