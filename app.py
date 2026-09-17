@@ -2,6 +2,7 @@ import os
 import logging
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.concurrency import run_in_threadpool
 from fastapi.templating import Jinja2Templates
 from aiogram import Bot, Dispatcher
 from aiogram.types import Update
@@ -33,19 +34,19 @@ except Exception as e:
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 
-# ---------- Регистрируем middleware на уровне диспетчера ----------
+# ---------- Middleware ----------
 dp.message.middleware(AccessMiddleware())
 dp.callback_query.middleware(AccessMiddleware())
 
-# ---------- Подключаем роутеры ----------
+# ---------- Роутеры ----------
 for router in routers:
     dp.include_router(router)
 
-# ---------- FastAPI app ----------
+# ---------- FastAPI ----------
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
 
-# ---------- Bambu Cloud Manager ----------
+# ---------- Bambu Cloud ----------
 bambu_cloud = BambuCloudManager()
 
 
@@ -65,7 +66,6 @@ def get_days_left(deadline):
         return "—"
 
 
-# ---------- Вебхук ----------
 @app.post("/webhook")
 async def webhook(request: Request):
     try:
@@ -78,19 +78,16 @@ async def webhook(request: Request):
         return {"status": "error"}
 
 
-# ---------- Главная ----------
 @app.get("/")
 async def root():
     return {"status": "3D Printer Bot is running"}
 
 
-# ---------- Трекер ----------
 @app.get("/tracker", response_class=HTMLResponse)
 async def tracker_page(request: Request):
     return templates.TemplateResponse("tracker.html", {"request": request})
 
 
-# ---------- Manifest для PWA ----------
 @app.get("/manifest.json")
 async def manifest():
     return JSONResponse(content={
@@ -106,7 +103,6 @@ async def manifest():
     })
 
 
-# ---------- API заказов ----------
 @app.get("/api/orders")
 async def get_orders_api(customer: str = "", from_date: str = "", to_date: str = ""):
     if not sheet_manager:
@@ -124,16 +120,22 @@ async def get_orders_api(customer: str = "", from_date: str = "", to_date: str =
                 continue
             if to_date and order[4] > to_date:
                 continue
+            try:
+                ordered = int(order[2])
+                printed = int(order[3])
+            except (ValueError, TypeError):
+                ordered = 0
+                printed = 0
             result.append({
                 "id": order[0],
                 "position": order[1],
-                "ordered": int(order[2]),
-                "printed": int(order[3]),
+                "ordered": ordered,
+                "printed": printed,
                 "deadline": order[4],
                 "modified": order[5],
                 "status": order[6],
                 "customer": order_customer,
-                "progress": round(int(order[3]) / int(order[2]) * 100) if int(order[2]) > 0 else 0
+                "progress": round(printed / ordered * 100) if ordered > 0 else 0
             })
         return JSONResponse(content={"orders": result})
     except Exception as e:
@@ -141,7 +143,6 @@ async def get_orders_api(customer: str = "", from_date: str = "", to_date: str =
         return JSONResponse(content={"error": str(e)}, status_code=500)
 
 
-# ---------- API задач ----------
 @app.get("/api/tasks")
 async def get_tasks_api():
     if not sheet_manager:
@@ -165,14 +166,13 @@ async def get_tasks_api():
         return JSONResponse(content={"error": str(e)}, status_code=500)
 
 
-# ---------- API принтеров (Bambu Cloud) ----------
+# ✅ Не блокирует event loop
 @app.get("/api/printers")
 async def get_printers_api():
-    printers = bambu_cloud.get_printers()
+    printers = await run_in_threadpool(bambu_cloud.get_printers)
     return JSONResponse(content={"printers": printers})
 
 
-# ---------- Проверка задач (cron) ----------
 @app.get("/check_tasks")
 async def check_tasks():
     if not sheet_manager:
@@ -235,7 +235,6 @@ async def check_tasks():
         return JSONResponse(content={"status": "error", "message": str(e)}, status_code=500)
 
 
-# ---------- Запуск ----------
 if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 8000))
