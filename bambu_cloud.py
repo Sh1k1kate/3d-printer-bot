@@ -22,9 +22,9 @@ class BambuCloudManager:
     def __init__(self):
         self.client = None
         self.mqtt_client = None
-        self.ams_cache = {}          # device_id -> список катушек
-        self.ams_timestamp = {}      # device_id -> время последнего обновления
-        self._status_cache = {}      # device_id -> статус печати
+        self.ams_cache = {}
+        self.ams_timestamp = {}
+        self._status_cache = {}
         self._lock = threading.Lock()
         self._mqtt_thread = None
         self._running = False
@@ -57,7 +57,6 @@ class BambuCloudManager:
             self.client = None
 
     def _start_mqtt(self):
-        """Запускает фоновый поток с MQTT-подпиской через paho-mqtt."""
         if not self.client:
             return
         self._running = True
@@ -86,7 +85,7 @@ class BambuCloudManager:
         return str(uid).strip(), token
 
     def _mqtt_loop(self):
-        """Постоянное подключение к облачному MQTT Bambu Lab через paho-mqtt."""
+        """Постоянное подключение к облачному MQTT Bambu Lab через paho-mqtt 2.x."""
         while self._running:
             uid_str, token_str = self._get_credentials()
             if not uid_str or not token_str:
@@ -94,13 +93,19 @@ class BambuCloudManager:
                 continue
 
             try:
-                client = mqtt.Client(client_id=f"bambu_{uid_str}", clean_session=True)
-                # Username с префиксом u_, Password = access_token
+                # ✅ paho-mqtt 2.x требует callback_api_version
+                client = mqtt.Client(
+                    callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
+                    client_id=f"bambu_{uid_str}",
+                    clean_session=True
+                )
+                # Username = u_<uid>, Password = access_token
                 client.username_pw_set(f"u_{uid_str}", token_str)
                 # TLS без строгой проверки сертификата
                 client.tls_set(cert_reqs=ssl.CERT_NONE)
                 client.tls_insecure_set(True)
 
+                # ✅ Callbacks для paho 2.x
                 client.on_connect = self._on_connect
                 client.on_message = self._on_paho_message
                 client.on_disconnect = self._on_disconnect
@@ -114,15 +119,18 @@ class BambuCloudManager:
                 logger.error(traceback.format_exc())
                 time.sleep(30)
 
-    def _on_connect(self, client, userdata, flags, rc):
-        if rc == 0:
+    # ---------- Callbacks paho-mqtt 2.x ----------
+    def _on_connect(self, client, userdata, flags, reason_code, properties=None):
+        """Callback подключения (paho 2.x)."""
+        if reason_code == 0:
             logger.info("MQTT подключён. Подписываемся на device/+/report")
             client.subscribe("device/+/report")
         else:
-            logger.error(f"MQTT ошибка подключения: rc={rc}")
+            logger.error(f"MQTT ошибка подключения: reason_code={reason_code}")
 
-    def _on_disconnect(self, client, userdata, rc):
-        logger.warning(f"MQTT отключён: rc={rc}. Переподключение...")
+    def _on_disconnect(self, client, userdata, flags, reason_code, properties=None):
+        """Callback отключения (paho 2.x)."""
+        logger.warning(f"MQTT отключён: reason_code={reason_code}. Переподключение...")
 
     def _on_paho_message(self, client, userdata, msg):
         """Извлекает device_id из топика и передаёт в обработчик."""
@@ -151,7 +159,6 @@ class BambuCloudManager:
                     trays = []
                     for unit in ams.get("ams", []):
                         for tray in unit.get("tray", []):
-                            # Пропускаем пустые слоты
                             if tray.get("state") == 0 or tray.get("tray_type") in (None, "", "Empty"):
                                 continue
                             trays.append({
@@ -193,7 +200,6 @@ class BambuCloudManager:
                     trays = self.ams_cache.get(device_id, [])
                     status_cache = self._status_cache.get(device_id, {})
 
-                # Если AMS ещё не получен через MQTT — пробуем REST (базовые данные)
                 if not trays:
                     try:
                         ams_info = self.client.get_ams_filaments(device_id)
@@ -215,7 +221,6 @@ class BambuCloudManager:
                 progress = status_cache.get("mc_percent") or d.get("print_progress", 0)
                 remaining = status_cache.get("mc_remaining_time")
 
-                # Сопоставление кодов моделей с человеческими именами
                 model_code = d.get("dev_model_name", "")
                 model_map = {
                     "N2S": "A1",
@@ -246,7 +251,6 @@ class BambuCloudManager:
             return []
 
     def get_printer_status(self, device_id):
-        """Возвращает детальный статус печати для одного принтера."""
         if not self.client:
             return {}
         with self._lock:
