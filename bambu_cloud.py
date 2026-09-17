@@ -1,24 +1,30 @@
 import logging
 import threading
 import time
+import json
+import ssl
+import paho.mqtt.client as mqtt
 from config import BAMBU_EMAIL, BAMBU_PASSWORD, BAMBU_TOKEN, BAMBU_REGION
 
 logger = logging.getLogger(__name__)
 
+MQTT_HOST = "us.mqtt.bambulab.com"
+MQTT_PORT = 8883
+
 
 class BambuCloudManager:
     """
-    Обёртка для bambu-lab-cloud-api с поддержкой облачного MQTT.
-    Получает список принтеров через REST и данные AMS через MQTT в реальном времени.
-    Не требует LAN-режима и локального сервера — работает через облако Bambu Lab.
+    Обёртка для Bambu Lab Cloud API.
+    REST — список принтеров, MQTT (paho) — телеметрия и данные AMS.
+    Одно MQTT-соединение на все принтеры через подписку на device/+/report.
     """
 
     def __init__(self):
         self.client = None
-        self.mqtt = None
+        self.mqtt_client = None
         self.ams_cache = {}          # device_id -> список катушек
         self.ams_timestamp = {}      # device_id -> время последнего обновления
-        self._status_cache = {}      # device_id -> статус печати из MQTT
+        self._status_cache = {}      # device_id -> статус печати
         self._lock = threading.Lock()
         self._mqtt_thread = None
         self._running = False
@@ -41,18 +47,17 @@ class BambuCloudManager:
                     password=BAMBU_PASSWORD
                 )
             if token:
-                # ✅ Приводим токен к строке (может прийти int)
                 self.client = BambuClient(token=str(token))
                 logger.info("Bambu Cloud client успешно инициализирован")
                 self._start_mqtt()
             else:
-                logger.warning("Bambu Cloud токен не получен. Проверьте BAMBU_TOKEN или BAMBU_EMAIL/BAMBU_PASSWORD.")
+                logger.warning("Bambu Cloud токен не получен.")
         except Exception as e:
             logger.error(f"Ошибка инициализации Bambu Cloud: {e}")
             self.client = None
 
     def _start_mqtt(self):
-        """Запускает фоновый поток с MQTT-подпиской."""
+        """Запускает фоновый поток с MQTT-подпиской через paho-mqtt."""
         if not self.client:
             return
         self._running = True
@@ -60,65 +65,94 @@ class BambuCloudManager:
         self._mqtt_thread.start()
         logger.info("MQTT поток запущен")
 
+    def _get_credentials(self):
+        """Возвращает (uid, token) или (None, None)."""
+        try:
+            user_info = self.client.get_user_info()
+        except Exception as e:
+            logger.error(f"Не удалось получить user_info: {e}")
+            return None, None
+
+        if isinstance(user_info, dict):
+            uid = user_info.get("uid") or user_info.get("user_id") or user_info.get("id")
+        else:
+            uid = getattr(user_info, "uid", None)
+
+        if not uid:
+            logger.error(f"UID не найден в user_info: {user_info}")
+            return None, None
+
+        token = str(getattr(self.client, "token", "")).strip()
+        return str(uid).strip(), token
+
     def _mqtt_loop(self):
-        """Постоянное подключение к облачному MQTT Bambu Lab с переподключением."""
+        """Постоянное подключение к облачному MQTT Bambu Lab через paho-mqtt."""
         while self._running:
+            uid_str, token_str = self._get_credentials()
+            if not uid_str or not token_str:
+                time.sleep(30)
+                continue
+
             try:
-                from bambulab import MQTTClient
+                client = mqtt.Client(client_id=f"bambu_{uid_str}", clean_session=True)
+                # Username с префиксом u_, Password = access_token
+                client.username_pw_set(f"u_{uid_str}", token_str)
+                # TLS без строгой проверки сертификата
+                client.tls_set(cert_reqs=ssl.CERT_NONE)
+                client.tls_insecure_set(True)
 
-                # Получаем данные пользователя
-                try:
-                    user_info = self.client.get_user_info()
-                except Exception as e:
-                    logger.error(f"Не удалось получить user_info: {e}")
-                    time.sleep(30)
-                    continue
+                client.on_connect = self._on_connect
+                client.on_message = self._on_paho_message
+                client.on_disconnect = self._on_disconnect
 
-                # Достаём uid надёжно
-                if isinstance(user_info, dict):
-                    uid = user_info.get("uid") or user_info.get("user_id") or user_info.get("id")
-                else:
-                    uid = getattr(user_info, "uid", None)
-
-                if not uid:
-                    logger.error(f"UID не найден в user_info: {user_info}")
-                    time.sleep(30)
-                    continue
-
-                # ✅ Приводим все параметры к строкам
-                uid_str = str(uid).strip()
-                token_str = str(getattr(self.client, "token", "")).strip()
-
-                logger.info(f"MQTT подключение: uid={uid_str}, token_len={len(token_str)}")
-
-                mqtt = MQTTClient(
-                    username=uid_str,
-                    access_token=token_str,
-                    on_message=self._on_mqtt_message
-                )
-                logger.info("Подключаемся к MQTT Bambu Lab...")
-                mqtt.connect(blocking=True)
+                logger.info(f"MQTT подключение: uid={uid_str}, host={MQTT_HOST}:{MQTT_PORT}")
+                client.connect(MQTT_HOST, MQTT_PORT, 60)
+                client.loop_forever()
             except Exception as e:
                 logger.error(f"Ошибка MQTT: {e}")
                 import traceback
                 logger.error(traceback.format_exc())
                 time.sleep(30)
 
-    def _on_mqtt_message(self, device_id, data):
-        """Обрабатывает входящие MQTT-сообщения и сохраняет данные AMS."""
+    def _on_connect(self, client, userdata, flags, rc):
+        if rc == 0:
+            logger.info("MQTT подключён. Подписываемся на device/+/report")
+            client.subscribe("device/+/report")
+        else:
+            logger.error(f"MQTT ошибка подключения: rc={rc}")
+
+    def _on_disconnect(self, client, userdata, rc):
+        logger.warning(f"MQTT отключён: rc={rc}. Переподключение...")
+
+    def _on_paho_message(self, client, userdata, msg):
+        """Извлекает device_id из топика и передаёт в обработчик."""
+        try:
+            # Топик: device/{device_id}/report
+            parts = msg.topic.split("/")
+            if len(parts) < 3:
+                return
+            device_id = parts[1]
+            data = json.loads(msg.payload.decode("utf-8"))
+            self._process_mqtt_data(device_id, data)
+        except Exception as e:
+            logger.error(f"Ошибка разбора MQTT сообщения: {e}")
+
+    def _process_mqtt_data(self, device_id, data):
+        """Обрабатывает данные телеметрии от одного принтера."""
         try:
             if not data or "print" not in data:
                 return
             print_data = data["print"]
 
             with self._lock:
-                # AMS данные
+                # ---------- AMS ----------
                 if "ams" in print_data:
                     ams = print_data["ams"]
                     trays = []
                     for unit in ams.get("ams", []):
                         for tray in unit.get("tray", []):
-                            if tray.get("state") == 0 or tray.get("tray_type") == "Empty":
+                            # Пропускаем пустые слоты
+                            if tray.get("state") == 0 or tray.get("tray_type") in (None, "", "Empty"):
                                 continue
                             trays.append({
                                 "tray_id": tray.get("id"),
@@ -131,9 +165,9 @@ class BambuCloudManager:
                     if trays:
                         self.ams_cache[device_id] = trays
                         self.ams_timestamp[device_id] = time.time()
-                        logger.debug(f"AMS обновлены для {device_id}: {len(trays)} катушек")
+                        logger.info(f"AMS обновлены для {device_id}: {len(trays)} катушек")
 
-                # Статус печати
+                # ---------- Статус печати ----------
                 if "gcode_state" in print_data:
                     self._status_cache[device_id] = {
                         "gcode_state": print_data.get("gcode_state"),
@@ -142,7 +176,7 @@ class BambuCloudManager:
                         "subtask_name": print_data.get("subtask_name", ""),
                     }
         except Exception as e:
-            logger.error(f"Ошибка обработки MQTT сообщения: {e}")
+            logger.error(f"Ошибка обработки MQTT данных от {device_id}: {e}")
 
     def get_printers(self):
         """Возвращает список принтеров с данными AMS из кэша MQTT."""
@@ -159,13 +193,15 @@ class BambuCloudManager:
                     trays = self.ams_cache.get(device_id, [])
                     status_cache = self._status_cache.get(device_id, {})
 
-                # Если данных AMS из MQTT ещё нет, пробуем REST (базовые)
+                # Если AMS ещё не получен через MQTT — пробуем REST (базовые данные)
                 if not trays:
                     try:
                         ams_info = self.client.get_ams_filaments(device_id)
                         trays = []
                         for unit in ams_info.get("ams_units", []):
                             for tray in unit.get("trays", []):
+                                if not tray.get("filament_type"):
+                                    continue
                                 trays.append({
                                     "tray_id": tray.get("tray_id"),
                                     "type": tray.get("filament_type", "—"),
@@ -175,7 +211,6 @@ class BambuCloudManager:
                     except Exception:
                         trays = []
 
-                # Статус из MQTT или REST
                 status = status_cache.get("gcode_state") or d.get("print_status", "UNKNOWN")
                 progress = status_cache.get("mc_percent") or d.get("print_progress", 0)
                 remaining = status_cache.get("mc_remaining_time")
