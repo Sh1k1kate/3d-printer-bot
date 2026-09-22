@@ -10,8 +10,14 @@ logger = logging.getLogger(__name__)
 router = Router()
 sheet = SheetManager()
 
+# ✅ Ставим команды один раз при старте — без повторов на каждый /start
+_commands_set = False
+
 
 async def set_commands(bot):
+    global _commands_set
+    if _commands_set:
+        return
     commands = [
         BotCommand(command="start", description="Запустить бота"),
         BotCommand(command="help", description="Показать справку"),
@@ -24,8 +30,13 @@ async def set_commands(bot):
         BotCommand(command="subscribe", description="Подписаться на уведомления"),
         BotCommand(command="unsubscribe", description="Отписаться от уведомлений"),
         BotCommand(command="settings", description="Настройки уведомлений"),
+        BotCommand(command="add_price", description="Добавить товар в прайс"),
     ]
-    await bot.set_my_commands(commands, scope=BotCommandScopeDefault())
+    try:
+        await bot.set_my_commands(commands, scope=BotCommandScopeDefault())
+        _commands_set = True
+    except Exception as e:
+        logger.error(f"Не удалось установить команды: {e}")
 
 
 @router.message(Command("start"))
@@ -40,17 +51,20 @@ async def cmd_start(message: Message):
     name = message.from_user.full_name or str(user_id)
     if sheet.add_subscriber(user_id, name):
         logger.info(f"Пользователь {user_id} ({name}) автоматически подписан")
+
     await message.answer(
         "👋 Привет! Я бот для управления 3D-печатью и задачами.\n\n"
         "📌 Возможности:\n"
         "• Модели и наборы\n"
         "• Заказы (модель или набор)\n"
         "• Задачи с уведомлениями\n"
-        "• Просмотр статуса принтеров\n\n"
+        "• Просмотр статуса принтеров\n"
+        "• Прайс-лист (веб)\n\n"
         "/help – подробная справка",
         reply_markup=main_menu
     )
     await set_commands(message.bot)
+
 
 @router.message(Command("help"))
 async def cmd_help(message: Message):
@@ -63,9 +77,14 @@ async def cmd_help(message: Message):
         "/my_orders – мои заказы\n"
         "/tasks – список задач\n"
         "/new_task – создать задачу\n"
+        "/add_price – добавить товар в прайс\n"
         "/id – ваш Telegram ID\n"
         "/subscribe, /unsubscribe – подписка на уведомления\n"
-        "/settings – настройки уведомлений"
+        "/settings – настройки уведомлений\n\n"
+        "🔗 *Веб-интерфейсы:*\n"
+        "• /tracker – трекер заказов и задач\n"
+        "• /price – публичный прайс-лист\n"
+        "• /upload_3mf – анализ 3MF-файла"
     )
     await message.answer(help_text, parse_mode="Markdown")
 
