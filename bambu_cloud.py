@@ -8,13 +8,14 @@ from config import BAMBU_EMAIL, BAMBU_PASSWORD, BAMBU_TOKEN, BAMBU_REGION
 
 logger = logging.getLogger(__name__)
 
-# Список брокеров по регионам — попробуем по очереди
 MQTT_HOSTS = [
     "us.mqtt.bambulab.com",
     "eu.mqtt.bambulab.com",
     "cn.mqtt.bambulab.com",
 ]
 MQTT_PORT = 8883
+
+DEVICES_CACHE_TTL = 30  # сек
 
 
 class BambuCloudManager:
@@ -30,6 +31,9 @@ class BambuCloudManager:
         self._device_ids = []
         self._pushall_sent = False
         self._received_topics = set()
+        # ✅ Кеш get_devices() для снижения нагрузки на облако Bambu
+        self._devices_cache = None
+        self._devices_cache_ts = 0.0
         self._init_client()
 
     def _init_client(self):
@@ -52,7 +56,7 @@ class BambuCloudManager:
                 self.client = BambuClient(token=str(token))
                 logger.info("Bambu Cloud client успешно инициализирован")
                 try:
-                    devices = self.client.get_devices()
+                    devices = self._fetch_devices_from_cloud()
                     self._device_ids = [d.get("dev_id") for d in devices if d.get("dev_id")]
                     logger.info(f"Загружено {len(self._device_ids)} device_id")
                 except Exception as e:
@@ -63,6 +67,16 @@ class BambuCloudManager:
         except Exception as e:
             logger.error(f"Ошибка инициализации Bambu Cloud: {e}")
             self.client = None
+
+    # ✅ Кеширующая обёртка над get_devices()
+    def _fetch_devices_from_cloud(self):
+        now = time.time()
+        if self._devices_cache is not None and (now - self._devices_cache_ts) < DEVICES_CACHE_TTL:
+            return self._devices_cache
+        devices = self.client.get_devices()
+        self._devices_cache = devices
+        self._devices_cache_ts = now
+        return devices
 
     def _start_mqtt(self):
         if not self.client:
@@ -92,7 +106,6 @@ class BambuCloudManager:
         return str(uid).strip(), token
 
     def _mqtt_loop(self):
-        """Перебирает брокеры по регионам, если не удаётся подключиться."""
         host_index = 0
         while self._running:
             uid_str, token_str = self._get_credentials()
@@ -123,7 +136,6 @@ class BambuCloudManager:
                 client.loop_forever()
             except Exception as e:
                 logger.error(f"Ошибка MQTT на {host}: {e}")
-                # Следующий брокер
                 host_index = (host_index + 1) % len(MQTT_HOSTS)
                 logger.info(f"Переключаюсь на {MQTT_HOSTS[host_index]}")
                 time.sleep(10)
@@ -135,9 +147,8 @@ class BambuCloudManager:
     def _on_connect(self, client, userdata, flags, reason_code, properties=None):
         if reason_code == 0:
             logger.info("MQTT подключён.")
-            # ✅ Подписка на ВСЕ топики — диагностика
             client.subscribe("#", qos=1)
-            logger.info("Подписка на # (все топики) + device/+/report")
+            logger.info("Подписка на # (все топики)")
 
             if not self._pushall_sent:
                 self._pushall_sent = True
@@ -155,7 +166,6 @@ class BambuCloudManager:
             try:
                 if self.mqtt_client and self.mqtt_client.is_connected():
                     topic = f"device/{device_id}/request"
-                    # ✅ Правильный формат для облака
                     payload = json.dumps({
                         "pushing": {
                             "sequence_id": str(i + 1),
@@ -175,7 +185,6 @@ class BambuCloudManager:
 
         logger.info("✅ pushall отправлен всем принтерам")
 
-        # ⏳ Через 15 секунд — отчёт о принятых топиках
         time.sleep(15)
         logger.info(f"📊 Принято топиков: {len(self._received_topics)}")
         for t in list(self._received_topics)[:10]:
@@ -183,11 +192,12 @@ class BambuCloudManager:
 
     def _on_disconnect(self, client, userdata, flags, reason_code, properties=None):
         logger.warning(f"MQTT отключён: reason_code={reason_code}. Пауза 15 сек...")
+        # ✅ Сбрасываем флаг, чтобы после реконнекта снова отправить pushall
+        self._pushall_sent = False
         time.sleep(15)
 
     def _on_paho_message(self, client, userdata, msg):
         try:
-            # ✅ Логируем КАЖДЫЙ полученный топик (диагностика)
             self._received_topics.add(msg.topic)
             logger.info(f"[MQTT TOPIC] {msg.topic}")
 
@@ -196,8 +206,6 @@ class BambuCloudManager:
                 return
             device_id = parts[1]
             data = json.loads(msg.payload.decode("utf-8"))
-
-            # Показываем первые 500 символов
             logger.info(f"[MQTT RAW] {device_id}: {json.dumps(data)[:500]}")
             self._process_mqtt_data(device_id, data)
         except Exception as e:
@@ -257,7 +265,7 @@ class BambuCloudManager:
         if not self.client:
             return []
         try:
-            devices = self.client.get_devices()
+            devices = self._fetch_devices_from_cloud()  # ✅ использует кеш
             printers = []
             for d in devices:
                 device_id = d.get("dev_id")
