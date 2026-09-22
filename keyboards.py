@@ -40,7 +40,6 @@ def model_action_keyboard(model_name):
 
 
 def parts_inline_keyboard(model_name, parts_list):
-    """Клавиатура выбора детали для редактирования (разделитель |)."""
     buttons = []
     for i, det_name in enumerate(parts_list):
         buttons.append([InlineKeyboardButton(text=det_name, callback_data=f"edit_part_{model_name}|{i}")])
@@ -49,7 +48,6 @@ def parts_inline_keyboard(model_name, parts_list):
 
 
 def part_parameters_keyboard(model_name, det_name):
-    """✅ Исправлено: разделитель | вместо _ (чтобы совпадать с обработчиком edit_param_selected)."""
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📝 Название детали", callback_data=f"edit_param_{model_name}|{det_name}|name")],
         [InlineKeyboardButton(text="📦 Кол-во на палете", callback_data=f"edit_param_{model_name}|{det_name}|on_pallet")],
@@ -234,7 +232,6 @@ def detail_param_keyboard(detail_index, model_name):
 
 
 def edit_part_keyboard(parts_list, model_name):
-    """Клавиатура выбора детали для редактирования (разделитель |)."""
     buttons = []
     for i, det_name in enumerate(parts_list):
         buttons.append([InlineKeyboardButton(text=det_name, callback_data=f"edit_part_{model_name}|{i}")])
@@ -243,13 +240,14 @@ def edit_part_keyboard(parts_list, model_name):
 
 
 def edit_param_keyboard(model_name, det_name):
-    """Клавиатура выбора параметра для изменения (разделитель |)."""
+    # ✅ ИСПРАВЛЕНО: callback удаления приведён к формату edit_param_{m}|{d}|delete,
+    # который обрабатывает edit_param_selected в handlers/models.py.
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📝 Название", callback_data=f"edit_param_{model_name}|{det_name}|name")],
         [InlineKeyboardButton(text="📦 Кол-во на палете", callback_data=f"edit_param_{model_name}|{det_name}|on_pallet")],
         [InlineKeyboardButton(text="🔢 Кол-во на единицу", callback_data=f"edit_param_{model_name}|{det_name}|per_unit")],
         [InlineKeyboardButton(text="⏱ Время печати", callback_data=f"edit_param_{model_name}|{det_name}|time")],
         [InlineKeyboardButton(text="⚖️ Граммовка", callback_data=f"edit_param_{model_name}|{det_name}|grams")],
-        [InlineKeyboardButton(text="🗑 Удалить деталь", callback_data=f"delete_part_{model_name}|{det_name}")],
+        [InlineKeyboardButton(text="🗑 Удалить деталь", callback_data=f"edit_param_{model_name}|{det_name}|delete")],
         [InlineKeyboardButton(text="🔙 Назад", callback_data=f"edit_model_{model_name}")]
     ])
