@@ -3,7 +3,8 @@ import os
 BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
 SPREADSHEET_ID = os.getenv("SPREADSHEET_ID", "142fAjnM3n7tzNz1WAokl_YV7LPg11STFjYyJ1ea66LM")
 CREDENTIALS_FILE = os.getenv("CREDENTIALS_FILE", "credentials.json")
-
+# ✅ Пароль для админки прайса (заголовок X-Admin-Token)
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
 # Белый список (ALLOWED_USERS через запятую в переменной окружения)
 ALLOWED_USERS = []
 allowed_env = os.getenv("ALLOWED_USERS", "")
