@@ -13,8 +13,10 @@ def moscow_now():
     return datetime.now(MOSCOW_TZ)
 
 
+PRICE_COLUMNS = ["Название", "Описание", "Фото (URL)", "Розница", "Опт", "Опт от (шт)", "Категория"]
+
+
 class SheetManager:
-    # ✅ Composite-key cache: ключ может быть "orders", "tasks:(123,)", "tasks:()" и т.п.
     _cache = {}
     _cache_ttl = 10
 
@@ -63,6 +65,7 @@ class SheetManager:
 
             self.init_tasks_sheet()
             self.init_subscribers_sheet()
+            self.init_price_sheet()
 
     # ---------- Кеширование ----------
     @staticmethod
@@ -88,12 +91,10 @@ class SheetManager:
                 logger.warning(f"Quota exceeded, using cached data for {cache_key}")
                 if cache and cache["data"] is not None:
                     return cache["data"]
-                else:
-                    raise
+                raise
             raise
 
     def _invalidate_cache(self, key=None):
-        """Если key задан — сбрасываем все ключи с этим префиксом (включая composite)."""
         if key:
             for k in list(self._cache.keys()):
                 if k == key or k.startswith(f"{key}("):
@@ -116,8 +117,7 @@ class SheetManager:
             if cell:
                 row = self.sheet_settings.row_values(cell.row)
                 return {"morning_time": row[1] if len(row) > 1 else "09:00", "interval": row[2] if len(row) > 2 else "60"}
-            else:
-                return {"morning_time": "09:00", "interval": "60"}
+            return {"morning_time": "09:00", "interval": "60"}
         except:
             return {"morning_time": "09:00", "interval": "60"}
 
@@ -130,8 +130,7 @@ class SheetManager:
                 if interval:
                     self.sheet_settings.update_cell(cell.row, 3, interval)
             else:
-                row = [user_id, morning_time or "09:00", interval or "60"]
-                self.sheet_settings.append_row(row)
+                self.sheet_settings.append_row([user_id, morning_time or "09:00", interval or "60"])
             return True
         except Exception as e:
             logger.error(f"Ошибка сохранения настроек: {e}")
@@ -155,11 +154,7 @@ class SheetManager:
 
     def get_all_models(self):
         rows = self._normalize_rows_with_index()
-        models = set()
-        for _, row in rows:
-            if row[0]:
-                models.add(row[0])
-        return sorted(list(models))
+        return sorted({row[0] for _, row in rows if row[0]})
 
     def get_model_details_with_rows(self, model_name):
         rows = self._normalize_rows_with_index()
@@ -169,33 +164,22 @@ class SheetManager:
                 det_name = row[1] if len(row) > 1 else ""
                 if not det_name:
                     continue
-                try:
-                    on_pallet = int(float(row[2])) if row[2] else 0
-                except:
-                    on_pallet = 0
-                try:
-                    per_unit = int(float(row[3])) if row[3] else 0
-                except:
-                    per_unit = 0
-                try:
-                    time_pp = int(float(row[4])) if row[4] else 0
-                except:
-                    time_pp = 0
-                try:
-                    grams_pp = int(float(row[5])) if len(row) > 5 and row[5] else 0
-                except:
-                    grams_pp = 0
+                try: on_pallet = int(float(row[2])) if row[2] else 0
+                except: on_pallet = 0
+                try: per_unit = int(float(row[3])) if row[3] else 0
+                except: per_unit = 0
+                try: time_pp = int(float(row[4])) if row[4] else 0
+                except: time_pp = 0
+                try: grams_pp = int(float(row[5])) if len(row) > 5 and row[5] else 0
+                except: grams_pp = 0
                 details.append((row_idx, det_name, on_pallet, per_unit, time_pp, grams_pp))
         return details
 
     def get_model_details(self, model_name):
-        details_with_rows = self.get_model_details_with_rows(model_name)
-        return [(det_name, on_pallet, per_unit, time_pp, grams_pp)
-                for (_, det_name, on_pallet, per_unit, time_pp, grams_pp) in details_with_rows]
+        return [(d, op, pu, tp, gp) for (_, d, op, pu, tp, gp) in self.get_model_details_with_rows(model_name)]
 
     def get_part_row_and_data(self, model_name, det_name):
-        details = self.get_model_details_with_rows(model_name)
-        for row_idx, d_name, on_pallet, per_unit, time_pp, grams_pp in details:
+        for row_idx, d_name, on_pallet, per_unit, time_pp, grams_pp in self.get_model_details_with_rows(model_name):
             if d_name == det_name:
                 return row_idx, on_pallet, per_unit, time_pp, grams_pp
         return None
@@ -205,9 +189,8 @@ class SheetManager:
         col = col_map.get(field)
         if not col:
             return False
-        value_to_write = str(new_value)
         try:
-            self.sheet_models.update_cell(row_index, col, value_to_write)
+            self.sheet_models.update_cell(row_index, col, str(new_value))
             self._invalidate_cache()
             return True
         except Exception as e:
@@ -229,14 +212,12 @@ class SheetManager:
             row[5] = grams_pp
             rows_to_add.append(row)
         end_row = start_row + len(rows_to_add) - 1
-        cell_range = f"A{start_row}:F{end_row}"
-        self.sheet_models.update(cell_range, rows_to_add, value_input_option="USER_ENTERED")
+        self.sheet_models.update(f"A{start_row}:F{end_row}", rows_to_add, value_input_option="USER_ENTERED")
         self._invalidate_cache()
         self.log_action("system", "Добавление модели", model_name)
 
     def delete_part(self, model_name, det_name):
-        rows = self._normalize_rows_with_index()
-        for row_idx, row in rows:
+        for row_idx, row in self._normalize_rows_with_index():
             if row[0] == model_name and row[1] == det_name:
                 self.sheet_models.delete_rows(row_idx)
                 self._invalidate_cache()
@@ -251,8 +232,7 @@ class SheetManager:
         return [row[0] for row in records[1:] if row and row[0]]
 
     def get_kit_details(self, kit_name):
-        records = self.sheet_kits.get_all_values()
-        for row in records[1:]:
+        for row in self.sheet_kits.get_all_values()[1:]:
             if row and row[0] == kit_name:
                 return (row[0], row[1] if len(row) > 1 else "", row[2] if len(row) > 2 else "", row[3] if len(row) > 3 else "")
         return None
@@ -327,8 +307,7 @@ class SheetManager:
     def add_order(self, position, quantity, deadline_str, customer=""):
         order_num = self.get_next_order_number()
         now_str = moscow_now().strftime("%Y-%m-%d %H:%M:%S")
-        row = [order_num, position, quantity, 0, deadline_str, now_str, "Нет", customer]
-        self.sheet_orders.append_row(row)
+        self.sheet_orders.append_row([order_num, position, quantity, 0, deadline_str, now_str, "Нет", customer])
         self._invalidate_cache("orders")
         self.log_action("system", f"Создание заказа №{order_num}", f"{position} x{quantity} для {customer}")
         return order_num
@@ -348,21 +327,13 @@ class SheetManager:
         return self._get_cached("orders", self._fetch_orders)
 
     def get_active_orders(self):
-        all_orders = self.get_user_orders()
-        active = []
-        for order in all_orders:
-            if len(order) >= 7:
-                status = order[6].strip().lower()
-                if status != 'да':
-                    active.append(order)
-        return active
+        return [o for o in self.get_user_orders() if len(o) >= 7 and o[6].strip().lower() != 'да']
 
     def update_order_printed(self, order_num, printed_qty):
         cell = self.sheet_orders.find(str(order_num), in_column=1)
         if cell:
             self.sheet_orders.update_cell(cell.row, 4, printed_qty)
-            now_str = moscow_now().strftime("%Y-%m-%d %H:%M:%S")
-            self.sheet_orders.update_cell(cell.row, 6, now_str)
+            self.sheet_orders.update_cell(cell.row, 6, moscow_now().strftime("%Y-%m-%d %H:%M:%S"))
             self._invalidate_cache("orders")
             self.log_action("system", f"Обновление печати заказа №{order_num}", f"Напечатано {printed_qty}")
             return True
@@ -372,16 +343,14 @@ class SheetManager:
         cell = self.sheet_orders.find(str(order_num), in_column=1)
         if cell:
             self.sheet_orders.update_cell(cell.row, 7, "Да")
-            now_str = moscow_now().strftime("%Y-%m-%d %H:%M:%S")
-            self.sheet_orders.update_cell(cell.row, 6, now_str)
+            self.sheet_orders.update_cell(cell.row, 6, moscow_now().strftime("%Y-%m-%d %H:%M:%S"))
             self._invalidate_cache("orders")
             self.log_action("system", f"Заказ №{order_num} выполнен", "")
             return True
         return False
 
     def get_order_by_number(self, order_num):
-        orders = self.get_user_orders()
-        for order in orders:
+        for order in self.get_user_orders():
             if order[0] == str(order_num):
                 return order
         return None
@@ -415,13 +384,8 @@ class SheetManager:
     def add_task(self, title, deadline, time_str, assignee_user_id=None):
         task_id = self.get_next_task_id()
         now_str = moscow_now().strftime("%Y-%m-%d %H:%M:%S")
-        status = "active"
-        row = [
-            task_id, title, deadline, time_str,
-            assignee_user_id if assignee_user_id else "",
-            status, now_str,
-            "0", "0", "0", "0", "0", "0"
-        ]
+        row = [task_id, title, deadline, time_str, assignee_user_id if assignee_user_id else "",
+               "active", now_str, "0", "0", "0", "0", "0", "0"]
         self.sheet_tasks.append_row(row)
         self._invalidate_cache("tasks")
         self.log_action("system", f"Создание задачи #{task_id}", title)
@@ -456,7 +420,6 @@ class SheetManager:
         return tasks
 
     def get_active_tasks(self, user_id=None):
-        # ✅ Теперь cache-ключ включает user_id — данные разных юзеров не перемешиваются
         return self._get_cached("tasks", self._fetch_tasks, user_id)
 
     def get_task_by_id(self, task_id):
@@ -486,47 +449,28 @@ class SheetManager:
             return []
         tasks = []
         for row in records[1:]:
-            if len(row) < 13:
+            if len(row) < 13 or row[5] != "active":
                 continue
-            if row[5] != "active":
-                continue
-            deadline_date = row[2]
-            deadline_time = row[3]
-            assignee = row[4] if row[4] else None
-            notified_60 = row[7] if len(row) > 7 else "0"
-            notified_30 = row[8] if len(row) > 8 else "0"
-            notified_15 = row[9] if len(row) > 9 else "0"
-            notified_0 = row[10] if len(row) > 10 else "0"
-            notified_morning = row[11] if len(row) > 11 else "0"
-            notified_day = row[12] if len(row) > 12 else "0"
             try:
-                naive_dt = datetime.strptime(f"{deadline_date} {deadline_time}", "%Y-%m-%d %H:%M")
+                naive_dt = datetime.strptime(f"{row[2]} {row[3]}", "%Y-%m-%d %H:%M")
                 deadline_dt = naive_dt.replace(tzinfo=MOSCOW_TZ)
             except:
                 continue
             tasks.append({
-                "id": int(row[0]),
-                "title": row[1],
-                "deadline_dt": deadline_dt,
-                "assignee": assignee,
-                "notified_60": notified_60,
-                "notified_30": notified_30,
-                "notified_15": notified_15,
-                "notified_0": notified_0,
-                "notified_morning": notified_morning,
-                "notified_day": notified_day
+                "id": int(row[0]), "title": row[1], "deadline_dt": deadline_dt,
+                "assignee": row[4] if row[4] else None,
+                "notified_60": row[7] if len(row) > 7 else "0",
+                "notified_30": row[8] if len(row) > 8 else "0",
+                "notified_15": row[9] if len(row) > 9 else "0",
+                "notified_0": row[10] if len(row) > 10 else "0",
+                "notified_morning": row[11] if len(row) > 11 else "0",
+                "notified_day": row[12] if len(row) > 12 else "0"
             })
         return tasks
 
     def update_task_notification(self, task_id, field, value):
-        col_map = {
-            'notified_60': 8,
-            'notified_30': 9,
-            'notified_15': 10,
-            'notified_0': 11,
-            'notified_morning': 12,
-            'notified_day': 13
-        }
+        col_map = {'notified_60': 8, 'notified_30': 9, 'notified_15': 10,
+                   'notified_0': 11, 'notified_morning': 12, 'notified_day': 13}
         col = col_map.get(field)
         if not col:
             return False
@@ -559,8 +503,7 @@ class SheetManager:
 
     def add_subscriber(self, user_id, name=None):
         try:
-            cell = self.sheet_subscribers.find(str(user_id), in_column=1)
-            if cell:
+            if self.sheet_subscribers.find(str(user_id), in_column=1):
                 return False
         except:
             pass
@@ -583,11 +526,7 @@ class SheetManager:
         records = self.sheet_subscribers.get_all_values()
         if len(records) <= 1:
             return []
-        subscribers = []
-        for row in records[1:]:
-            if row and row[0].isdigit():
-                subscribers.append(int(row[0]))
-        return subscribers
+        return [int(row[0]) for row in records[1:] if row and row[0].isdigit()]
 
     def get_subscribers_with_names(self):
         records = self.sheet_subscribers.get_all_values()
@@ -600,6 +539,104 @@ class SheetManager:
                 name = row[1] if len(row) > 1 and row[1] else f"Пользователь {user_id}"
                 subscribers.append((user_id, name))
         return subscribers
+
+    # ---------- ПРАЙС ----------
+    def init_price_sheet(self):
+        try:
+            self.sheet_price = self.sheet.worksheet("Прайс")
+        except:
+            self.sheet_price = self.sheet.add_worksheet(title="Прайс", rows=1000, cols=7)
+            self.sheet_price.append_row(PRICE_COLUMNS)
+
+    def _fetch_price_items(self):
+        records = self.sheet_price.get_all_values()
+        if len(records) <= 1:
+            return []
+        items = []
+        for idx, row in enumerate(records[1:], start=2):
+            # Пропускаем полностью пустые строки
+            if not any((cell or "").strip() for cell in row):
+                continue
+            while len(row) < 7:
+                row.append("")
+            items.append({
+                "row_index": idx,
+                "name": row[0],
+                "description": row[1],
+                "photo": row[2],
+                "retail": row[3],
+                "wholesale": row[4],
+                "wholesale_from": row[5],
+                "category": row[6] or "Без категории",
+            })
+        return items
+
+    def get_price_items(self):
+        return self._get_cached("price", self._fetch_price_items)
+
+    def get_price_item_by_row(self, row_index):
+        try:
+            row = self.sheet_price.row_values(row_index)
+            if not row or not any((c or "").strip() for c in row):
+                return None
+            while len(row) < 7:
+                row.append("")
+            return {
+                "row_index": row_index,
+                "name": row[0],
+                "description": row[1],
+                "photo": row[2],
+                "retail": row[3],
+                "wholesale": row[4],
+                "wholesale_from": row[5],
+                "category": row[6] or "Без категории",
+            }
+        except Exception:
+            return None
+
+    def add_price_item(self, name, description="", photo="", retail="", wholesale="", wholesale_from="", category=""):
+        if not name:
+            return False
+        try:
+            self.sheet_price.append_row([
+                name, description, photo,
+                str(retail), str(wholesale), str(wholesale_from),
+                category or "Без категории"
+            ])
+            self._invalidate_cache("price")
+            self.log_action("system", "Добавление товара в прайс", name)
+            return True
+        except Exception as e:
+            logger.error(f"Ошибка добавления товара: {e}")
+            return False
+
+    def update_price_item(self, row_index, field, value):
+        col_map = {'name': 1, 'description': 2, 'photo': 3,
+                   'retail': 4, 'wholesale': 5, 'wholesale_from': 6, 'category': 7}
+        col = col_map.get(field)
+        if not col:
+            return False
+        try:
+            self.sheet_price.update_cell(row_index, col, str(value))
+            self._invalidate_cache("price")
+            return True
+        except Exception as e:
+            logger.error(f"Ошибка обновления товара: {e}")
+            return False
+
+    def delete_price_item(self, row_index):
+        try:
+            self.sheet_price.delete_rows(row_index)
+            self._invalidate_cache("price")
+            self.log_action("system", "Удаление товара из прайса", f"строка {row_index}")
+            return True
+        except Exception as e:
+            logger.error(f"Ошибка удаления товара: {e}")
+            return False
+
+    def get_price_categories(self):
+        items = self.get_price_items()
+        return sorted({it["category"] for it in items if it.get("category")})
 
     # ---------- Общие ----------
     def init_sheet(self):
