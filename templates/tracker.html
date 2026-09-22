@@ -6,6 +6,10 @@
   <title>📦 Трекер 3D-печати</title>
   <link rel="manifest" href="/manifest.json">
   <script src="https://cdn.tailwindcss.com"></script>
+  <!-- ✅ ВАЖНО: включаем darkMode по классу ДО первого рендера -->
+  <script>
+    tailwind.config = { darkMode: 'class' };
+  </script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <style>
     * { transition: background-color 0.3s, color 0.3s, border-color 0.3s; }
@@ -64,14 +68,12 @@
       <button class="tab-btn px-4 py-2 text-sm font-medium border-b-2 border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 whitespace-nowrap" data-tab="infographics">📊 Инфографика</button>
     </div>
 
-    <!-- ============ ПРИНТЕРЫ ============ -->
     <div id="tab-printers" class="tab-content active">
       <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4" id="printers-grid">
         <p class="text-gray-500 dark:text-gray-400">Загрузка данных о принтерах...</p>
       </div>
     </div>
 
-    <!-- ============ ЗАКАЗЫ ============ -->
     <div id="tab-orders" class="tab-content">
       <div class="flex flex-wrap items-center gap-4 mb-6 bg-white dark:bg-gray-800 p-4 rounded-lg shadow">
         <div class="flex-1 min-w-[150px]">
@@ -137,7 +139,6 @@
       </div>
     </div>
 
-    <!-- ============ ЗАДАЧИ ============ -->
     <div id="tab-tasks" class="tab-content">
       <div class="flex flex-wrap items-center gap-4 mb-6 bg-white dark:bg-gray-800 p-4 rounded-lg shadow">
         <div class="flex-1 min-w-[200px]">
@@ -172,7 +173,6 @@
       </div>
     </div>
 
-    <!-- ============ ИНФОГРАФИКА ============ -->
     <div id="tab-infographics" class="tab-content">
       <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
         <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-4 text-center kpi-card">
@@ -229,7 +229,6 @@
   </div>
 
   <script>
-    // ---------- Тёмная тема ----------
     let darkMode = localStorage.getItem('theme') === 'dark';
     function applyTheme() {
       document.documentElement.classList.toggle('dark', darkMode);
@@ -240,7 +239,6 @@
     function toggleTheme() { darkMode = !darkMode; applyTheme(); }
     applyTheme();
 
-    // ---------- Вкладки ----------
     document.querySelectorAll('.tab-btn').forEach(btn => {
       btn.addEventListener('click', function() {
         document.querySelectorAll('.tab-btn').forEach(b => {
@@ -259,12 +257,10 @@
       });
     });
 
-    // ---------- Глобальные данные ----------
     let allOrders = [], allTasks = [], allPrinters = [];
     let currentOrderFilter = 'all', orderSearchQuery = '', customerFilter = '', dateFrom = '', dateTo = '';
     let currentTaskFilter = 'all', taskSearchQuery = '';
 
-    // ---------- ЗАГРУЗКА ДАННЫХ ----------
     async function loadOrders() {
       const params = new URLSearchParams();
       if (customerFilter) params.append('customer', customerFilter);
@@ -296,7 +292,6 @@
       }
     }
 
-    // ---------- ПРИНТЕРЫ ----------
     function getStatusColor(status) {
       const s = (status || '').toUpperCase();
       if (s === 'RUNNING') return 'border-green-400';
@@ -331,7 +326,6 @@
 
       grid.innerHTML = sorted.map(p => {
         const trays = p.ams?.trays || [];
-        // Цветные квадратики для каждой катушки
         const squares = trays.map(tray => {
           let color = '#cccccc';
           if (tray.color && tray.color.length >= 6) {
@@ -350,7 +344,6 @@
           ? `<div class="w-full bg-gray-200 dark:bg-gray-600 rounded-full h-1.5 mt-2"><div class="bg-green-500 h-1.5 rounded-full progress-bar" style="width:${progress}%"></div></div><span class="text-xs text-gray-500">${progress}%</span>`
           : '';
 
-        // Оставшееся время
         let remaining = '';
         if (p.remaining_time && p.remaining_time > 0) {
           const mins = p.remaining_time;
@@ -359,12 +352,10 @@
           remaining = `<span class="text-xs text-gray-500 dark:text-gray-400">⏱ ${hours > 0 ? hours + 'ч ' : ''}${m}мин</span>`;
         }
 
-        // Название задачи
         const taskName = p.subtask_name
           ? `<div class="text-xs text-gray-500 dark:text-gray-400 truncate mt-1" title="${p.subtask_name}">${p.subtask_name}</div>`
           : '';
 
-        // Температуры
         let temps = '';
         if (p.nozzle_temper !== null && p.nozzle_temper !== undefined) {
           const nt = Math.round(p.nozzle_temper);
@@ -400,7 +391,6 @@
       }).join('');
     }
 
-    // ---------- ЗАКАЗЫ ----------
     function populateCustomerFilter() {
       const customers = new Set(allOrders.map(o => o.customer).filter(Boolean));
       const select = document.getElementById('customer-filter');
@@ -499,7 +489,6 @@
       document.getElementById('avg-progress').textContent = avg + '%';
     }
 
-    // ---------- ЗАДАЧИ ----------
     function applyTaskFilters() {
       const filtered = allTasks.filter(t => {
         const search = t.title.toLowerCase().includes(taskSearchQuery.toLowerCase()) || (t.assignee && t.assignee.toLowerCase().includes(taskSearchQuery.toLowerCase()));
@@ -541,7 +530,6 @@
       `).join('');
     }
 
-    // ---------- ИНФОГРАФИКА ----------
     let charts = {};
 
     async function loadInfographics() {
@@ -612,13 +600,11 @@
       });
     }
 
-    // ---------- Helper ----------
     function getStatusClass(status) { return status.toLowerCase() === 'да' ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300' : 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300'; }
     function getStatusText(status) { return status.toLowerCase() === 'да' ? '✅ Выполнен' : '⏳ В работе'; }
     function getOverdueClass(deadline) { const diff = (new Date(deadline) - new Date())/(1000*60*60*24); if (diff<0) return 'text-red-600 dark:text-red-400 font-bold'; if (diff<1) return 'text-yellow-600 dark:text-yellow-400'; return 'text-green-600 dark:text-green-400'; }
     function getDaysLeft(deadline) { const diff = Math.ceil((new Date(deadline) - new Date())/(1000*60*60*24)); if (diff<0) return '🔴 Просрочен'; if (diff===0) return 'Сегодня'; if (diff===1) return 'Завтра'; return `${diff} дн.`; }
 
-    // ---------- Экспорт CSV ----------
     function exportCSV() {
       const rows = [['№','Позиция','Заказчик','Заказано','Напечатано','Прогресс%','Срок','Статус']];
       allOrders.forEach(o => rows.push([o.id, o.position, o.customer, o.ordered, o.printed, o.progress, o.deadline, o.status]));
