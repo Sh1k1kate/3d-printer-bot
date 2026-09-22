@@ -9,6 +9,7 @@ logger = logging.getLogger(__name__)
 
 MOSCOW_TZ = timezone(timedelta(hours=3))
 
+
 def moscow_now():
     return datetime.now(MOSCOW_TZ)
 
@@ -17,64 +18,107 @@ PRICE_COLUMNS = ["Название", "Описание", "Фото (URL)", "Ро
 
 
 class SheetManager:
+    # ✅ Настоящий синглтон — один объект на весь процесс
+    _instance = None
     _cache = {}
     _cache_ttl = 10
 
+    def __new__(cls, *args, **kwargs):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
     def __init__(self):
-        if not hasattr(self, '_initialized'):
-            self._initialized = True
-            scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-            creds = ServiceAccountCredentials.from_json_keyfile_name(CREDENTIALS_FILE, scope)
-            self.client = gspread.authorize(creds)
-            self.sheet = self.client.open_by_key(SPREADSHEET_ID)
+        # __init__ выполнится ровно один раз
+        if getattr(self, "_initialized", False):
+            return
+        self._initialized = True
 
-            # Лист "Время печати"
+        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+        creds = ServiceAccountCredentials.from_json_keyfile_name(CREDENTIALS_FILE, scope)
+        self.client = gspread.authorize(creds)
+        self.sheet = self.client.open_by_key(SPREADSHEET_ID)
+
+        self.sheet_models = self._ensure_worksheet(
+            "Время печати", rows=1000, cols=6,
+            header=["Название", "Детали", "Кол-во на палете", "Нужно на шт.", "Время палета (мин)", "Грамм на палет"],
+        )
+        self.sheet_orders = self._ensure_worksheet(
+            "Заказы", rows=1000, cols=8,
+            header=["Номер заказа", "Позиция", "Кол-во заказано", "Кол-во напечатано",
+                    "Срок заказа", "Дата последнего изменения", "Выполнен", "Заказчик"],
+        )
+        self.sheet_kits = self._ensure_worksheet(
+            "Наборы", rows=100, cols=4,
+            header=["Название", "Состав", "Цена", "Описание"],
+        )
+        self.sheet_log = self._ensure_worksheet(
+            "Лог", rows=1000, cols=4,
+            header=["Время", "Пользователь", "Действие", "Детали"],
+        )
+        self.sheet_settings = self._ensure_worksheet(
+            "Настройки", rows=100, cols=3,
+            header=["user_id", "morning_time", "interval"],
+        )
+        self.sheet_tasks = self._ensure_worksheet(
+            "Задачи", rows=1000, cols=13,
+            header=[
+                "ID", "Название", "Срок", "Время", "Исполнитель (user_id)",
+                "Статус", "Создана", "notified_60", "notified_30", "notified_15",
+                "notified_0", "notified_morning", "notified_day",
+            ],
+        )
+        self.sheet_subscribers = self._ensure_worksheet(
+            "Подписчики", rows=1000, cols=2,
+            header=["user_id", "name"],
+        )
+        self.sheet_price = self._ensure_worksheet(
+            "Прайс", rows=1000, cols=7,
+            header=PRICE_COLUMNS,
+        )
+
+    # ---------- Безопасное открытие/создание листа ----------
+    def _ensure_worksheet(self, title, rows, cols, header):
+        """Открывает лист, если есть. Если нет — создаёт с заголовком.
+        Устойчиво к гонкам и к 429."""
+        try:
+            return self.sheet.worksheet(title)
+        except gspread.exceptions.WorksheetNotFound:
+            pass
+        except gspread.exceptions.APIError as e:
+            if "429" in str(e):
+                # Квота — подождём и попробуем ещё раз
+                time.sleep(2)
+                try:
+                    return self.sheet.worksheet(title)
+                except gspread.exceptions.WorksheetNotFound:
+                    pass
+            else:
+                raise
+
+        # Листа нет — создаём
+        try:
+            ws = self.sheet.add_worksheet(title=title, rows=rows, cols=cols)
             try:
-                self.sheet_models = self.sheet.worksheet("Время печати")
-            except gspread.exceptions.WorksheetNotFound:
-                self.sheet_models = self.sheet.add_worksheet(title="Время печати", rows=1000, cols=6)
-                self.sheet_models.append_row(["Название", "Детали", "Кол-во на палете", "Нужно на шт.", "Время палета (мин)", "Грамм на палет"])
-
-            # Лист "Заказы"
-            try:
-                self.sheet_orders = self.sheet.worksheet("Заказы")
-            except:
-                self.sheet_orders = self.sheet.add_worksheet(title="Заказы", rows=1000, cols=8)
-                self.sheet_orders.append_row(["Номер заказа", "Позиция", "Кол-во заказано", "Кол-во напечатано", "Срок заказа", "Дата последнего изменения", "Выполнен", "Заказчик"])
-
-            # Лист "Наборы"
-            try:
-                self.sheet_kits = self.sheet.worksheet("Наборы")
-            except:
-                self.sheet_kits = self.sheet.add_worksheet(title="Наборы", rows=100, cols=4)
-                self.sheet_kits.append_row(["Название", "Состав", "Цена", "Описание"])
-
-            # Лист "Лог"
-            try:
-                self.sheet_log = self.sheet.worksheet("Лог")
-            except:
-                self.sheet_log = self.sheet.add_worksheet(title="Лог", rows=1000, cols=4)
-                self.sheet_log.append_row(["Время", "Пользователь", "Действие", "Детали"])
-
-            # Лист "Настройки"
-            try:
-                self.sheet_settings = self.sheet.worksheet("Настройки")
-            except:
-                self.sheet_settings = self.sheet.add_worksheet(title="Настройки", rows=100, cols=3)
-                self.sheet_settings.append_row(["user_id", "morning_time", "interval"])
-
-            self.init_tasks_sheet()
-            self.init_subscribers_sheet()
-            self.init_price_sheet()
+                ws.append_row(header)
+            except Exception as e:
+                logger.warning(f"Не удалось записать заголовок листа '{title}': {e}")
+            logger.info(f"Создан лист '{title}'")
+            return ws
+        except gspread.exceptions.APIError as e:
+            if "already exists" in str(e):
+                # Кто-то успел создать между нашими вызовами — просто открываем
+                return self.sheet.worksheet(title)
+            raise
 
     # ---------- Кеширование ----------
     @staticmethod
     def _make_cache_key(key, args, kwargs):
         if not args and not kwargs:
             return key
-        suffix_parts = [str(a) for a in args]
-        suffix_parts += [f"{k}={v}" for k, v in sorted(kwargs.items())]
-        return f"{key}({','.join(suffix_parts)})"
+        suffix = [str(a) for a in args]
+        suffix += [f"{k}={v}" for k, v in sorted(kwargs.items())]
+        return f"{key}({','.join(suffix)})"
 
     def _get_cached(self, key, fetch_func, *args, **kwargs):
         now = time.time()
@@ -91,7 +135,6 @@ class SheetManager:
                 logger.warning(f"Quota exceeded, using cached data for {cache_key}")
                 if cache and cache["data"] is not None:
                     return cache["data"]
-                raise
             raise
 
     def _invalidate_cache(self, key=None):
@@ -112,14 +155,20 @@ class SheetManager:
 
     # ---------- Настройки пользователя ----------
     def get_user_settings(self, user_id):
+        return self._get_cached(f"user_settings:{user_id}", self._fetch_user_settings, user_id)
+
+    def _fetch_user_settings(self, user_id):
         try:
             cell = self.sheet_settings.find(str(user_id), in_column=1)
             if cell:
                 row = self.sheet_settings.row_values(cell.row)
-                return {"morning_time": row[1] if len(row) > 1 else "09:00", "interval": row[2] if len(row) > 2 else "60"}
-            return {"morning_time": "09:00", "interval": "60"}
-        except:
-            return {"morning_time": "09:00", "interval": "60"}
+                return {
+                    "morning_time": row[1] if len(row) > 1 else "09:00",
+                    "interval": row[2] if len(row) > 2 else "60",
+                }
+        except Exception as e:
+            logger.warning(f"get_user_settings error: {e}")
+        return {"morning_time": "09:00", "interval": "60"}
 
     def set_user_settings(self, user_id, morning_time=None, interval=None):
         try:
@@ -131,6 +180,7 @@ class SheetManager:
                     self.sheet_settings.update_cell(cell.row, 3, interval)
             else:
                 self.sheet_settings.append_row([user_id, morning_time or "09:00", interval or "60"])
+            self._invalidate_cache(f"user_settings:{user_id}")
             return True
         except Exception as e:
             logger.error(f"Ошибка сохранения настроек: {e}")
@@ -144,7 +194,7 @@ class SheetManager:
         result = []
         current_model = None
         for idx, row in enumerate(records[1:], start=2):
-            if row[0] and row[0].strip():
+            if row and row[0] and row[0].strip():
                 current_model = row[0].strip()
             while len(row) < 6:
                 row.append("")
@@ -234,7 +284,9 @@ class SheetManager:
     def get_kit_details(self, kit_name):
         for row in self.sheet_kits.get_all_values()[1:]:
             if row and row[0] == kit_name:
-                return (row[0], row[1] if len(row) > 1 else "", row[2] if len(row) > 2 else "", row[3] if len(row) > 3 else "")
+                return (row[0], row[1] if len(row) > 1 else "",
+                        row[2] if len(row) > 2 else "",
+                        row[3] if len(row) > 3 else "")
         return None
 
     def add_kit(self, kit_name, items_text, price, description):
@@ -281,7 +333,7 @@ class SheetManager:
                 if space_idx == -1:
                     continue
                 name = part[:space_idx]
-                qty_str = part[space_idx+1:]
+                qty_str = part[space_idx + 1:]
             try:
                 qty = int(qty_str.strip())
             except:
@@ -356,17 +408,6 @@ class SheetManager:
         return None
 
     # ---------- Задачи ----------
-    def init_tasks_sheet(self):
-        try:
-            self.sheet_tasks = self.sheet.worksheet("Задачи")
-        except:
-            self.sheet_tasks = self.sheet.add_worksheet(title="Задачи", rows=1000, cols=13)
-            self.sheet_tasks.append_row([
-                "ID", "Название", "Срок", "Время", "Исполнитель (user_id)",
-                "Статус", "Создана", "notified_60", "notified_30", "notified_15",
-                "notified_0", "notified_morning", "notified_day"
-            ])
-
     def get_next_task_id(self):
         records = self.sheet_tasks.get_all_values()
         if len(records) <= 1:
@@ -440,7 +481,7 @@ class SheetManager:
             "notified_15": row[9] if len(row) > 9 else "0",
             "notified_0": row[10] if len(row) > 10 else "0",
             "notified_morning": row[11] if len(row) > 11 else "0",
-            "notified_day": row[12] if len(row) > 12 else "0"
+            "notified_day": row[12] if len(row) > 12 else "0",
         }
 
     def get_tasks_for_notification(self):
@@ -464,7 +505,7 @@ class SheetManager:
                 "notified_15": row[9] if len(row) > 9 else "0",
                 "notified_0": row[10] if len(row) > 10 else "0",
                 "notified_morning": row[11] if len(row) > 11 else "0",
-                "notified_day": row[12] if len(row) > 12 else "0"
+                "notified_day": row[12] if len(row) > 12 else "0",
             })
         return tasks
 
@@ -494,22 +535,41 @@ class SheetManager:
         return True
 
     # ---------- Подписчики ----------
-    def init_subscribers_sheet(self):
-        try:
-            self.sheet_subscribers = self.sheet.worksheet("Подписчики")
-        except:
-            self.sheet_subscribers = self.sheet.add_worksheet(title="Подписчики", rows=1000, cols=2)
-            self.sheet_subscribers.append_row(["user_id", "name"])
+    def _fetch_all_subscribers(self):
+        records = self.sheet_subscribers.get_all_values()
+        if len(records) <= 1:
+            return []
+        return [int(row[0]) for row in records[1:] if row and row[0].isdigit()]
+
+    def _fetch_subscribers_with_names(self):
+        records = self.sheet_subscribers.get_all_values()
+        if len(records) <= 1:
+            return []
+        out = []
+        for row in records[1:]:
+            if row and row[0].isdigit():
+                uid = int(row[0])
+                name = row[1] if len(row) > 1 and row[1] else f"Пользователь {uid}"
+                out.append((uid, name))
+        return out
+
+    def get_all_subscribers(self):
+        return self._get_cached("subscribers_list", self._fetch_all_subscribers)
+
+    def get_subscribers_with_names(self):
+        return self._get_cached("subscribers_names", self._fetch_subscribers_with_names)
 
     def add_subscriber(self, user_id, name=None):
         try:
             if self.sheet_subscribers.find(str(user_id), in_column=1):
                 return False
-        except:
+        except Exception:
             pass
         if not name:
             name = f"Пользователь {user_id}"
         self.sheet_subscribers.append_row([user_id, name])
+        self._invalidate_cache("subscribers_list")
+        self._invalidate_cache("subscribers_names")
         return True
 
     def remove_subscriber(self, user_id):
@@ -517,44 +577,20 @@ class SheetManager:
             cell = self.sheet_subscribers.find(str(user_id), in_column=1)
             if cell:
                 self.sheet_subscribers.delete_rows(cell.row)
+                self._invalidate_cache("subscribers_list")
+                self._invalidate_cache("subscribers_names")
                 return True
-        except:
+        except Exception:
             pass
         return False
 
-    def get_all_subscribers(self):
-        records = self.sheet_subscribers.get_all_values()
-        if len(records) <= 1:
-            return []
-        return [int(row[0]) for row in records[1:] if row and row[0].isdigit()]
-
-    def get_subscribers_with_names(self):
-        records = self.sheet_subscribers.get_all_values()
-        if len(records) <= 1:
-            return []
-        subscribers = []
-        for row in records[1:]:
-            if row and row[0].isdigit():
-                user_id = int(row[0])
-                name = row[1] if len(row) > 1 and row[1] else f"Пользователь {user_id}"
-                subscribers.append((user_id, name))
-        return subscribers
-
     # ---------- ПРАЙС ----------
-    def init_price_sheet(self):
-        try:
-            self.sheet_price = self.sheet.worksheet("Прайс")
-        except:
-            self.sheet_price = self.sheet.add_worksheet(title="Прайс", rows=1000, cols=7)
-            self.sheet_price.append_row(PRICE_COLUMNS)
-
     def _fetch_price_items(self):
         records = self.sheet_price.get_all_values()
         if len(records) <= 1:
             return []
         items = []
         for idx, row in enumerate(records[1:], start=2):
-            # Пропускаем полностью пустые строки
             if not any((cell or "").strip() for cell in row):
                 continue
             while len(row) < 7:
@@ -601,7 +637,7 @@ class SheetManager:
             self.sheet_price.append_row([
                 name, description, photo,
                 str(retail), str(wholesale), str(wholesale_from),
-                category or "Без категории"
+                category or "Без категории",
             ])
             self._invalidate_cache("price")
             self.log_action("system", "Добавление товара в прайс", name)
@@ -638,7 +674,16 @@ class SheetManager:
         items = self.get_price_items()
         return sorted({it["category"] for it in items if it.get("category")})
 
-    # ---------- Общие ----------
+    # ---------- Заглушки для обратной совместимости ----------
+    def init_tasks_sheet(self):
+        pass
+
+    def init_subscribers_sheet(self):
+        pass
+
+    def init_price_sheet(self):
+        pass
+
     def init_sheet(self):
         pass
 
