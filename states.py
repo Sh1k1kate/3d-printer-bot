@@ -42,3 +42,13 @@ class CreateTask(StatesGroup):
     waiting_for_time = State()
     waiting_for_assignee_selection = State()
     waiting_for_assignee_manual = State()
+
+# ✅ ПРАЙС
+class AddPrice(StatesGroup):
+    waiting_for_name = State()
+    waiting_for_description = State()
+    waiting_for_photo = State()
+    waiting_for_retail = State()
+    waiting_for_wholesale = State()
+    waiting_for_wholesale_from = State()
+    waiting_for_category = State()
