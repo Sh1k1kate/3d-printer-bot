@@ -12,8 +12,10 @@ MOSCOW_TZ = timezone(timedelta(hours=3))
 def moscow_now():
     return datetime.now(MOSCOW_TZ)
 
+
 class SheetManager:
-    _cache = {"orders": {"data": None, "timestamp": 0}, "tasks": {"data": None, "timestamp": 0}}
+    # ✅ Composite-key cache: ключ может быть "orders", "tasks:(123,)", "tasks:()" и т.п.
+    _cache = {}
     _cache_ttl = 10
 
     def __init__(self):
@@ -63,18 +65,27 @@ class SheetManager:
             self.init_subscribers_sheet()
 
     # ---------- Кеширование ----------
+    @staticmethod
+    def _make_cache_key(key, args, kwargs):
+        if not args and not kwargs:
+            return key
+        suffix_parts = [str(a) for a in args]
+        suffix_parts += [f"{k}={v}" for k, v in sorted(kwargs.items())]
+        return f"{key}({','.join(suffix_parts)})"
+
     def _get_cached(self, key, fetch_func, *args, **kwargs):
         now = time.time()
-        cache = self._cache.get(key)
+        cache_key = self._make_cache_key(key, args, kwargs)
+        cache = self._cache.get(cache_key)
         if cache and cache["data"] is not None and (now - cache["timestamp"]) < self._cache_ttl:
             return cache["data"]
         try:
             data = fetch_func(*args, **kwargs)
-            self._cache[key] = {"data": data, "timestamp": now}
+            self._cache[cache_key] = {"data": data, "timestamp": now}
             return data
         except gspread.exceptions.APIError as e:
             if "429" in str(e):
-                logger.warning(f"Quota exceeded, using cached data for {key}")
+                logger.warning(f"Quota exceeded, using cached data for {cache_key}")
                 if cache and cache["data"] is not None:
                     return cache["data"]
                 else:
@@ -82,11 +93,13 @@ class SheetManager:
             raise
 
     def _invalidate_cache(self, key=None):
+        """Если key задан — сбрасываем все ключи с этим префиксом (включая composite)."""
         if key:
-            self._cache[key] = {"data": None, "timestamp": 0}
+            for k in list(self._cache.keys()):
+                if k == key or k.startswith(f"{key}("):
+                    self._cache[k] = {"data": None, "timestamp": 0}
         else:
-            for k in self._cache:
-                self._cache[k] = {"data": None, "timestamp": 0}
+            self._cache.clear()
 
     # ---------- Лог ----------
     def log_action(self, user_id, action, details=""):
@@ -124,7 +137,7 @@ class SheetManager:
             logger.error(f"Ошибка сохранения настроек: {e}")
             return False
 
-    # ---------- Модели (полностью из предыдущей версии) ----------
+    # ---------- Модели ----------
     def _normalize_rows_with_index(self):
         records = self.sheet_models.get_all_values()
         if len(records) <= 1:
@@ -230,7 +243,7 @@ class SheetManager:
                 return True
         return False
 
-    # ---------- Наборы (полностью из предыдущей версии) ----------
+    # ---------- Наборы ----------
     def get_all_kits(self):
         records = self.sheet_kits.get_all_values()
         if len(records) <= 1:
@@ -296,7 +309,7 @@ class SheetManager:
             items.append((name.strip(), qty))
         return items
 
-    # ---------- Заказы (с логом) ----------
+    # ---------- Заказы ----------
     def get_next_order_number(self):
         records = self.sheet_orders.get_all_values()
         if len(records) <= 1:
@@ -373,7 +386,7 @@ class SheetManager:
                 return order
         return None
 
-    # ---------- Задачи (с автозаказом и логом) ----------
+    # ---------- Задачи ----------
     def init_tasks_sheet(self):
         try:
             self.sheet_tasks = self.sheet.worksheet("Задачи")
@@ -443,6 +456,7 @@ class SheetManager:
         return tasks
 
     def get_active_tasks(self, user_id=None):
+        # ✅ Теперь cache-ключ включает user_id — данные разных юзеров не перемешиваются
         return self._get_cached("tasks", self._fetch_tasks, user_id)
 
     def get_task_by_id(self, task_id):
@@ -586,13 +600,9 @@ class SheetManager:
                 name = row[1] if len(row) > 1 and row[1] else f"Пользователь {user_id}"
                 subscribers.append((user_id, name))
         return subscribers
+
     # ---------- Общие ----------
     def init_sheet(self):
-        """
-        Заглушка для совместимости.
-        Все листы уже создаются в __init__, но метод остаётся,
-        чтобы старый код start.py не падал.
-        """
         pass
 
     def get_all_items(self):
