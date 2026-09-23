@@ -72,6 +72,7 @@
       <div class="flex gap-2 flex-wrap">
         <button onclick="openEditor(null)" class="bg-blue-500 hover:bg-blue-600 text-white text-sm px-4 py-1.5 rounded-lg">➕ Добавить товар</button>
         <button id="export-docx-btn" onclick="exportDocx()" class="bg-emerald-600 hover:bg-emerald-700 text-white text-sm px-4 py-1.5 rounded-lg">📄 Word</button>
+        <button id="qr-btn" onclick="openQr()" class="bg-violet-600 hover:bg-violet-700 text-white text-sm px-4 py-1.5 rounded-lg">🔲 QR</button>
         <button onclick="logoutAdmin()" class="bg-gray-200 dark:bg-gray-700 text-sm px-4 py-1.5 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600">🚪 Выйти</button>
       </div>
     </div>
@@ -173,7 +174,8 @@
             <input id="edit-photo" type="text" class="flex-1 px-3 py-2 border rounded-lg bg-white dark:bg-gray-700 dark:border-gray-600" placeholder="https://... или загрузите файл">
             <button type="button" onclick="document.getElementById('edit-photo-file').click()" class="px-3 py-2 rounded-lg bg-blue-500 hover:bg-blue-600 text-white text-sm whitespace-nowrap">📤 Загрузить</button>
           </div>
-          <input type="file" id="edit-photo-file" accept="image/*" class="hidden">
+          <!-- ✅ capture=environment — открывает камеру на телефоне -->
+          <input type="file" id="edit-photo-file" accept="image/*" capture="environment" class="hidden">
           <div id="upload-status" class="text-xs mt-1 hidden"></div>
           <div class="mt-2 bg-gray-100 dark:bg-gray-900 rounded-lg p-3 flex items-center justify-center min-h-[120px]">
             <img id="edit-photo-preview" src="" alt="" class="max-h-[160px] max-w-full rounded object-contain hidden">
@@ -204,6 +206,21 @@
       <div class="flex gap-2 justify-end mt-5">
         <button onclick="closeModal('modal-editor')" class="px-4 py-2 rounded-lg bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-sm">Отмена</button>
         <button onclick="saveItem()" class="px-4 py-2 rounded-lg bg-blue-500 hover:bg-blue-600 text-white text-sm">💾 Сохранить</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: QR -->
+  <div id="modal-qr" class="hidden fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+    <div class="bg-white dark:bg-gray-800 rounded-2xl max-w-sm w-full p-6 shadow-2xl text-center">
+      <h3 class="text-xl font-bold mb-3">🔲 QR-код на прайс</h3>
+      <p class="text-xs text-gray-500 dark:text-gray-400 mb-4">Наведите камеру — откроется публичная страница прайса</p>
+      <div id="qr-container" class="bg-white rounded-xl p-3 inline-block min-h-[220px] flex items-center justify-center">
+        <span class="text-gray-400 text-sm">Загрузка…</span>
+      </div>
+      <div class="flex gap-2 justify-center mt-4">
+        <button onclick="downloadQr()" class="px-4 py-2 rounded-lg bg-violet-600 hover:bg-violet-700 text-white text-sm">⬇️ Скачать PNG</button>
+        <button onclick="closeModal('modal-qr')" class="px-4 py-2 rounded-lg bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-sm">Закрыть</button>
       </div>
     </div>
   </div>
@@ -242,6 +259,11 @@
     let viewMode = localStorage.getItem('priceView') || 'grid';
     let editingRowIndex = null;
     let deleteRowIndex = null;
+    let qrBlobUrl = null;
+
+    // ✅ Флаг быстрого добавления: /price?admin=1 — сразу открыть редактор добавления
+    const urlParams = new URLSearchParams(window.location.search);
+    const quickAdminMode = urlParams.get('admin') === '1';
 
     // ---------- UTILS ----------
     function escapeHtml(s) {
@@ -297,9 +319,7 @@
     }
 
     function renderStats() {
-      const prices = allItems
-        .map(it => parseNum(it.retail))
-        .filter(p => p !== null && p > 0);
+      const prices = allItems.map(it => parseNum(it.retail)).filter(p => p !== null && p > 0);
       const min = prices.length ? Math.min(...prices) : null;
       const max = prices.length ? Math.max(...prices) : null;
       document.getElementById('stat-total').textContent = allItems.length;
@@ -506,7 +526,11 @@
         localStorage.setItem('priceAdminToken', pwd);
         closeModal('modal-password');
         setAdminUI(true);
-        loadItems();
+        await loadItems();
+        // ✅ Если ?admin=1 — сразу открываем редактор добавления
+        if (quickAdminMode) {
+          setTimeout(() => openEditor(null), 200);
+        }
       } else {
         const el = document.getElementById('password-error');
         el.textContent = resp.status === 401 ? 'Неверный пароль' : 'Ошибка сервера';
@@ -555,6 +579,39 @@
         btn.disabled = false;
         btn.textContent = origText;
       }
+    }
+
+    // ✅ QR-КОД
+    async function openQr() {
+      const container = document.getElementById('qr-container');
+      container.innerHTML = '<span class="text-gray-400 text-sm">Загрузка…</span>';
+      openModal('modal-qr');
+      if (qrBlobUrl) { URL.revokeObjectURL(qrBlobUrl); qrBlobUrl = null; }
+      try {
+        const resp = await fetch('/api/price/qrcode?_=' + Date.now(), {
+          headers: { 'X-Admin-Token': adminToken },
+        });
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        const blob = await resp.blob();
+        qrBlobUrl = URL.createObjectURL(blob);
+        container.innerHTML = '';
+        const img = document.createElement('img');
+        img.src = qrBlobUrl;
+        img.className = 'max-w-[260px] w-full rounded';
+        container.appendChild(img);
+      } catch (e) {
+        container.innerHTML = `<span class="text-red-500 text-sm">Ошибка: ${e.message}</span>`;
+      }
+    }
+
+    function downloadQr() {
+      if (!qrBlobUrl) return;
+      const a = document.createElement('a');
+      a.href = qrBlobUrl;
+      a.download = `price_qr_${new Date().toISOString().slice(0,10)}.png`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
     }
 
     // ---------- EDITOR ----------
@@ -736,11 +793,11 @@
 
     document.addEventListener('keydown', e => {
       if (e.key === 'Escape') {
-        ['modal-product','modal-password','modal-editor','modal-confirm'].forEach(closeModal);
+        ['modal-product','modal-password','modal-editor','modal-confirm','modal-qr'].forEach(closeModal);
       }
     });
 
-    ['modal-product','modal-password','modal-editor','modal-confirm'].forEach(id => {
+    ['modal-product','modal-password','modal-editor','modal-confirm','modal-qr'].forEach(id => {
       document.getElementById(id).addEventListener('click', e => {
         if (e.target.id === id) closeModal(id);
       });
@@ -749,8 +806,19 @@
     // ---------- INIT ----------
     (async function init() {
       setView(viewMode);
-      if (adminToken) setAdminUI(true);
+      if (adminToken) {
+        setAdminUI(true);
+      }
       await loadItems();
+
+      // ✅ Если ?admin=1 и токен уже есть — сразу открываем редактор добавления
+      if (quickAdminMode) {
+        if (adminToken) {
+          setTimeout(() => openEditor(null), 250);
+        } else {
+          setTimeout(() => openModal('modal-password'), 250);
+        }
+      }
     })();
   </script>
 </body>
