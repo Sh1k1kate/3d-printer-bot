@@ -10,7 +10,6 @@ logger = logging.getLogger(__name__)
 router = Router()
 sheet = SheetManager()
 
-# ✅ Ставим команды один раз при старте — без повторов на каждый /start
 _commands_set = False
 
 
@@ -26,6 +25,7 @@ async def set_commands(bot):
         BotCommand(command="items", description="Список моделей и наборов"),
         BotCommand(command="tasks", description="Список задач"),
         BotCommand(command="new_task", description="Создать новую задачу"),
+        BotCommand(command="price", description="Прайс-лист товаров"),
         BotCommand(command="id", description="Ваш Telegram ID"),
         BotCommand(command="subscribe", description="Подписаться на уведомления"),
         BotCommand(command="unsubscribe", description="Отписаться от уведомлений"),
@@ -59,9 +59,9 @@ async def cmd_start(message: Message):
         "• Заказы (модель или набор)\n"
         "• Задачи с уведомлениями\n"
         "• Просмотр статуса принтеров\n"
-        "• Прайс-лист (веб)\n\n"
+        "• Прайс-лист (/price)\n\n"
         "/help – подробная справка",
-        reply_markup=main_menu
+        reply_markup=main_menu,
     )
     await set_commands(message.bot)
 
@@ -77,6 +77,7 @@ async def cmd_help(message: Message):
         "/my_orders – мои заказы\n"
         "/tasks – список задач\n"
         "/new_task – создать задачу\n"
+        "/price – прайс-лист товаров\n"
         "/add_price – добавить товар в прайс\n"
         "/id – ваш Telegram ID\n"
         "/subscribe, /unsubscribe – подписка на уведомления\n"
