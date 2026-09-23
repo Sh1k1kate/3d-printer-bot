@@ -18,7 +18,6 @@ PRICE_COLUMNS = ["Название", "Описание", "Фото (URL)", "Ро
 
 
 class SheetManager:
-    # ✅ Настоящий синглтон — один объект на весь процесс
     _instance = None
     _cache = {}
     _cache_ttl = 10
@@ -29,7 +28,6 @@ class SheetManager:
         return cls._instance
 
     def __init__(self):
-        # __init__ выполнится ровно один раз
         if getattr(self, "_initialized", False):
             return
         self._initialized = True
@@ -76,18 +74,20 @@ class SheetManager:
             "Прайс", rows=1000, cols=7,
             header=PRICE_COLUMNS,
         )
+        # ✅ Новый лист для системных настроек (логотип и пр.)
+        self.sheet_system = self._ensure_worksheet(
+            "Настройки системы", rows=100, cols=2,
+            header=["key", "value"],
+        )
 
     # ---------- Безопасное открытие/создание листа ----------
     def _ensure_worksheet(self, title, rows, cols, header):
-        """Открывает лист, если есть. Если нет — создаёт с заголовком.
-        Устойчиво к гонкам и к 429."""
         try:
             return self.sheet.worksheet(title)
         except gspread.exceptions.WorksheetNotFound:
             pass
         except gspread.exceptions.APIError as e:
             if "429" in str(e):
-                # Квота — подождём и попробуем ещё раз
                 time.sleep(2)
                 try:
                     return self.sheet.worksheet(title)
@@ -96,7 +96,6 @@ class SheetManager:
             else:
                 raise
 
-        # Листа нет — создаём
         try:
             ws = self.sheet.add_worksheet(title=title, rows=rows, cols=cols)
             try:
@@ -107,7 +106,6 @@ class SheetManager:
             return ws
         except gspread.exceptions.APIError as e:
             if "already exists" in str(e):
-                # Кто-то успел создать между нашими вызовами — просто открываем
                 return self.sheet.worksheet(title)
             raise
 
@@ -144,6 +142,46 @@ class SheetManager:
                     self._cache[k] = {"data": None, "timestamp": 0}
         else:
             self._cache.clear()
+
+    # ---------- Системные настройки (key → value) ----------
+    def _fetch_setting(self, key):
+        try:
+            cell = self.sheet_system.find(str(key), in_column=1)
+            if cell:
+                row = self.sheet_system.row_values(cell.row)
+                if len(row) > 1:
+                    return row[1]
+        except Exception as e:
+            logger.warning(f"get_setting({key}) error: {e}")
+        return ""
+
+    def get_setting(self, key, default=""):
+        val = self._get_cached(f"setting:{key}", self._fetch_setting, key)
+        return val if val else default
+
+    def set_setting(self, key, value):
+        try:
+            cell = self.sheet_system.find(str(key), in_column=1)
+            if cell:
+                self.sheet_system.update_cell(cell.row, 2, str(value))
+            else:
+                self.sheet_system.append_row([str(key), str(value)])
+            self._invalidate_cache(f"setting:{key}")
+            return True
+        except Exception as e:
+            logger.error(f"set_setting({key}) error: {e}")
+            return False
+
+    def delete_setting(self, key):
+        try:
+            cell = self.sheet_system.find(str(key), in_column=1)
+            if cell:
+                self.sheet_system.delete_rows(cell.row)
+                self._invalidate_cache(f"setting:{key}")
+                return True
+        except Exception as e:
+            logger.error(f"delete_setting({key}) error: {e}")
+        return False
 
     # ---------- Лог ----------
     def log_action(self, user_id, action, details=""):
@@ -674,18 +712,11 @@ class SheetManager:
         items = self.get_price_items()
         return sorted({it["category"] for it in items if it.get("category")})
 
-    # ---------- Заглушки для обратной совместимости ----------
-    def init_tasks_sheet(self):
-        pass
-
-    def init_subscribers_sheet(self):
-        pass
-
-    def init_price_sheet(self):
-        pass
-
-    def init_sheet(self):
-        pass
+    # ---------- Заглушки ----------
+    def init_tasks_sheet(self): pass
+    def init_subscribers_sheet(self): pass
+    def init_price_sheet(self): pass
+    def init_sheet(self): pass
 
     def get_all_items(self):
         return self.get_all_models(), self.get_all_kits()
