@@ -8,7 +8,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import (
     Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 )
-from keyboards import cancel_keyboard, main_menu
+from keyboards import cancel_keyboard, main_menu, price_actions_keyboard
 from states import AddPrice, EditPrice
 from google_sheets import SheetManager
 from .common import escape_markdown, safe_answer, safe_edit
@@ -17,19 +17,74 @@ logger = logging.getLogger(__name__)
 router = Router()
 sheet = SheetManager()
 
-# Env из Apps Script (общий с веб-загрузкой)
 DRIVE_UPLOAD_URL = os.getenv("DRIVE_UPLOAD_URL", "")
 DRIVE_UPLOAD_SECRET = os.getenv("DRIVE_UPLOAD_SECRET", "")
 MAX_IMAGE_SIZE = 5 * 1024 * 1024
 PER_PAGE = 8
 
-# Кеш навигации для /price
 _user_categories = {}
 _user_items_by_cat = {}
-
-# Кеш навигации для /edit_price
 _user_edit_categories = {}
 _user_edit_items_by_cat = {}
+
+
+# ============================================================
+# ТОЧКА ВХОДА: Reply-кнопка «💰 Прайс»
+# ============================================================
+@router.message(F.text == "💰 Прайс")
+async def price_menu_button(message: Message, state: FSMContext):
+    await state.clear()
+    await message.answer(
+        "💰 *Прайс-лист*\n\nЧто хотите сделать?",
+        parse_mode="Markdown",
+        reply_markup=price_actions_keyboard(),
+    )
+
+
+@router.callback_query(F.data == "pa_view")
+async def pa_view(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await _show_price_categories(callback.from_user.id, target=callback.message)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "pa_add")
+async def pa_add(callback: CallbackQuery, state: FSMContext):
+    # Запускаем тот же флоу, что и /add_price
+    await state.clear()
+    await safe_answer(
+        callback.message,
+        "🛒 *Добавление товара в прайс*\n\nВведите *название товара*:",
+        parse_mode="Markdown",
+        reply_markup=cancel_keyboard,
+    )
+    await state.set_state(AddPrice.waiting_for_name)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "pa_edit")
+async def pa_edit(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    uid = callback.from_user.id
+    items = _refresh_edit_cache(uid)
+    if not items:
+        await safe_answer(callback.message, "Прайс пока пуст. Добавьте товары.", parse_mode="Markdown")
+        await callback.answer()
+        return
+    kb = _build_edit_categories_keyboard(uid)
+    try:
+        await callback.message.edit_text(
+            "✏️ *Редактирование прайса*\n\nВыберите категорию:",
+            parse_mode="Markdown",
+            reply_markup=kb,
+        )
+    except Exception:
+        await callback.message.answer(
+            "✏️ *Редактирование прайса*\n\nВыберите категорию:",
+            parse_mode="Markdown",
+            reply_markup=kb,
+        )
+    await callback.answer()
 
 
 # ============================================================
@@ -51,7 +106,6 @@ def _format_item_caption(it):
 
 
 def _format_edit_item_text(it):
-    """Текст карточки товара в режиме редактирования."""
     lines = [f"✏️ *{escape_markdown(it.get('name') or '—')}*"]
     lines.append(f"🏷 {escape_markdown(it.get('category') or 'Без категории')}")
     if it.get("retail"):
@@ -69,17 +123,12 @@ def _format_edit_item_text(it):
             desc = desc[:200] + "…"
         lines.append("")
         lines.append(escape_markdown(desc))
-    if it.get("photo"):
-        lines.append("")
-        lines.append("📷 Фото: есть")
-    else:
-        lines.append("")
-        lines.append("📷 Фото: нет")
+    lines.append("")
+    lines.append("📷 Фото: есть" if it.get("photo") else "📷 Фото: нет")
     return "\n".join(lines)
 
 
-async def _upload_photo_to_drive(file_bytes: bytes, mime: str, filename: str) -> str | None:
-    """Загружает фото в Google Drive через тот же Apps Script, что и веб-админка."""
+async def _upload_photo_to_drive(file_bytes: bytes, mime: str, filename: str):
     if not DRIVE_UPLOAD_URL or not DRIVE_UPLOAD_SECRET:
         return None
     if len(file_bytes) > MAX_IMAGE_SIZE:
@@ -94,8 +143,7 @@ async def _upload_photo_to_drive(file_bytes: bytes, mime: str, filename: str) ->
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(
-                DRIVE_UPLOAD_URL,
-                json=payload,
+                DRIVE_UPLOAD_URL, json=payload,
                 timeout=aiohttp.ClientTimeout(total=60),
             ) as resp:
                 if resp.status != 200:
@@ -111,8 +159,30 @@ async def _upload_photo_to_drive(file_bytes: bytes, mime: str, filename: str) ->
         return None
 
 
+async def _show_price_categories(uid: int, target):
+    """Показ категорий прайса — общая логика для /price и кнопки."""
+    items = sheet.get_price_items()
+    if not items:
+        await target.answer("Прайс пока пуст.")
+        return
+    categories = sorted({(it.get("category") or "Без категории") for it in items}, key=lambda s: s.lower())
+    _user_categories[uid] = categories
+    _user_items_by_cat[uid] = {
+        c: [it for it in items if (it.get("category") or "Без категории") == c]
+        for c in categories
+    }
+    kb = _build_categories_keyboard(uid)
+    text = (
+        f"💰 *Прайс-лист*\n\n"
+        f"Всего товаров: {len(items)}\n"
+        f"Категорий: {len(categories)}\n\n"
+        f"Выберите категорию:"
+    )
+    await target.answer(text, parse_mode="Markdown", reply_markup=kb)
+
+
 # ============================================================
-# /price — ПРОСМОТР
+# НАВИГАЦИЯ ПО КАТЕГОРИЯМ (/price и pa_view)
 # ============================================================
 def _build_categories_keyboard(uid):
     cats = _user_categories.get(uid) or []
@@ -162,23 +232,7 @@ def _build_category_items_keyboard(uid, cat_idx, page):
 
 @router.message(Command("price"))
 async def cmd_price(message: Message):
-    uid = message.from_user.id
-    items = sheet.get_price_items()
-    if not items:
-        await message.answer("Прайс пока пуст.")
-        return
-    categories = sorted({(it.get("category") or "Без категории") for it in items}, key=lambda s: s.lower())
-    _user_categories[uid] = categories
-    _user_items_by_cat[uid] = {
-        c: [it for it in items if (it.get("category") or "Без категории") == c]
-        for c in categories
-    }
-    kb = _build_categories_keyboard(uid)
-    await message.answer(
-        f"💰 *Прайс-лист*\n\nВсего товаров: {len(items)}\nКатегорий: {len(categories)}\n\nВыберите категорию:",
-        parse_mode="Markdown",
-        reply_markup=kb,
-    )
+    await _show_price_categories(message.from_user.id, target=message)
 
 
 @router.callback_query(F.data == "pr_back_cats")
@@ -452,7 +506,7 @@ def _build_edit_category_items_keyboard(uid, cat_idx, page):
 
 
 def _build_edit_item_keyboard(row_idx):
-    rows = [
+    return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📝 Название", callback_data=f"ep_edit:{row_idx}:name")],
         [InlineKeyboardButton(text="📄 Описание", callback_data=f"ep_edit:{row_idx}:description")],
         [InlineKeyboardButton(text="📷 Фото", callback_data=f"ep_edit:{row_idx}:photo")],
@@ -462,12 +516,10 @@ def _build_edit_item_keyboard(row_idx):
         [InlineKeyboardButton(text="🏷 Категория", callback_data=f"ep_edit:{row_idx}:category")],
         [InlineKeyboardButton(text="🗑 Удалить товар", callback_data=f"ep_del:{row_idx}")],
         [InlineKeyboardButton(text="🔙 К списку", callback_data="ep_back_cats")],
-    ]
-    return InlineKeyboardMarkup(inline_keyboard=rows)
+    ])
 
 
 def _refresh_edit_cache(uid):
-    """Пересобирает кеш категорий/товаров для редактирования."""
     items = sheet.get_price_items()
     categories = sorted({(it.get("category") or "Без категории") for it in items}, key=lambda s: s.lower())
     _user_edit_categories[uid] = categories
@@ -478,8 +530,7 @@ def _refresh_edit_cache(uid):
     return items
 
 
-async def _show_item_card(target, row_idx: int, is_callback: bool = True, edit: bool = False):
-    """Показать карточку товара. target — message или callback.message."""
+async def _show_item_card(target, row_idx: int, is_callback: bool = True):
     it = sheet.get_price_item_by_row(row_idx)
     if not it:
         if is_callback:
@@ -587,7 +638,6 @@ async def ep_show_item(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-# ---------- Редактирование поля ----------
 @router.callback_query(F.data.startswith("ep_edit:"))
 async def ep_edit_field(callback: CallbackQuery, state: FSMContext):
     try:
@@ -633,7 +683,6 @@ async def ep_cancel_edit(message: Message, state: FSMContext):
         await message.answer("Редактирование отменено.", reply_markup=main_menu)
 
 
-# Обработка фото (для поля photo)
 @router.message(EditPrice.waiting_for_value, F.photo)
 async def ep_edit_photo_upload(message: Message, state: FSMContext):
     data = await state.get_data()
@@ -646,7 +695,6 @@ async def ep_edit_photo_upload(message: Message, state: FSMContext):
         await message.answer("❌ Загрузка фото в Drive не настроена (нет DRIVE_UPLOAD_URL/SECRET).")
         return
 
-    # Берём самое большое разрешение
     photo = message.photo[-1]
     try:
         file = await message.bot.get_file(photo.file_id)
@@ -686,7 +734,6 @@ async def ep_edit_value(message: Message, state: FSMContext):
     raw = message.text.strip()
     clear = raw.lower() in ("нет", "-", "")
 
-    # Валидация и преобразование
     new_value = ""
     if field == "name":
         if clear:
@@ -696,16 +743,14 @@ async def ep_edit_value(message: Message, state: FSMContext):
     elif field == "description":
         new_value = "" if clear else raw
     elif field == "photo":
-        # Если написали не URL и не "нет" — попросим уточнить
         if not clear and not (raw.startswith("http://") or raw.startswith("https://")):
             await message.answer(
-                "❌ Введите URL (начинается с http:// или https://), "
-                "отправьте фото сообщением, либо напишите 'нет'."
+                "❌ Введите URL (http:// или https://), отправьте фото сообщением, либо 'нет'."
             )
             return
         new_value = "" if clear else raw
     elif field in ("retail", "wholesale"):
-        new_value = "" if clear else raw  # цены храним строками, как в Sheets
+        new_value = "" if clear else raw
     elif field == "wholesale_from":
         if clear:
             new_value = ""
@@ -732,7 +777,6 @@ async def ep_edit_value(message: Message, state: FSMContext):
     await _show_item_card(message, row_idx, is_callback=False)
 
 
-# ---------- Удаление товара ----------
 @router.callback_query(F.data.startswith("ep_del:"))
 async def ep_delete_confirm(callback: CallbackQuery):
     try:
