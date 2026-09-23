@@ -25,7 +25,9 @@ from datetime import datetime
 from docx import Document
 from docx.shared import Pt, Cm, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
-from docx.enum.table import WD_ALIGN_VERTICAL
+from docx.enum.table import WD_ALIGN_VERTICAL, WD_TABLE_ALIGNMENT
+from docx.oxml.ns import qn
+from docx.oxml import OxmlElement
 
 # 3MF-анализ
 from handlers_3mf import (
@@ -147,7 +149,8 @@ def _download_image(url: str, timeout: int = 10):
 
 
 def _build_price_docx(items):
-    """Собирает Word-документ с товарами, сгруппированными по категориям."""
+    """Собирает Word-документ с товарами, сгруппированными по категориям.
+    Категории берутся автоматически из поля 'Категория' имеющихся товаров."""
     doc = Document()
 
     # Базовый стиль
@@ -176,7 +179,7 @@ def _build_price_docx(items):
         buf.seek(0)
         return buf.getvalue()
 
-    # Группировка по категориям
+    # ✅ Группировка по категориям из поля "Категория" товаров (автоматически)
     by_cat = {}
     for it in items:
         cat = (it.get("category") or "Без категории").strip() or "Без категории"
@@ -188,6 +191,14 @@ def _build_price_docx(items):
         table = doc.add_table(rows=1, cols=5)
         table.style = "Light Grid Accent 1"
         table.autofit = False
+        # ✅ Таблица по центру страницы
+        table.alignment = WD_TABLE_ALIGNMENT.CENTER
+
+        # ✅ Фиксированный layout — Word будет уважать ширины колонок
+        tblPr = table._tbl.tblPr
+        layout = OxmlElement('w:tblLayout')
+        layout.set(qn('w:type'), 'fixed')
+        tblPr.append(layout)
 
         # Заголовки
         hdr = table.rows[0].cells
@@ -200,8 +211,8 @@ def _build_price_docx(items):
             run.bold = True
             run.font.size = Pt(10)
 
-        # Ширины колонок (в см)
-        widths = [Cm(2.8), Cm(4.5), Cm(6.5), Cm(2.5), Cm(3.5)]
+        # ✅ Ширины под A4-портрет: суммарно ~15.9 см (влезает в стандартные поля 2.54 см)
+        widths = [Cm(2.2), Cm(3.5), Cm(5.5), Cm(2.2), Cm(2.5)]
         for row in table.rows:
             for i, w in enumerate(widths):
                 row.cells[i].width = w
@@ -212,7 +223,7 @@ def _build_price_docx(items):
                 row[i].width = w
                 row[i].vertical_alignment = WD_ALIGN_VERTICAL.CENTER
 
-            # Фото
+            # Фото — по центру
             photo_url = (it.get("photo") or "").strip()
             cell_photo = row[0]
             p_photo = cell_photo.paragraphs[0]
@@ -221,7 +232,7 @@ def _build_price_docx(items):
                 img_io = _download_image(photo_url)
                 if img_io:
                     try:
-                        p_photo.add_run().add_picture(img_io, width=Cm(2.4))
+                        p_photo.add_run().add_picture(img_io, width=Cm(2.0))
                     except Exception as e:
                         logger.warning(f"Не удалось вставить фото: {e}")
                         p_photo.add_run("—")
@@ -230,34 +241,40 @@ def _build_price_docx(items):
             else:
                 p_photo.add_run("—")
 
-            # Название
-            row[1].text = it.get("name", "") or ""
+            # Название — по центру
+            name_p = row[1].paragraphs[0]
+            name_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            name_p.add_run(it.get("name", "") or "")
 
-            # Описание
-            row[2].text = (it.get("description", "") or "").replace("\r\n", "\n")
+            # Описание — по центру
+            desc_p = row[2].paragraphs[0]
+            desc_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            desc_p.add_run((it.get("description", "") or "").replace("\r\n", "\n"))
 
-            # Цены
+            # Цены — по центру
             retail = (it.get("retail") or "").strip()
             wholesale = (it.get("wholesale") or "").strip()
             wholesale_from = (it.get("wholesale_from") or "").strip()
 
-            retail_cell = row[3]
-            retail_cell.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.RIGHT
+            retail_p = row[3].paragraphs[0]
+            retail_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
             if retail:
-                r = retail_cell.paragraphs[0].add_run(f"{retail} ₽")
+                r = retail_p.add_run(f"{retail} ₽")
                 r.bold = True
             else:
-                retail_cell.paragraphs[0].add_run("—")
+                retail_p.add_run("—")
 
-            ws_cell = row[4]
-            ws_cell.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.RIGHT
+            ws_p = row[4].paragraphs[0]
+            ws_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
             if wholesale:
-                ws_cell.paragraphs[0].add_run(f"{wholesale} ₽")
+                ws_p.add_run(f"{wholesale} ₽")
                 if wholesale_from:
-                    ws_cell.add_paragraph(f"от {wholesale_from} шт").runs[0].font.size = Pt(9)
-                    ws_cell.paragraphs[-1].runs[0].font.color.rgb = RGBColor(0x88, 0x88, 0x88)
+                    fp = row[4].add_paragraph(f"от {wholesale_from} шт")
+                    fp.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    fp.runs[0].font.size = Pt(9)
+                    fp.runs[0].font.color.rgb = RGBColor(0x88, 0x88, 0x88)
             else:
-                ws_cell.paragraphs[0].add_run("—")
+                ws_p.add_run("—")
 
         doc.add_paragraph()  # отступ между категориями
 
@@ -466,6 +483,7 @@ async def get_price_api():
         return JSONResponse({"error": "SheetManager не инициализирован"}, status_code=500)
     try:
         items = sheet_manager.get_price_items()
+        # ✅ Категории формируются автоматически из поля "Категория" товаров
         categories = sheet_manager.get_price_categories()
         public_items = [{
             "name": it["name"],
