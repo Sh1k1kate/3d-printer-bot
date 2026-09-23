@@ -69,12 +69,12 @@ app = FastAPI()
 templates = Jinja2Templates(directory="templates")
 bambu_cloud = BambuCloudManager()
 
-# Опциональные переменные
+# Fallback: логотип из env (если в Sheets пусто)
 PRICE_LOGO_URL = os.getenv("PRICE_LOGO_URL", "")
 PUBLIC_URL = os.getenv("PUBLIC_URL", "")
 
 
-# ---------- АВТОРИЗАЦИЯ АДМИНА ----------
+# ---------- АВТОРИЗАЦИЯ ----------
 def verify_admin(x_admin_token: str = Header(None, alias="X-Admin-Token")):
     if not ADMIN_PASSWORD:
         raise HTTPException(status_code=500, detail="ADMIN_PASSWORD не задан на сервере")
@@ -91,6 +91,48 @@ class PriceItemIn(BaseModel):
     wholesale: str = ""
     wholesale_from: str = ""
     category: str = ""
+
+
+class LogoIn(BaseModel):
+    url: str = ""
+
+
+# ---------- ЛОГОТИП ПРАЙСА ----------
+def _get_price_logo_url() -> str:
+    """Динамический логотип из Sheets → fallback на env."""
+    if sheet_manager:
+        try:
+            v = sheet_manager.get_setting("price_logo_url", "")
+            if v:
+                return v
+        except Exception as e:
+            logger.warning(f"get_setting(price_logo_url) failed: {e}")
+    return PRICE_LOGO_URL
+
+
+@app.get("/api/price/logo")
+async def get_price_logo(_: bool = Depends(verify_admin)):
+    return JSONResponse({"url": _get_price_logo_url()})
+
+
+@app.post("/api/price/logo")
+async def set_price_logo(payload: LogoIn, _: bool = Depends(verify_admin)):
+    if not sheet_manager:
+        return JSONResponse({"error": "SheetManager не инициализирован"}, status_code=500)
+    if not payload.url:
+        return JSONResponse({"error": "URL не может быть пустым"}, status_code=400)
+    ok = sheet_manager.set_setting("price_logo_url", payload.url)
+    if not ok:
+        return JSONResponse({"error": "Не удалось сохранить логотип"}, status_code=500)
+    return JSONResponse({"status": "ok", "url": payload.url})
+
+
+@app.delete("/api/price/logo")
+async def delete_price_logo(_: bool = Depends(verify_admin)):
+    if not sheet_manager:
+        return JSONResponse({"error": "SheetManager не инициализирован"}, status_code=500)
+    sheet_manager.delete_setting("price_logo_url")
+    return JSONResponse({"status": "ok"})
 
 
 # ---------- ЗАГРУЗКА ФОТО В GOOGLE DRIVE ----------
@@ -136,7 +178,7 @@ async def upload_image_api(file: UploadFile = File(...), _: bool = Depends(verif
     return JSONResponse({"url": data["url"]})
 
 
-# ---------- QR-КОД НА ПРАЙС ----------
+# ---------- QR-КОД ----------
 def _get_public_base_url(request: Request) -> str:
     if PUBLIC_URL:
         return PUBLIC_URL.rstrip("/")
@@ -162,7 +204,7 @@ async def price_qrcode(request: Request, _: bool = Depends(verify_admin)):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
-# ---------- ЭКСПОРТ ПРАЙСА В WORD ----------
+# ---------- WORD ----------
 def _download_image(url: str, timeout: int = 10):
     try:
         resp = requests.get(url, timeout=timeout, stream=True, allow_redirects=True)
@@ -181,25 +223,16 @@ def _download_image(url: str, timeout: int = 10):
 
 
 def _add_toc_field(doc):
-    """Вставляет поле TOC — Word сам построит оглавление после обновления поля."""
     p = doc.add_paragraph()
     run = p.add_run()
-    fld_char_begin = OxmlElement('w:fldChar')
-    fld_char_begin.set(qn('w:fldCharType'), 'begin')
-    instr_text = OxmlElement('w:instrText')
-    instr_text.set(qn('xml:space'), 'preserve')
-    instr_text.text = r'TOC \o "1-3" \h \z \u'
-    fld_char_sep = OxmlElement('w:fldChar')
-    fld_char_sep.set(qn('w:fldCharType'), 'separate')
-    placeholder = OxmlElement('w:t')
-    placeholder.text = "Нажмите ПКМ → «Обновить поле», чтобы построить оглавление"
-    fld_char_end = OxmlElement('w:fldChar')
-    fld_char_end.set(qn('w:fldCharType'), 'end')
-    run._r.append(fld_char_begin)
-    run._r.append(instr_text)
-    run._r.append(fld_char_sep)
-    run._r.append(placeholder)
-    run._r.append(fld_char_end)
+    begin = OxmlElement('w:fldChar'); begin.set(qn('w:fldCharType'), 'begin')
+    instr = OxmlElement('w:instrText'); instr.set(qn('xml:space'), 'preserve')
+    instr.text = r'TOC \o "1-3" \h \z \u'
+    sep = OxmlElement('w:fldChar'); sep.set(qn('w:fldCharType'), 'separate')
+    ph = OxmlElement('w:t'); ph.text = "Нажмите ПКМ → «Обновить поле», чтобы построить оглавление"
+    end = OxmlElement('w:fldChar'); end.set(qn('w:fldCharType'), 'end')
+    for el in (begin, instr, sep, ph, end):
+        run._r.append(el)
 
 
 def _add_page_number_field(paragraph):
@@ -207,22 +240,21 @@ def _add_page_number_field(paragraph):
     begin = OxmlElement('w:fldChar'); begin.set(qn('w:fldCharType'), 'begin')
     instr = OxmlElement('w:instrText'); instr.set(qn('xml:space'), 'preserve'); instr.text = 'PAGE'
     end = OxmlElement('w:fldChar'); end.set(qn('w:fldCharType'), 'end')
-    run._r.append(begin); run._r.append(instr); run._r.append(end)
+    for el in (begin, instr, end):
+        run._r.append(el)
 
 
-def _setup_header_footer(doc):
-    """Шапка с логотипом (если задан) + футер с названием, датой и номером страницы."""
+def _setup_header_footer(doc, logo_url: str):
     section = doc.sections[0]
 
-    # Header
     try:
         header = section.header
         header.is_linked_to_previous = False
         hdr_p = header.paragraphs[0] if header.paragraphs else header.add_paragraph()
         hdr_p.text = ""
         hdr_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        if PRICE_LOGO_URL:
-            logo_io = _download_image(PRICE_LOGO_URL)
+        if logo_url:
+            logo_io = _download_image(logo_url)
             if logo_io:
                 try:
                     hdr_p.add_run().add_picture(logo_io, width=Cm(2.5))
@@ -231,7 +263,6 @@ def _setup_header_footer(doc):
     except Exception as e:
         logger.warning(f"Header setup failed: {e}")
 
-    # Footer
     try:
         footer = section.footer
         footer.is_linked_to_previous = False
@@ -243,7 +274,6 @@ def _setup_header_footer(doc):
         run.font.color.rgb = RGBColor(0x88, 0x88, 0x88)
         run.italic = True
         _add_page_number_field(ftr_p)
-        # Оформление поля PAGE — тот же шрифт
         for r in ftr_p.runs[1:]:
             r.font.size = Pt(8)
             r.font.color.rgb = RGBColor(0x88, 0x88, 0x88)
@@ -255,31 +285,26 @@ def _setup_header_footer(doc):
 def _build_price_docx(items):
     doc = Document()
 
-    # Базовый стиль
     normal = doc.styles["Normal"]
     normal.font.name = "Calibri"
     normal.font.size = Pt(11)
 
-    # Шапка/футер
-    _setup_header_footer(doc)
+    # ✅ Актуальный логотип (из Sheets или env)
+    _setup_header_footer(doc, _get_price_logo_url())
 
-    # Титульный заголовок
     title = doc.add_heading("Прайс-лист", level=0)
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
     if not items:
         doc.add_paragraph("Прайс пуст.")
-        buf = io.BytesIO()
-        doc.save(buf); buf.seek(0)
+        buf = io.BytesIO(); doc.save(buf); buf.seek(0)
         return buf.getvalue()
 
-    # Категории из поля
     by_cat = {}
     for it in items:
         cat = (it.get("category") or "Без категории").strip() or "Без категории"
         by_cat.setdefault(cat, []).append(it)
 
-    # Оглавление
     toc_title = doc.add_paragraph()
     toc_title.alignment = WD_ALIGN_PARAGRAPH.CENTER
     r = toc_title.add_run("Оглавление")
@@ -288,7 +313,6 @@ def _build_price_docx(items):
     _add_toc_field(doc)
     doc.add_page_break()
 
-    # Разделы
     for cat in sorted(by_cat.keys(), key=lambda s: s.lower()):
         doc.add_heading(cat, level=1)
 
@@ -297,15 +321,13 @@ def _build_price_docx(items):
         table.autofit = False
         table.alignment = WD_TABLE_ALIGNMENT.CENTER
 
-        # Fixed layout — чтобы ширины соблюдались
         tblPr = table._tbl.tblPr
         layout = OxmlElement('w:tblLayout')
         layout.set(qn('w:type'), 'fixed')
         tblPr.append(layout)
 
         hdr = table.rows[0].cells
-        headers = ["Фото", "Название", "Описание", "Розница", "Опт"]
-        for i, h in enumerate(headers):
+        for i, h in enumerate(["Фото", "Название", "Описание", "Розница", "Опт"]):
             hdr[i].text = ""
             p = hdr[i].paragraphs[0]
             p.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -325,8 +347,7 @@ def _build_price_docx(items):
                 row[i].vertical_alignment = WD_ALIGN_VERTICAL.CENTER
 
             photo_url = (it.get("photo") or "").strip()
-            cell_photo = row[0]
-            p_photo = cell_photo.paragraphs[0]
+            p_photo = row[0].paragraphs[0]
             p_photo.alignment = WD_ALIGN_PARAGRAPH.CENTER
             if photo_url:
                 img_io = _download_image(photo_url)
@@ -356,8 +377,7 @@ def _build_price_docx(items):
             retail_p = row[3].paragraphs[0]
             retail_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
             if retail:
-                rr = retail_p.add_run(f"{retail} ₽")
-                rr.bold = True
+                rr = retail_p.add_run(f"{retail} ₽"); rr.bold = True
             else:
                 retail_p.add_run("—")
 
@@ -382,8 +402,7 @@ def _build_price_docx(items):
     run.font.size = Pt(9)
     run.font.color.rgb = RGBColor(0x88, 0x88, 0x88)
 
-    buf = io.BytesIO()
-    doc.save(buf); buf.seek(0)
+    buf = io.BytesIO(); doc.save(buf); buf.seek(0)
     return buf.getvalue()
 
 
@@ -418,7 +437,7 @@ def get_days_left(deadline):
         return "—"
 
 
-# ---------- TELEGRAM WEBHOOK ----------
+# ---------- WEBHOOK ----------
 @app.post("/webhook")
 async def webhook(request: Request):
     try:
@@ -578,12 +597,9 @@ async def get_price_api():
         items = sheet_manager.get_price_items()
         categories = sheet_manager.get_price_categories()
         public_items = [{
-            "name": it["name"],
-            "description": it["description"],
-            "photo": it["photo"],
-            "retail": it["retail"],
-            "wholesale": it["wholesale"],
-            "wholesale_from": it["wholesale_from"],
+            "name": it["name"], "description": it["description"],
+            "photo": it["photo"], "retail": it["retail"],
+            "wholesale": it["wholesale"], "wholesale_from": it["wholesale_from"],
             "category": it["category"],
         } for it in items]
         return JSONResponse({"items": public_items, "categories": categories})
