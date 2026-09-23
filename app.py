@@ -32,6 +32,9 @@ from docx.oxml import OxmlElement
 # QR
 import qrcode
 
+# ✅ PIL — для выравнивания прозрачности логотипа/фото
+from PIL import Image
+
 # 3MF-анализ
 from handlers_3mf import (
     extract_colors_from_3mf, hex_to_rgb, rgb_to_hex,
@@ -69,7 +72,6 @@ app = FastAPI()
 templates = Jinja2Templates(directory="templates")
 bambu_cloud = BambuCloudManager()
 
-# Fallback: логотип из env (если в Sheets пусто)
 PRICE_LOGO_URL = os.getenv("PRICE_LOGO_URL", "")
 PUBLIC_URL = os.getenv("PUBLIC_URL", "")
 
@@ -97,9 +99,8 @@ class LogoIn(BaseModel):
     url: str = ""
 
 
-# ---------- ЛОГОТИП ПРАЙСА ----------
+# ---------- ЛОГОТИП ----------
 def _get_price_logo_url() -> str:
-    """Динамический логотип из Sheets → fallback на env."""
     if sheet_manager:
         try:
             v = sheet_manager.get_setting("price_logo_url", "")
@@ -178,7 +179,7 @@ async def upload_image_api(file: UploadFile = File(...), _: bool = Depends(verif
     return JSONResponse({"url": data["url"]})
 
 
-# ---------- QR-КОД ----------
+# ---------- QR ----------
 def _get_public_base_url(request: Request) -> str:
     if PUBLIC_URL:
         return PUBLIC_URL.rstrip("/")
@@ -204,8 +205,24 @@ async def price_qrcode(request: Request, _: bool = Depends(verify_admin)):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
-# ---------- WORD ----------
+# ---------- ЗАГРУЗКА КАРТИНОК ДЛЯ WORD ----------
+def _flatten_on_white(img: Image.Image) -> Image.Image:
+    """Накладывает прозрачные пиксели на белый фон и приводит к RGB."""
+    if img.mode == 'P':
+        img = img.convert('RGBA')
+    if img.mode in ('RGBA', 'LA'):
+        bg = Image.new('RGB', img.size, (255, 255, 255))
+        # Используем альфа-канал как маску
+        alpha = img.split()[-1]
+        bg.paste(img, mask=alpha)
+        return bg
+    if img.mode != 'RGB':
+        return img.convert('RGB')
+    return img
+
+
 def _download_image(url: str, timeout: int = 10):
+    """Скачивает картинку, нормализует её через PIL и возвращает BytesIO."""
     try:
         resp = requests.get(url, timeout=timeout, stream=True, allow_redirects=True)
         if resp.status_code != 200:
@@ -216,25 +233,24 @@ def _download_image(url: str, timeout: int = 10):
         data = resp.content
         if not data or len(data) > MAX_IMAGE_SIZE:
             return None
-        return io.BytesIO(data)
+
+        # ✅ Нормализация: снимаем прозрачность, избавляемся от «бледности»
+        try:
+            img = Image.open(io.BytesIO(data))
+            img = _flatten_on_white(img)
+            out = io.BytesIO()
+            img.save(out, format='PNG', optimize=True)
+            out.seek(0)
+            return out
+        except Exception as e:
+            logger.warning(f"PIL нормализация не удалась, использую оригинал: {e}")
+            return io.BytesIO(data)
     except Exception as e:
-        logger.warning(f"Не удалось скачать фото {url}: {e}")
+        logger.warning(f"Не удалось скачать {url}: {e}")
         return None
 
 
-def _add_toc_field(doc):
-    p = doc.add_paragraph()
-    run = p.add_run()
-    begin = OxmlElement('w:fldChar'); begin.set(qn('w:fldCharType'), 'begin')
-    instr = OxmlElement('w:instrText'); instr.set(qn('xml:space'), 'preserve')
-    instr.text = r'TOC \o "1-3" \h \z \u'
-    sep = OxmlElement('w:fldChar'); sep.set(qn('w:fldCharType'), 'separate')
-    ph = OxmlElement('w:t'); ph.text = "Нажмите ПКМ → «Обновить поле», чтобы построить оглавление"
-    end = OxmlElement('w:fldChar'); end.set(qn('w:fldCharType'), 'end')
-    for el in (begin, instr, sep, ph, end):
-        run._r.append(el)
-
-
+# ---------- ШАПКА / ПОДВАЛ ----------
 def _add_page_number_field(paragraph):
     run = paragraph.add_run()
     begin = OxmlElement('w:fldChar'); begin.set(qn('w:fldCharType'), 'begin')
@@ -245,24 +261,39 @@ def _add_page_number_field(paragraph):
 
 
 def _setup_header_footer(doc, logo_url: str):
+    """Логотип — только на ПЕРВОЙ странице. Подвал — на всех."""
     section = doc.sections[0]
 
+    # ✅ Разные шапки для первой и последующих страниц
+    section.different_first_page_header_footer = True
+
+    # --- Первая страница: логотип по центру ---
     try:
-        header = section.header
-        header.is_linked_to_previous = False
-        hdr_p = header.paragraphs[0] if header.paragraphs else header.add_paragraph()
-        hdr_p.text = ""
-        hdr_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        first_header = section.first_page_header
+        first_header.is_linked_to_previous = False
+        p = first_header.paragraphs[0] if first_header.paragraphs else first_header.add_paragraph()
+        p.text = ""
+        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
         if logo_url:
             logo_io = _download_image(logo_url)
             if logo_io:
                 try:
-                    hdr_p.add_run().add_picture(logo_io, width=Cm(2.5))
+                    p.add_run().add_picture(logo_io, width=Cm(3.0))
                 except Exception as e:
-                    logger.warning(f"Не удалось вставить логотип в шапку: {e}")
+                    logger.warning(f"Не удалось вставить логотип: {e}")
     except Exception as e:
-        logger.warning(f"Header setup failed: {e}")
+        logger.warning(f"First page header setup failed: {e}")
 
+    # --- Обычные страницы: пустая шапка (без логотипа) ---
+    try:
+        regular_header = section.header
+        regular_header.is_linked_to_previous = False
+        for para in regular_header.paragraphs:
+            para.text = ""
+    except Exception as e:
+        logger.warning(f"Regular header setup failed: {e}")
+
+    # --- Подвал: на всех страницах ---
     try:
         footer = section.footer
         footer.is_linked_to_previous = False
@@ -281,7 +312,15 @@ def _setup_header_footer(doc, logo_url: str):
     except Exception as e:
         logger.warning(f"Footer setup failed: {e}")
 
+    # Первую страницу тоже снабжаем подвалом
+    try:
+        first_footer = section.first_page_footer
+        first_footer.is_linked_to_previous = True  # ссылается на обычный подвал
+    except Exception:
+        pass
 
+
+# ---------- СБОРКА ДОКУМЕНТА ----------
 def _build_price_docx(items):
     doc = Document()
 
@@ -289,7 +328,6 @@ def _build_price_docx(items):
     normal.font.name = "Calibri"
     normal.font.size = Pt(11)
 
-    # ✅ Актуальный логотип (из Sheets или env)
     _setup_header_footer(doc, _get_price_logo_url())
 
     title = doc.add_heading("Прайс-лист", level=0)
@@ -300,20 +338,35 @@ def _build_price_docx(items):
         buf = io.BytesIO(); doc.save(buf); buf.seek(0)
         return buf.getvalue()
 
+    # Группировка по категориям
     by_cat = {}
     for it in items:
         cat = (it.get("category") or "Без категории").strip() or "Без категории"
         by_cat.setdefault(cat, []).append(it)
 
+    sorted_cats = sorted(by_cat.keys(), key=lambda s: s.lower())
+
+    # ✅ СТАТИЧНОЕ ОГЛАВЛЕНИЕ (без поля TOC и без «обновить поле»)
     toc_title = doc.add_paragraph()
     toc_title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    r = toc_title.add_run("Оглавление")
+    r = toc_title.add_run("Содержание")
     r.bold = True
     r.font.size = Pt(14)
-    _add_toc_field(doc)
+
+    for idx, cat in enumerate(sorted_cats, 1):
+        p = doc.add_paragraph(style="List Number")
+        run = p.add_run(cat)
+        run.font.size = Pt(11)
+        cnt = len(by_cat[cat])
+        cnt_run = p.add_run(f"  —  {cnt} поз.")
+        cnt_run.font.size = Pt(9)
+        cnt_run.font.color.rgb = RGBColor(0x88, 0x88, 0x88)
+        cnt_run.italic = True
+
     doc.add_page_break()
 
-    for cat in sorted(by_cat.keys(), key=lambda s: s.lower()):
+    # Разделы
+    for cat in sorted_cats:
         doc.add_heading(cat, level=1)
 
         table = doc.add_table(rows=1, cols=5)
