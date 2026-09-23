@@ -1,6 +1,9 @@
 import os
+import json
 import base64
+import time
 import logging
+import aiohttp
 from fastapi import FastAPI, Request, UploadFile, File, Header, HTTPException, Depends
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 from fastapi.concurrency import run_in_threadpool
@@ -16,7 +19,7 @@ from google_sheets import SheetManager, moscow_now
 from bambu_cloud import BambuCloudManager
 from datetime import datetime
 
-# ✅ 3MF-анализ
+# 3MF-анализ
 from handlers_3mf import (
     extract_colors_from_3mf, hex_to_rgb, rgb_to_hex,
     group_similar_colors, find_closest_colors, generate_color_palette, BAMBU_COLORS,
@@ -71,6 +74,64 @@ class PriceItemIn(BaseModel):
     wholesale: str = ""
     wholesale_from: str = ""
     category: str = ""
+
+
+# ---------- ЗАГРУЗКА ФОТО В GOOGLE DRIVE ----------
+DRIVE_UPLOAD_URL = os.getenv("DRIVE_UPLOAD_URL", "")
+DRIVE_UPLOAD_SECRET = os.getenv("DRIVE_UPLOAD_SECRET", "")
+MAX_IMAGE_SIZE = 5 * 1024 * 1024  # 5 МБ
+
+
+@app.post("/api/upload_image")
+async def upload_image_api(file: UploadFile = File(...), _: bool = Depends(verify_admin)):
+    """Принимает картинку от админки, отправляет в Apps Script, возвращает публичный URL."""
+    if not DRIVE_UPLOAD_URL or not DRIVE_UPLOAD_SECRET:
+        return JSONResponse(
+            {"error": "DRIVE_UPLOAD_URL / DRIVE_UPLOAD_SECRET не заданы на сервере"},
+            status_code=500,
+        )
+    if not file.content_type or not file.content_type.startswith("image/"):
+        return JSONResponse({"error": "Только изображения (jpg, png, webp, gif)"}, status_code=400)
+
+    content = await file.read()
+    if not content:
+        return JSONResponse({"error": "Пустой файл"}, status_code=400)
+    if len(content) > MAX_IMAGE_SIZE:
+        return JSONResponse({"error": "Файл больше 5 МБ"}, status_code=400)
+
+    b64 = base64.b64encode(content).decode("ascii")
+    filename = file.filename or f"upload_{int(time.time())}.jpg"
+
+    payload = {
+        "secret": DRIVE_UPLOAD_SECRET,
+        "filename": filename,
+        "mime": file.content_type,
+        "image": b64,
+    }
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                DRIVE_UPLOAD_URL,
+                json=payload,
+                timeout=aiohttp.ClientTimeout(total=60),
+            ) as resp:
+                raw = await resp.text()
+                if resp.status != 200:
+                    logger.error(f"Drive upload HTTP {resp.status}: {raw[:300]}")
+                    return JSONResponse({"error": "Google Drive вернул ошибку"}, status_code=502)
+                data = json.loads(raw)
+    except Exception as e:
+        logger.error(f"Drive upload exception: {e}")
+        return JSONResponse({"error": f"Ошибка соединения с Drive: {e}"}, status_code=502)
+
+    if not data.get("ok"):
+        return JSONResponse(
+            {"error": data.get("error") or "Drive отказал в загрузке"},
+            status_code=502,
+        )
+
+    return JSONResponse({"url": data["url"]})
 
 
 # ---------- УТИЛИТЫ ----------
@@ -240,13 +301,12 @@ async def analyze_3mf_api(file: UploadFile = File(...)):
 # ---------- API: ПРАЙС ----------
 @app.get("/api/price")
 async def get_price_api():
-    """Публичный список товаров — без row_index, без админ-полей."""
+    """Публичный список товаров — без row_index."""
     if not sheet_manager:
         return JSONResponse({"error": "SheetManager не инициализирован"}, status_code=500)
     try:
         items = sheet_manager.get_price_items()
         categories = sheet_manager.get_price_categories()
-        # Публичный ответ не раскрывает row_index
         public_items = [{
             "name": it["name"],
             "description": it["description"],
