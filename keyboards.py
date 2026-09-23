@@ -10,6 +10,7 @@ main_menu = ReplyKeyboardMarkup(
         [KeyboardButton(text="🛒 Создать заказ")],
         [KeyboardButton(text="📋 Задачи")],
         [KeyboardButton(text="📦 Мои заказы")],
+        [KeyboardButton(text="💰 Прайс")],          # ✅ НОВАЯ
         [KeyboardButton(text="❓ Помощь")]
     ],
     resize_keyboard=True
@@ -19,6 +20,15 @@ cancel_keyboard = ReplyKeyboardMarkup(
     keyboard=[[KeyboardButton(text="❌ Отмена")]],
     resize_keyboard=True
 )
+
+
+# ✅ Инлайн-меню для кнопки «💰 Прайс»
+def price_actions_keyboard():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="👀 Смотреть прайс", callback_data="pa_view")],
+        [InlineKeyboardButton(text="➕ Добавить товар", callback_data="pa_add")],
+        [InlineKeyboardButton(text="✏️ Редактировать прайс", callback_data="pa_edit")],
+    ])
 
 
 def items_inline_keyboard(models, kits):
@@ -240,8 +250,6 @@ def edit_part_keyboard(parts_list, model_name):
 
 
 def edit_param_keyboard(model_name, det_name):
-    # ✅ ИСПРАВЛЕНО: callback удаления приведён к формату edit_param_{m}|{d}|delete,
-    # который обрабатывает edit_param_selected в handlers/models.py.
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📝 Название", callback_data=f"edit_param_{model_name}|{det_name}|name")],
         [InlineKeyboardButton(text="📦 Кол-во на палете", callback_data=f"edit_param_{model_name}|{det_name}|on_pallet")],
