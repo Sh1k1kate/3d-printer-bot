@@ -259,7 +259,16 @@ async def mark_completed(callback: CallbackQuery):
     await callback.answer()
 
 
+# ✅ ПОЧИНЕНО: main_menu через reply-keyboard нельзя сделать edit_text
 @router.callback_query(F.data == "main_menu")
 async def main_menu_callback(callback: CallbackQuery):
-    await safe_edit(callback.message, "Главное меню:", reply_markup=main_menu)
+    # Убираем inline-сообщение (best-effort) и шлём новое с ReplyKeyboard
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
+    try:
+        await callback.message.answer("🏠 Главное меню:", reply_markup=main_menu)
+    except Exception as e:
+        logger.error(f"Не удалось отправить главное меню: {e}")
     await callback.answer()
