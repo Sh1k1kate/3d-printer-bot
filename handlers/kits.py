@@ -6,7 +6,7 @@ from keyboards import (
     main_menu, cancel_keyboard, kit_action_keyboard, kit_parameters_keyboard,
     select_model_keyboard, show_current_items_keyboard
 )
-from states import AddKit, EditKit
+from states import AddKit, EditKit, CreateOrder
 from google_sheets import SheetManager
 from .common import format_kit_info, escape_markdown, safe_answer, safe_edit
 import logging
@@ -391,4 +391,25 @@ async def show_kit_details(callback: CallbackQuery):
         return
     text = format_kit_info(kit_name, kit_data)
     await safe_edit(callback.message, text, parse_mode="Markdown", reply_markup=kit_action_keyboard(kit_name))
+    await callback.answer()
+
+
+# ---------- ЗАКАЗ ИЗ КАРТОЧКИ НАБОРА (✅ НОВЫЙ ХЕНДЛЕР) ----------
+@router.callback_query(F.data.startswith("order_kit_"))
+async def order_kit_from_card(callback: CallbackQuery, state: FSMContext):
+    """Кнопка «🛒 Заказать этот набор» в карточке набора."""
+    kit_name = callback.data[len("order_kit_"):]
+    kits = sheet.get_all_kits()
+    if kit_name not in kits:
+        await callback.answer("Набор не найден", show_alert=True)
+        return
+    await state.clear()
+    await state.update_data(order_item=kit_name, order_type="kit")
+    await safe_answer(
+        callback.message,
+        f"🛒 Заказ набора *{escape_markdown(kit_name)}*\nВведите количество (целое число):",
+        parse_mode="Markdown",
+        reply_markup=cancel_keyboard
+    )
+    await state.set_state(CreateOrder.waiting_for_quantity)
     await callback.answer()
