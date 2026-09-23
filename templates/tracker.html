@@ -6,7 +6,6 @@
   <title>📦 Трекер 3D-печати</title>
   <link rel="manifest" href="/manifest.json">
   <script src="https://cdn.tailwindcss.com"></script>
-  <!-- ✅ ВАЖНО: включаем darkMode по классу ДО первого рендера -->
   <script>
     tailwind.config = { darkMode: 'class' };
   </script>
@@ -51,6 +50,10 @@
         <span class="text-sm bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300 px-2 py-1 rounded-full">v4</span>
       </div>
       <div class="flex items-center gap-3 flex-wrap">
+        <!-- ✅ НОВОЕ: ссылка на прайс -->
+        <a href="/price" class="text-sm bg-purple-500 hover:bg-purple-600 text-white px-3 py-1.5 rounded-lg shadow transition flex items-center gap-1">
+          💰 Прайс
+        </a>
         <span id="last-update" class="text-sm text-gray-500 dark:text-gray-400">Обновлено: сейчас</span>
         <button onclick="refreshAll()" class="bg-blue-500 hover:bg-blue-600 text-white text-sm px-4 py-2 rounded-lg shadow transition">↻ Обновить</button>
         <button onclick="toggleTheme()" class="theme-toggle-btn flex items-center gap-1 bg-gray-200 dark:bg-gray-700 px-3 py-1 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600 transition">
