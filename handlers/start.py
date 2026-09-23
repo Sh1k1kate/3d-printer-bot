@@ -1,4 +1,4 @@
-from aiogram import Router
+from aiogram import Router, F
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, BotCommand, BotCommandScopeDefault
@@ -61,33 +61,41 @@ async def cmd_start(message: Message):
         "• Просмотр статуса принтеров\n"
         "• Прайс-лист (/price)\n\n"
         "/help – подробная справка",
-        reply_markup=main_menu,
+        reply_markup=main_menu
     )
     await set_commands(message.bot)
 
 
+HELP_TEXT = (
+    "📖 *Справка по командам*\n\n"
+    "/start – запустить бота\n"
+    "/help – эта справка\n"
+    "/items – список моделей и наборов\n"
+    "/new_order – создать новый заказ\n"
+    "/my_orders – мои заказы\n"
+    "/tasks – список задач\n"
+    "/new_task – создать задачу\n"
+    "/price – прайс-лист товаров\n"
+    "/add_price – добавить товар в прайс\n"
+    "/id – ваш Telegram ID\n"
+    "/subscribe, /unsubscribe – подписка на уведомления\n"
+    "/settings – настройки уведомлений\n\n"
+    "🔗 *Веб-интерфейсы:*\n"
+    "• /tracker – трекер заказов и задач\n"
+    "• /price – публичный прайс-лист\n"
+    "• /upload_3mf – анализ 3MF-файла"
+)
+
+
 @router.message(Command("help"))
 async def cmd_help(message: Message):
-    help_text = (
-        "📖 *Справка по командам*\n\n"
-        "/start – запустить бота\n"
-        "/help – эта справка\n"
-        "/items – список моделей и наборов\n"
-        "/new_order – создать новый заказ\n"
-        "/my_orders – мои заказы\n"
-        "/tasks – список задач\n"
-        "/new_task – создать задачу\n"
-        "/price – прайс-лист товаров\n"
-        "/add_price – добавить товар в прайс\n"
-        "/id – ваш Telegram ID\n"
-        "/subscribe, /unsubscribe – подписка на уведомления\n"
-        "/settings – настройки уведомлений\n\n"
-        "🔗 *Веб-интерфейсы:*\n"
-        "• /tracker – трекер заказов и задач\n"
-        "• /price – публичный прайс-лист\n"
-        "• /upload_3mf – анализ 3MF-файла"
-    )
-    await message.answer(help_text, parse_mode="Markdown")
+    await message.answer(HELP_TEXT, parse_mode="Markdown")
+
+
+# ✅ Кнопка «❓ Помощь» из главного меню
+@router.message(F.text == "❓ Помощь")
+async def help_button(message: Message):
+    await message.answer(HELP_TEXT, parse_mode="Markdown")
 
 
 @router.message(Command("items"))
