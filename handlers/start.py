@@ -26,11 +26,12 @@ async def set_commands(bot):
         BotCommand(command="tasks", description="Список задач"),
         BotCommand(command="new_task", description="Создать новую задачу"),
         BotCommand(command="price", description="Прайс-лист товаров"),
+        BotCommand(command="add_price", description="Добавить товар в прайс"),
+        BotCommand(command="edit_price", description="Редактировать прайс"),
         BotCommand(command="id", description="Ваш Telegram ID"),
         BotCommand(command="subscribe", description="Подписаться на уведомления"),
         BotCommand(command="unsubscribe", description="Отписаться от уведомлений"),
         BotCommand(command="settings", description="Настройки уведомлений"),
-        BotCommand(command="add_price", description="Добавить товар в прайс"),
     ]
     try:
         await bot.set_my_commands(commands, scope=BotCommandScopeDefault())
@@ -61,7 +62,7 @@ async def cmd_start(message: Message):
         "• Просмотр статуса принтеров\n"
         "• Прайс-лист (/price)\n\n"
         "/help – подробная справка",
-        reply_markup=main_menu
+        reply_markup=main_menu,
     )
     await set_commands(message.bot)
 
@@ -77,6 +78,7 @@ HELP_TEXT = (
     "/new_task – создать задачу\n"
     "/price – прайс-лист товаров\n"
     "/add_price – добавить товар в прайс\n"
+    "/edit_price – редактировать прайс\n"
     "/id – ваш Telegram ID\n"
     "/subscribe, /unsubscribe – подписка на уведомления\n"
     "/settings – настройки уведомлений\n\n"
@@ -92,7 +94,6 @@ async def cmd_help(message: Message):
     await message.answer(HELP_TEXT, parse_mode="Markdown")
 
 
-# ✅ Кнопка «❓ Помощь» из главного меню
 @router.message(F.text == "❓ Помощь")
 async def help_button(message: Message):
     await message.answer(HELP_TEXT, parse_mode="Markdown")
