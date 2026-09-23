@@ -29,6 +29,9 @@ from docx.enum.table import WD_ALIGN_VERTICAL, WD_TABLE_ALIGNMENT
 from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
 
+# QR
+import qrcode
+
 # 3MF-анализ
 from handlers_3mf import (
     extract_colors_from_3mf, hex_to_rgb, rgb_to_hex,
@@ -65,6 +68,10 @@ async def errors_handler(event: ErrorEvent):
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
 bambu_cloud = BambuCloudManager()
+
+# Опциональные переменные
+PRICE_LOGO_URL = os.getenv("PRICE_LOGO_URL", "")
+PUBLIC_URL = os.getenv("PUBLIC_URL", "")
 
 
 # ---------- АВТОРИЗАЦИЯ АДМИНА ----------
@@ -129,9 +136,34 @@ async def upload_image_api(file: UploadFile = File(...), _: bool = Depends(verif
     return JSONResponse({"url": data["url"]})
 
 
+# ---------- QR-КОД НА ПРАЙС ----------
+def _get_public_base_url(request: Request) -> str:
+    if PUBLIC_URL:
+        return PUBLIC_URL.rstrip("/")
+    proto = request.headers.get("x-forwarded-proto") or request.url.scheme
+    host = request.headers.get("x-forwarded-host") or request.headers.get("host") or ""
+    if host:
+        return f"{proto}://{host}"
+    return str(request.base_url).rstrip("/")
+
+
+@app.get("/api/price/qrcode")
+async def price_qrcode(request: Request, _: bool = Depends(verify_admin)):
+    try:
+        base = _get_public_base_url(request)
+        url = f"{base}/price"
+        img = qrcode.make(url, box_size=10, border=2)
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        return Response(content=buf.getvalue(), media_type="image/png",
+                        headers={"Cache-Control": "no-store"})
+    except Exception as e:
+        logger.error(f"QR error: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
 # ---------- ЭКСПОРТ ПРАЙСА В WORD ----------
 def _download_image(url: str, timeout: int = 10):
-    """Скачивает картинку, возвращает BytesIO или None."""
     try:
         resp = requests.get(url, timeout=timeout, stream=True, allow_redirects=True)
         if resp.status_code != 200:
@@ -148,9 +180,79 @@ def _download_image(url: str, timeout: int = 10):
         return None
 
 
+def _add_toc_field(doc):
+    """Вставляет поле TOC — Word сам построит оглавление после обновления поля."""
+    p = doc.add_paragraph()
+    run = p.add_run()
+    fld_char_begin = OxmlElement('w:fldChar')
+    fld_char_begin.set(qn('w:fldCharType'), 'begin')
+    instr_text = OxmlElement('w:instrText')
+    instr_text.set(qn('xml:space'), 'preserve')
+    instr_text.text = r'TOC \o "1-3" \h \z \u'
+    fld_char_sep = OxmlElement('w:fldChar')
+    fld_char_sep.set(qn('w:fldCharType'), 'separate')
+    placeholder = OxmlElement('w:t')
+    placeholder.text = "Нажмите ПКМ → «Обновить поле», чтобы построить оглавление"
+    fld_char_end = OxmlElement('w:fldChar')
+    fld_char_end.set(qn('w:fldCharType'), 'end')
+    run._r.append(fld_char_begin)
+    run._r.append(instr_text)
+    run._r.append(fld_char_sep)
+    run._r.append(placeholder)
+    run._r.append(fld_char_end)
+
+
+def _add_page_number_field(paragraph):
+    run = paragraph.add_run()
+    begin = OxmlElement('w:fldChar'); begin.set(qn('w:fldCharType'), 'begin')
+    instr = OxmlElement('w:instrText'); instr.set(qn('xml:space'), 'preserve'); instr.text = 'PAGE'
+    end = OxmlElement('w:fldChar'); end.set(qn('w:fldCharType'), 'end')
+    run._r.append(begin); run._r.append(instr); run._r.append(end)
+
+
+def _setup_header_footer(doc):
+    """Шапка с логотипом (если задан) + футер с названием, датой и номером страницы."""
+    section = doc.sections[0]
+
+    # Header
+    try:
+        header = section.header
+        header.is_linked_to_previous = False
+        hdr_p = header.paragraphs[0] if header.paragraphs else header.add_paragraph()
+        hdr_p.text = ""
+        hdr_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        if PRICE_LOGO_URL:
+            logo_io = _download_image(PRICE_LOGO_URL)
+            if logo_io:
+                try:
+                    hdr_p.add_run().add_picture(logo_io, width=Cm(2.5))
+                except Exception as e:
+                    logger.warning(f"Не удалось вставить логотип в шапку: {e}")
+    except Exception as e:
+        logger.warning(f"Header setup failed: {e}")
+
+    # Footer
+    try:
+        footer = section.footer
+        footer.is_linked_to_previous = False
+        ftr_p = footer.paragraphs[0] if footer.paragraphs else footer.add_paragraph()
+        ftr_p.text = ""
+        ftr_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        run = ftr_p.add_run(f"Прайс-лист · сгенерировано {datetime.now().strftime('%d.%m.%Y %H:%M')} · стр. ")
+        run.font.size = Pt(8)
+        run.font.color.rgb = RGBColor(0x88, 0x88, 0x88)
+        run.italic = True
+        _add_page_number_field(ftr_p)
+        # Оформление поля PAGE — тот же шрифт
+        for r in ftr_p.runs[1:]:
+            r.font.size = Pt(8)
+            r.font.color.rgb = RGBColor(0x88, 0x88, 0x88)
+            r.italic = True
+    except Exception as e:
+        logger.warning(f"Footer setup failed: {e}")
+
+
 def _build_price_docx(items):
-    """Собирает Word-документ с товарами, сгруппированными по категориям.
-    Категории берутся автоматически из поля 'Категория' имеющихся товаров."""
     doc = Document()
 
     # Базовый стиль
@@ -158,49 +260,49 @@ def _build_price_docx(items):
     normal.font.name = "Calibri"
     normal.font.size = Pt(11)
 
-    # Заголовок
+    # Шапка/футер
+    _setup_header_footer(doc)
+
+    # Титульный заголовок
     title = doc.add_heading("Прайс-лист", level=0)
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-
-    # Подзаголовок с датой
-    date_p = doc.add_paragraph()
-    date_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    date_run = date_p.add_run(f"Актуально на {datetime.now().strftime('%d.%m.%Y')}")
-    date_run.italic = True
-    date_run.font.size = Pt(10)
-    date_run.font.color.rgb = RGBColor(0x66, 0x66, 0x66)
-
-    doc.add_paragraph()
 
     if not items:
         doc.add_paragraph("Прайс пуст.")
         buf = io.BytesIO()
-        doc.save(buf)
-        buf.seek(0)
+        doc.save(buf); buf.seek(0)
         return buf.getvalue()
 
-    # ✅ Группировка по категориям из поля "Категория" товаров (автоматически)
+    # Категории из поля
     by_cat = {}
     for it in items:
         cat = (it.get("category") or "Без категории").strip() or "Без категории"
         by_cat.setdefault(cat, []).append(it)
 
+    # Оглавление
+    toc_title = doc.add_paragraph()
+    toc_title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    r = toc_title.add_run("Оглавление")
+    r.bold = True
+    r.font.size = Pt(14)
+    _add_toc_field(doc)
+    doc.add_page_break()
+
+    # Разделы
     for cat in sorted(by_cat.keys(), key=lambda s: s.lower()):
         doc.add_heading(cat, level=1)
 
         table = doc.add_table(rows=1, cols=5)
         table.style = "Light Grid Accent 1"
         table.autofit = False
-        # ✅ Таблица по центру страницы
         table.alignment = WD_TABLE_ALIGNMENT.CENTER
 
-        # ✅ Фиксированный layout — Word будет уважать ширины колонок
+        # Fixed layout — чтобы ширины соблюдались
         tblPr = table._tbl.tblPr
         layout = OxmlElement('w:tblLayout')
         layout.set(qn('w:type'), 'fixed')
         tblPr.append(layout)
 
-        # Заголовки
         hdr = table.rows[0].cells
         headers = ["Фото", "Название", "Описание", "Розница", "Опт"]
         for i, h in enumerate(headers):
@@ -211,7 +313,6 @@ def _build_price_docx(items):
             run.bold = True
             run.font.size = Pt(10)
 
-        # ✅ Ширины под A4-портрет: суммарно ~15.9 см (влезает в стандартные поля 2.54 см)
         widths = [Cm(2.2), Cm(3.5), Cm(5.5), Cm(2.2), Cm(2.5)]
         for row in table.rows:
             for i, w in enumerate(widths):
@@ -223,7 +324,6 @@ def _build_price_docx(items):
                 row[i].width = w
                 row[i].vertical_alignment = WD_ALIGN_VERTICAL.CENTER
 
-            # Фото — по центру
             photo_url = (it.get("photo") or "").strip()
             cell_photo = row[0]
             p_photo = cell_photo.paragraphs[0]
@@ -241,17 +341,14 @@ def _build_price_docx(items):
             else:
                 p_photo.add_run("—")
 
-            # Название — по центру
             name_p = row[1].paragraphs[0]
             name_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
             name_p.add_run(it.get("name", "") or "")
 
-            # Описание — по центру
             desc_p = row[2].paragraphs[0]
             desc_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
             desc_p.add_run((it.get("description", "") or "").replace("\r\n", "\n"))
 
-            # Цены — по центру
             retail = (it.get("retail") or "").strip()
             wholesale = (it.get("wholesale") or "").strip()
             wholesale_from = (it.get("wholesale_from") or "").strip()
@@ -259,8 +356,8 @@ def _build_price_docx(items):
             retail_p = row[3].paragraphs[0]
             retail_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
             if retail:
-                r = retail_p.add_run(f"{retail} ₽")
-                r.bold = True
+                rr = retail_p.add_run(f"{retail} ₽")
+                rr.bold = True
             else:
                 retail_p.add_run("—")
 
@@ -276,21 +373,17 @@ def _build_price_docx(items):
             else:
                 ws_p.add_run("—")
 
-        doc.add_paragraph()  # отступ между категориями
+        doc.add_paragraph()
 
-    # Итоговая статистика
-    total = len(items)
-    cats = len(by_cat)
     summary = doc.add_paragraph()
     summary.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    run = summary.add_run(f"Всего товаров: {total} · Категорий: {cats}")
+    run = summary.add_run(f"Всего товаров: {len(items)} · Категорий: {len(by_cat)}")
     run.italic = True
     run.font.size = Pt(9)
     run.font.color.rgb = RGBColor(0x88, 0x88, 0x88)
 
     buf = io.BytesIO()
-    doc.save(buf)
-    buf.seek(0)
+    doc.save(buf); buf.seek(0)
     return buf.getvalue()
 
 
@@ -483,7 +576,6 @@ async def get_price_api():
         return JSONResponse({"error": "SheetManager не инициализирован"}, status_code=500)
     try:
         items = sheet_manager.get_price_items()
-        # ✅ Категории формируются автоматически из поля "Категория" товаров
         categories = sheet_manager.get_price_categories()
         public_items = [{
             "name": it["name"],
