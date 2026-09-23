@@ -1,11 +1,13 @@
 import os
+import io
 import json
 import base64
 import time
 import logging
 import aiohttp
+import requests
 from fastapi import FastAPI, Request, UploadFile, File, Header, HTTPException, Depends
-from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
+from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, Response
 from fastapi.concurrency import run_in_threadpool
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
@@ -18,6 +20,12 @@ from config import BOT_TOKEN, ADMIN_PASSWORD
 from google_sheets import SheetManager, moscow_now
 from bambu_cloud import BambuCloudManager
 from datetime import datetime
+
+# DOCX
+from docx import Document
+from docx.shared import Pt, Cm, RGBColor
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.enum.table import WD_ALIGN_VERTICAL
 
 # 3MF-анализ
 from handlers_3mf import (
@@ -57,7 +65,7 @@ templates = Jinja2Templates(directory="templates")
 bambu_cloud = BambuCloudManager()
 
 
-# ---------- АВТОРИЗАЦИЯ АДМИНА (прайс) ----------
+# ---------- АВТОРИЗАЦИЯ АДМИНА ----------
 def verify_admin(x_admin_token: str = Header(None, alias="X-Admin-Token")):
     if not ADMIN_PASSWORD:
         raise HTTPException(status_code=500, detail="ADMIN_PASSWORD не задан на сервере")
@@ -79,20 +87,15 @@ class PriceItemIn(BaseModel):
 # ---------- ЗАГРУЗКА ФОТО В GOOGLE DRIVE ----------
 DRIVE_UPLOAD_URL = os.getenv("DRIVE_UPLOAD_URL", "")
 DRIVE_UPLOAD_SECRET = os.getenv("DRIVE_UPLOAD_SECRET", "")
-MAX_IMAGE_SIZE = 5 * 1024 * 1024  # 5 МБ
+MAX_IMAGE_SIZE = 5 * 1024 * 1024
 
 
 @app.post("/api/upload_image")
 async def upload_image_api(file: UploadFile = File(...), _: bool = Depends(verify_admin)):
-    """Принимает картинку от админки, отправляет в Apps Script, возвращает публичный URL."""
     if not DRIVE_UPLOAD_URL or not DRIVE_UPLOAD_SECRET:
-        return JSONResponse(
-            {"error": "DRIVE_UPLOAD_URL / DRIVE_UPLOAD_SECRET не заданы на сервере"},
-            status_code=500,
-        )
+        return JSONResponse({"error": "DRIVE_UPLOAD_URL / DRIVE_UPLOAD_SECRET не заданы на сервере"}, status_code=500)
     if not file.content_type or not file.content_type.startswith("image/"):
         return JSONResponse({"error": "Только изображения (jpg, png, webp, gif)"}, status_code=400)
-
     content = await file.read()
     if not content:
         return JSONResponse({"error": "Пустой файл"}, status_code=400)
@@ -101,21 +104,16 @@ async def upload_image_api(file: UploadFile = File(...), _: bool = Depends(verif
 
     b64 = base64.b64encode(content).decode("ascii")
     filename = file.filename or f"upload_{int(time.time())}.jpg"
-
     payload = {
         "secret": DRIVE_UPLOAD_SECRET,
         "filename": filename,
         "mime": file.content_type,
         "image": b64,
     }
-
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.post(
-                DRIVE_UPLOAD_URL,
-                json=payload,
-                timeout=aiohttp.ClientTimeout(total=60),
-            ) as resp:
+            async with session.post(DRIVE_UPLOAD_URL, json=payload,
+                                    timeout=aiohttp.ClientTimeout(total=60)) as resp:
                 raw = await resp.text()
                 if resp.status != 200:
                     logger.error(f"Drive upload HTTP {resp.status}: {raw[:300]}")
@@ -124,14 +122,177 @@ async def upload_image_api(file: UploadFile = File(...), _: bool = Depends(verif
     except Exception as e:
         logger.error(f"Drive upload exception: {e}")
         return JSONResponse({"error": f"Ошибка соединения с Drive: {e}"}, status_code=502)
-
     if not data.get("ok"):
-        return JSONResponse(
-            {"error": data.get("error") or "Drive отказал в загрузке"},
-            status_code=502,
-        )
-
+        return JSONResponse({"error": data.get("error") or "Drive отказал в загрузке"}, status_code=502)
     return JSONResponse({"url": data["url"]})
+
+
+# ---------- ЭКСПОРТ ПРАЙСА В WORD ----------
+def _download_image(url: str, timeout: int = 10):
+    """Скачивает картинку, возвращает BytesIO или None."""
+    try:
+        resp = requests.get(url, timeout=timeout, stream=True, allow_redirects=True)
+        if resp.status_code != 200:
+            return None
+        ct = (resp.headers.get("Content-Type") or "").lower()
+        if not ct.startswith("image/"):
+            return None
+        data = resp.content
+        if not data or len(data) > MAX_IMAGE_SIZE:
+            return None
+        return io.BytesIO(data)
+    except Exception as e:
+        logger.warning(f"Не удалось скачать фото {url}: {e}")
+        return None
+
+
+def _build_price_docx(items):
+    """Собирает Word-документ с товарами, сгруппированными по категориям."""
+    doc = Document()
+
+    # Базовый стиль
+    normal = doc.styles["Normal"]
+    normal.font.name = "Calibri"
+    normal.font.size = Pt(11)
+
+    # Заголовок
+    title = doc.add_heading("Прайс-лист", level=0)
+    title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+    # Подзаголовок с датой
+    date_p = doc.add_paragraph()
+    date_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    date_run = date_p.add_run(f"Актуально на {datetime.now().strftime('%d.%m.%Y')}")
+    date_run.italic = True
+    date_run.font.size = Pt(10)
+    date_run.font.color.rgb = RGBColor(0x66, 0x66, 0x66)
+
+    doc.add_paragraph()
+
+    if not items:
+        doc.add_paragraph("Прайс пуст.")
+        buf = io.BytesIO()
+        doc.save(buf)
+        buf.seek(0)
+        return buf.getvalue()
+
+    # Группировка по категориям
+    by_cat = {}
+    for it in items:
+        cat = (it.get("category") or "Без категории").strip() or "Без категории"
+        by_cat.setdefault(cat, []).append(it)
+
+    for cat in sorted(by_cat.keys(), key=lambda s: s.lower()):
+        doc.add_heading(cat, level=1)
+
+        table = doc.add_table(rows=1, cols=5)
+        table.style = "Light Grid Accent 1"
+        table.autofit = False
+
+        # Заголовки
+        hdr = table.rows[0].cells
+        headers = ["Фото", "Название", "Описание", "Розница", "Опт"]
+        for i, h in enumerate(headers):
+            hdr[i].text = ""
+            p = hdr[i].paragraphs[0]
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            run = p.add_run(h)
+            run.bold = True
+            run.font.size = Pt(10)
+
+        # Ширины колонок (в см)
+        widths = [Cm(2.8), Cm(4.5), Cm(6.5), Cm(2.5), Cm(3.5)]
+        for row in table.rows:
+            for i, w in enumerate(widths):
+                row.cells[i].width = w
+
+        for it in by_cat[cat]:
+            row = table.add_row().cells
+            for i, w in enumerate(widths):
+                row[i].width = w
+                row[i].vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+
+            # Фото
+            photo_url = (it.get("photo") or "").strip()
+            cell_photo = row[0]
+            p_photo = cell_photo.paragraphs[0]
+            p_photo.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            if photo_url:
+                img_io = _download_image(photo_url)
+                if img_io:
+                    try:
+                        p_photo.add_run().add_picture(img_io, width=Cm(2.4))
+                    except Exception as e:
+                        logger.warning(f"Не удалось вставить фото: {e}")
+                        p_photo.add_run("—")
+                else:
+                    p_photo.add_run("—")
+            else:
+                p_photo.add_run("—")
+
+            # Название
+            row[1].text = it.get("name", "") or ""
+
+            # Описание
+            row[2].text = (it.get("description", "") or "").replace("\r\n", "\n")
+
+            # Цены
+            retail = (it.get("retail") or "").strip()
+            wholesale = (it.get("wholesale") or "").strip()
+            wholesale_from = (it.get("wholesale_from") or "").strip()
+
+            retail_cell = row[3]
+            retail_cell.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.RIGHT
+            if retail:
+                r = retail_cell.paragraphs[0].add_run(f"{retail} ₽")
+                r.bold = True
+            else:
+                retail_cell.paragraphs[0].add_run("—")
+
+            ws_cell = row[4]
+            ws_cell.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.RIGHT
+            if wholesale:
+                ws_cell.paragraphs[0].add_run(f"{wholesale} ₽")
+                if wholesale_from:
+                    ws_cell.add_paragraph(f"от {wholesale_from} шт").runs[0].font.size = Pt(9)
+                    ws_cell.paragraphs[-1].runs[0].font.color.rgb = RGBColor(0x88, 0x88, 0x88)
+            else:
+                ws_cell.paragraphs[0].add_run("—")
+
+        doc.add_paragraph()  # отступ между категориями
+
+    # Итоговая статистика
+    total = len(items)
+    cats = len(by_cat)
+    summary = doc.add_paragraph()
+    summary.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run = summary.add_run(f"Всего товаров: {total} · Категорий: {cats}")
+    run.italic = True
+    run.font.size = Pt(9)
+    run.font.color.rgb = RGBColor(0x88, 0x88, 0x88)
+
+    buf = io.BytesIO()
+    doc.save(buf)
+    buf.seek(0)
+    return buf.getvalue()
+
+
+@app.get("/api/price/export_docx")
+async def export_price_docx(_: bool = Depends(verify_admin)):
+    if not sheet_manager:
+        return JSONResponse({"error": "SheetManager не инициализирован"}, status_code=500)
+    try:
+        items = sheet_manager.get_price_items()
+        content = await run_in_threadpool(_build_price_docx, items)
+        filename = f"price_{datetime.now().strftime('%Y-%m-%d')}.docx"
+        return Response(
+            content=content,
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+    except Exception as e:
+        logger.error(f"Ошибка экспорта в Word: {e}", exc_info=e)
+        return JSONResponse({"error": str(e)}, status_code=500)
 
 
 # ---------- УТИЛИТЫ ----------
@@ -301,7 +462,6 @@ async def analyze_3mf_api(file: UploadFile = File(...)):
 # ---------- API: ПРАЙС ----------
 @app.get("/api/price")
 async def get_price_api():
-    """Публичный список товаров — без row_index."""
     if not sheet_manager:
         return JSONResponse({"error": "SheetManager не инициализирован"}, status_code=500)
     try:
@@ -324,7 +484,6 @@ async def get_price_api():
 
 @app.get("/api/price/admin")
 async def get_price_admin_api(_: bool = Depends(verify_admin)):
-    """Полный список с row_index — только для админки."""
     if not sheet_manager:
         return JSONResponse({"error": "SheetManager не инициализирован"}, status_code=500)
     try:
