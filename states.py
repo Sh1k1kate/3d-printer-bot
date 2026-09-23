@@ -43,7 +43,7 @@ class CreateTask(StatesGroup):
     waiting_for_assignee_selection = State()
     waiting_for_assignee_manual = State()
 
-# ✅ ПРАЙС
+# ---------- ПРАЙС ----------
 class AddPrice(StatesGroup):
     waiting_for_name = State()
     waiting_for_description = State()
@@ -52,3 +52,7 @@ class AddPrice(StatesGroup):
     waiting_for_wholesale = State()
     waiting_for_wholesale_from = State()
     waiting_for_category = State()
+
+# ✅ Новое: редактирование товара
+class EditPrice(StatesGroup):
+    waiting_for_value = State()   # ввод нового значения любого поля
