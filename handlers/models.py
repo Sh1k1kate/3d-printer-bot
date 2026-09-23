@@ -7,7 +7,7 @@ from keyboards import (
     model_action_keyboard, edit_part_keyboard, edit_param_keyboard,
     items_inline_keyboard
 )
-from states import AddModel, EditModel
+from states import AddModel, EditModel, CreateOrder
 from google_sheets import SheetManager
 from .common import format_time, format_model_info, escape_markdown, safe_edit, safe_answer
 import logging
@@ -15,6 +15,20 @@ import logging
 logger = logging.getLogger(__name__)
 router = Router()
 sheet = SheetManager()
+
+
+# ---------- Список моделей и наборов (кнопка главного меню) ----------
+@router.message(F.text == "📋 Список моделей и наборов")
+async def list_items_handler(message: Message):
+    await list_items(message)
+
+
+async def list_items(message: Message):
+    models, kits = sheet.get_all_items()
+    if not models and not kits:
+        await message.answer("Пока ничего нет. Добавьте модель или набор.")
+        return
+    await message.answer("Выберите элемент:", reply_markup=items_inline_keyboard(models, kits))
 
 
 # ---------- Добавление модели ----------
@@ -418,15 +432,6 @@ async def back_to_items(callback: CallbackQuery):
     await callback.answer()
 
 
-# ---------- Список моделей и наборов ----------
-async def list_items(message: Message):
-    models, kits = sheet.get_all_items()
-    if not models and not kits:
-        await message.answer("Пока ничего нет. Добавьте модель или набор.")
-        return
-    await message.answer("Выберите элемент:", reply_markup=items_inline_keyboard(models, kits))
-
-
 # ---------- Расчёт ----------
 @router.callback_query(F.data.startswith("calc_"))
 async def start_calculation(callback: CallbackQuery, state: FSMContext):
@@ -482,3 +487,24 @@ async def process_quantity(message: Message, state: FSMContext):
     result_text += f"⚖️ *Общий расход граммов:* {total_grams} г"
     await safe_answer(message, result_text, parse_mode="Markdown", reply_markup=main_menu)
     await state.clear()
+
+
+# ---------- ЗАКАЗ ИЗ КАРТОЧКИ МОДЕЛИ (✅ НОВЫЙ ХЕНДЛЕР) ----------
+@router.callback_query(F.data.startswith("order_model_"))
+async def order_model_from_card(callback: CallbackQuery, state: FSMContext):
+    """Кнопка «🛒 Заказать эту модель» в карточке модели."""
+    model_name = callback.data[len("order_model_"):]
+    models = sheet.get_all_models()
+    if model_name not in models:
+        await callback.answer("Модель не найдена", show_alert=True)
+        return
+    await state.clear()
+    await state.update_data(order_item=model_name, order_type="model")
+    await safe_answer(
+        callback.message,
+        f"🛒 Заказ модели *{escape_markdown(model_name)}*\nВведите количество (целое число):",
+        parse_mode="Markdown",
+        reply_markup=cancel_keyboard
+    )
+    await state.set_state(CreateOrder.waiting_for_quantity)
+    await callback.answer()
