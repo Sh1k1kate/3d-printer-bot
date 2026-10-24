@@ -114,20 +114,20 @@
     </div>
   </section>
 
-  <!-- MODAL: PRODUCT DETAILS -->
+  <!-- ✅ MODAL: PRODUCT DETAILS (на ПК шире на 40%) -->
   <div id="modal-product" class="hidden fixed inset-0 bg-black/60 z-40 flex items-center justify-center p-4">
-    <div class="bg-white dark:bg-gray-800 rounded-2xl max-w-3xl w-full max-h-[90vh] overflow-y-auto shadow-2xl">
+    <div class="bg-white dark:bg-gray-800 rounded-2xl max-w-3xl md:max-w-[1075px] w-full max-h-[90vh] overflow-y-auto shadow-2xl">
       <div class="grid md:grid-cols-2 gap-0">
-        <div class="bg-gray-100 dark:bg-gray-900 flex items-center justify-center p-6 min-h-[240px]">
-          <img id="modal-photo" src="" alt="" class="max-h-[380px] max-w-full rounded-lg object-contain">
+        <div class="bg-gray-100 dark:bg-gray-900 flex items-center justify-center p-6 min-h-[240px] md:min-h-[340px]">
+          <img id="modal-photo" src="" alt="" class="max-h-[380px] md:max-h-[530px] max-w-full rounded-lg object-contain">
         </div>
-        <div class="p-6">
+        <div class="p-6 md:p-8">
           <div class="flex justify-between items-start gap-3 mb-2">
-            <h3 id="modal-name" class="text-2xl font-bold"></h3>
+            <h3 id="modal-name" class="text-2xl md:text-3xl font-bold"></h3>
             <button onclick="closeModal('modal-product')" class="text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 text-2xl leading-none">×</button>
           </div>
           <div id="modal-category" class="inline-block text-xs bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300 px-2 py-0.5 rounded-full mb-3"></div>
-          <p id="modal-description" class="text-sm text-gray-600 dark:text-gray-300 mb-4 whitespace-pre-wrap"></p>
+          <p id="modal-description" class="text-sm md:text-base text-gray-600 dark:text-gray-300 mb-4 whitespace-pre-wrap"></p>
           <div class="space-y-2 border-t border-gray-200 dark:border-gray-700 pt-4">
             <div class="flex justify-between"><span class="text-gray-500 dark:text-gray-400">Розница:</span><span id="modal-retail" class="font-semibold"></span></div>
             <div class="flex justify-between"><span class="text-gray-500 dark:text-gray-400">Опт:</span><span id="modal-wholesale" class="font-semibold"></span></div>
@@ -224,7 +224,7 @@
     </div>
   </div>
 
-  <!-- ✅ MODAL: LOGO -->
+  <!-- MODAL: LOGO -->
   <div id="modal-logo" class="hidden fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
     <div class="bg-white dark:bg-gray-800 rounded-2xl max-w-md w-full p-6 shadow-2xl text-center">
       <h3 class="text-xl font-bold mb-1">🖼 Логотип</h3>
@@ -596,7 +596,7 @@
       document.body.appendChild(a); a.click(); a.remove();
     }
 
-    // ---------- ✅ ЛОГОТИП ----------
+    // ---------- ЛОГОТИП ----------
     async function openLogoModal() {
       openModal('modal-logo');
       const status = document.getElementById('logo-status');
@@ -850,5 +850,8 @@
       }
     })();
   </script>
+
+  <!-- ✅ Taplink виджет -->
+  <script src="//taplink.cc/id:14714827/widget/" async></script>
 </body>
 </html>
