@@ -29,7 +29,6 @@
     @keyframes shimmer { 0% { background-position: 100% 0; } 100% { background-position: -100% 0; } }
     .sel-checkbox { width: 20px; height: 20px; cursor: pointer; }
 
-    /* ПЕЧАТЬ */
     @media print {
       header, #admin-panel, #filters-section, #cart-fab, #swWrap, #btn-print-top, .no-print, #empty-state { display: none !important; }
       body { background: #fff !important; color: #000 !important; }
@@ -159,10 +158,9 @@
     </div>
   </section>
 
-  <!-- ✅ MODAL: PRODUCT (X вынесен из скролла) -->
+  <!-- MODAL: PRODUCT -->
   <div id="modal-product" class="hidden fixed inset-0 bg-black/60 z-40 flex items-center justify-center p-4">
     <div class="relative max-w-3xl md:max-w-[1075px] w-full max-h-[90vh] overflow-hidden rounded-2xl shadow-2xl">
-      <!-- Крестик: absolute над скроллом, 44×44, type=button -->
       <button type="button" onclick="closeModal('modal-product')"
         class="absolute top-3 right-3 z-20 w-11 h-11 flex items-center justify-center rounded-full bg-white/95 dark:bg-gray-700/95 hover:bg-gray-100 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 text-2xl leading-none shadow-md backdrop-blur-sm transition">×</button>
       <div class="bg-white dark:bg-gray-800 w-full max-h-[90vh] overflow-y-auto">
@@ -772,7 +770,19 @@
         document.getElementById('cart-contact').value = '';
         document.getElementById('cart-comment').value = '';
         closeModal('modal-cart');
-        alert('✅ Заявка отправлена! Мы свяжемся с вами.');
+
+        let msg = '✅ Заявка отправлена! Мы свяжемся с вами.';
+        if (data.orders && data.orders.length) {
+          msg = `✅ Заявка принята!\n\nСоздано заказов: ${data.orders.length}`;
+          if (data.orders.length <= 8) {
+            msg += ' (№' + data.orders.join(', №') + ')';
+          }
+          if (data.deadline) {
+            msg += `\nСрок: ${data.deadline}`;
+          }
+          msg += '\n\nМы свяжемся с вами для уточнения деталей.';
+        }
+        alert(msg);
       } catch (e) {
         err.textContent = '❌ ' + e.message;
         err.classList.remove('hidden');
