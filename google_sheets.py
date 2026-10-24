@@ -755,7 +755,7 @@ class SheetManager:
         items = self.get_price_items()
         return sorted({it["category"] for it in items if it.get("category")})
 
-    # ---------- ПРОМОКОДЫ (A3) ----------
+    # ---------- ПРОМОКОДЫ ----------
     def _fetch_promos(self):
         records = self.sheet_promos.get_all_values()
         if len(records) <= 1:
@@ -834,7 +834,7 @@ class SheetManager:
             logger.error(f"increment_promo_usage: {e}")
             return False
 
-    # ---------- ОТЗЫВЫ (A4) ----------
+    # ---------- ОТЗЫВЫ (с модерацией) ----------
     def _fetch_all_reviews(self):
         records = self.sheet_reviews.get_all_values()
         if len(records) <= 1:
@@ -864,7 +864,7 @@ class SheetManager:
                 "rating": max(1, min(5, rating)),
                 "text": row[4] or "",
                 "created": row[5] or "",
-                "status": (row[6] or "approved").strip().lower(),
+                "status": (row[6] or "pending").strip().lower(),
             })
         return items
 
@@ -876,6 +876,15 @@ class SheetManager:
         filtered = [r for r in reviews if r["product_row"] == product_row and r["status"] == "approved"]
         filtered.sort(key=lambda r: r.get("created", ""), reverse=True)
         return filtered[:limit]
+
+    def get_pending_reviews(self):
+        reviews = self.get_all_reviews()
+        pending = [r for r in reviews if r["status"] == "pending"]
+        pending.sort(key=lambda r: r.get("created", ""), reverse=True)
+        return pending
+
+    def get_reviews_pending_count(self):
+        return len(self.get_pending_reviews())
 
     def get_reviews_summary(self):
         reviews = self.get_all_reviews()
@@ -912,7 +921,7 @@ class SheetManager:
         try:
             self.sheet_reviews.append_row([
                 next_id, product_row, name, rating, text,
-                moscow_now().strftime("%Y-%m-%d %H:%M"), "approved",
+                moscow_now().strftime("%Y-%m-%d %H:%M"), "pending",
             ])
             self._invalidate_cache("reviews")
             return True
@@ -920,20 +929,41 @@ class SheetManager:
             logger.error(f"add_review: {e}")
             return False
 
-    def delete_review(self, review_id):
-        reviews = self.get_all_reviews()
-        review = next((r for r in reviews if r["id"] == int(review_id)), None)
-        if not review:
-            return False
+    def _find_review_row(self, review_id):
         try:
             cell = self.sheet_reviews.find(str(review_id), in_column=1)
             if cell:
-                self.sheet_reviews.delete_rows(cell.row)
-                self._invalidate_cache("reviews")
-                return True
+                return cell.row
         except Exception as e:
-            logger.error(f"delete_review: {e}")
-        return False
+            logger.error(f"_find_review_row({review_id}): {e}")
+        return None
+
+    def approve_review(self, review_id):
+        row = self._find_review_row(review_id)
+        if not row:
+            return False
+        try:
+            self.sheet_reviews.update_cell(row, 7, "approved")
+            self._invalidate_cache("reviews")
+            return True
+        except Exception as e:
+            logger.error(f"approve_review: {e}")
+            return False
+
+    def reject_review(self, review_id):
+        row = self._find_review_row(review_id)
+        if not row:
+            return False
+        try:
+            self.sheet_reviews.delete_rows(row)
+            self._invalidate_cache("reviews")
+            return True
+        except Exception as e:
+            logger.error(f"reject_review: {e}")
+            return False
+
+    def delete_review(self, review_id):
+        return self.reject_review(review_id)
 
     # ---------- Заглушки ----------
     def init_tasks_sheet(self): pass
