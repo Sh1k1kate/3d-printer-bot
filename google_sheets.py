@@ -31,7 +31,6 @@ class SheetManager:
         if getattr(self, "_initialized", False):
             return
         self._initialized = True
-
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
         creds = ServiceAccountCredentials.from_json_keyfile_name(CREDENTIALS_FILE, scope)
         self.client = gspread.authorize(creds)
@@ -74,13 +73,11 @@ class SheetManager:
             "Прайс", rows=1000, cols=7,
             header=PRICE_COLUMNS,
         )
-        # ✅ Новый лист для системных настроек (логотип и пр.)
         self.sheet_system = self._ensure_worksheet(
             "Настройки системы", rows=100, cols=2,
             header=["key", "value"],
         )
 
-    # ---------- Безопасное открытие/создание листа ----------
     def _ensure_worksheet(self, title, rows, cols, header):
         try:
             return self.sheet.worksheet(title)
@@ -95,13 +92,12 @@ class SheetManager:
                     pass
             else:
                 raise
-
         try:
             ws = self.sheet.add_worksheet(title=title, rows=rows, cols=cols)
             try:
                 ws.append_row(header)
             except Exception as e:
-                logger.warning(f"Не удалось записать заголовок листа '{title}': {e}")
+                logger.warning(f"header write '{title}': {e}")
             logger.info(f"Создан лист '{title}'")
             return ws
         except gspread.exceptions.APIError as e:
@@ -109,7 +105,7 @@ class SheetManager:
                 return self.sheet.worksheet(title)
             raise
 
-    # ---------- Кеширование ----------
+    # ---------- Кеш ----------
     @staticmethod
     def _make_cache_key(key, args, kwargs):
         if not args and not kwargs:
@@ -130,7 +126,7 @@ class SheetManager:
             return data
         except gspread.exceptions.APIError as e:
             if "429" in str(e):
-                logger.warning(f"Quota exceeded, using cached data for {cache_key}")
+                logger.warning(f"Quota exceeded, using cache for {cache_key}")
                 if cache and cache["data"] is not None:
                     return cache["data"]
             raise
@@ -143,7 +139,7 @@ class SheetManager:
         else:
             self._cache.clear()
 
-    # ---------- Системные настройки (key → value) ----------
+    # ---------- Системные настройки ----------
     def _fetch_setting(self, key):
         try:
             cell = self.sheet_system.find(str(key), in_column=1)
@@ -152,7 +148,7 @@ class SheetManager:
                 if len(row) > 1:
                     return row[1]
         except Exception as e:
-            logger.warning(f"get_setting({key}) error: {e}")
+            logger.warning(f"get_setting({key}): {e}")
         return ""
 
     def get_setting(self, key, default=""):
@@ -169,7 +165,7 @@ class SheetManager:
             self._invalidate_cache(f"setting:{key}")
             return True
         except Exception as e:
-            logger.error(f"set_setting({key}) error: {e}")
+            logger.error(f"set_setting({key}): {e}")
             return False
 
     def delete_setting(self, key):
@@ -180,7 +176,7 @@ class SheetManager:
                 self._invalidate_cache(f"setting:{key}")
                 return True
         except Exception as e:
-            logger.error(f"delete_setting({key}) error: {e}")
+            logger.error(f"delete_setting({key}): {e}")
         return False
 
     # ---------- Лог ----------
@@ -189,7 +185,7 @@ class SheetManager:
             now_str = moscow_now().strftime("%Y-%m-%d %H:%M:%S")
             self.sheet_log.append_row([now_str, user_id, action, details])
         except Exception as e:
-            logger.error(f"Ошибка записи лога: {e}")
+            logger.error(f"log: {e}")
 
     # ---------- Настройки пользователя ----------
     def get_user_settings(self, user_id):
@@ -205,7 +201,7 @@ class SheetManager:
                     "interval": row[2] if len(row) > 2 else "60",
                 }
         except Exception as e:
-            logger.warning(f"get_user_settings error: {e}")
+            logger.warning(f"get_user_settings: {e}")
         return {"morning_time": "09:00", "interval": "60"}
 
     def set_user_settings(self, user_id, morning_time=None, interval=None):
@@ -221,7 +217,7 @@ class SheetManager:
             self._invalidate_cache(f"user_settings:{user_id}")
             return True
         except Exception as e:
-            logger.error(f"Ошибка сохранения настроек: {e}")
+            logger.error(f"set_user_settings: {e}")
             return False
 
     # ---------- Модели ----------
@@ -282,7 +278,7 @@ class SheetManager:
             self._invalidate_cache()
             return True
         except Exception as e:
-            logger.error(f"Error updating {field} at {col}{row_index}: {e}")
+            logger.error(f"update_part_field: {e}")
             return False
 
     def add_model(self, model_name, details):
@@ -507,13 +503,10 @@ class SheetManager:
             return None
         row = self.sheet_tasks.row_values(cell.row)
         return {
-            "id": int(row[0]),
-            "title": row[1],
-            "deadline": row[2],
+            "id": int(row[0]), "title": row[1], "deadline": row[2],
             "time": row[3] if len(row) > 3 else "",
             "assignee": row[4] if row[4] else None,
-            "status": row[5],
-            "created": row[6],
+            "status": row[5], "created": row[6],
             "notified_60": row[7] if len(row) > 7 else "0",
             "notified_30": row[8] if len(row) > 8 else "0",
             "notified_15": row[9] if len(row) > 9 else "0",
@@ -657,11 +650,8 @@ class SheetManager:
                 row.append("")
             return {
                 "row_index": row_index,
-                "name": row[0],
-                "description": row[1],
-                "photo": row[2],
-                "retail": row[3],
-                "wholesale": row[4],
+                "name": row[0], "description": row[1], "photo": row[2],
+                "retail": row[3], "wholesale": row[4],
                 "wholesale_from": row[5],
                 "category": row[6] or "Без категории",
             }
@@ -681,7 +671,7 @@ class SheetManager:
             self.log_action("system", "Добавление товара в прайс", name)
             return True
         except Exception as e:
-            logger.error(f"Ошибка добавления товара: {e}")
+            logger.error(f"add_price_item: {e}")
             return False
 
     def update_price_item(self, row_index, field, value):
@@ -695,7 +685,7 @@ class SheetManager:
             self._invalidate_cache("price")
             return True
         except Exception as e:
-            logger.error(f"Ошибка обновления товара: {e}")
+            logger.error(f"update_price_item: {e}")
             return False
 
     def delete_price_item(self, row_index):
@@ -705,8 +695,62 @@ class SheetManager:
             self.log_action("system", "Удаление товара из прайса", f"строка {row_index}")
             return True
         except Exception as e:
-            logger.error(f"Ошибка удаления товара: {e}")
+            logger.error(f"delete_price_item: {e}")
             return False
+
+    def delete_price_items(self, rows: list) -> int:
+        """Удаляет несколько строк. Порядок по убыванию, чтобы не смещать индексы."""
+        sorted_rows = sorted(set(rows), reverse=True)
+        count = 0
+        for r in sorted_rows:
+            try:
+                self.sheet_price.delete_rows(r)
+                count += 1
+            except Exception as e:
+                logger.error(f"delete_price_items row {r}: {e}")
+        self._invalidate_cache("price")
+        self.log_action("system", "Массовое удаление товаров", f"удалено {count}")
+        return count
+
+    def set_category_for_rows(self, rows: list, category: str) -> int:
+        """Устанавливает категорию (колонка 7) для списка строк."""
+        count = 0
+        for r in set(rows):
+            try:
+                self.sheet_price.update_cell(r, 7, category)
+                count += 1
+            except Exception as e:
+                logger.error(f"set_category row {r}: {e}")
+        self._invalidate_cache("price")
+        self.log_action("system", "Массовая смена категории", f"{count} товаров → {category}")
+        return count
+
+    def import_price_items(self, items: list) -> int:
+        """Массовая вставка товаров через batch update (быстро)."""
+        if not items:
+            return 0
+        all_rows = self.sheet_price.get_all_values()
+        start_row = len(all_rows) + 1
+        rows_to_add = []
+        for it in items:
+            rows_to_add.append([
+                it.get("name", "") or "",
+                it.get("description", "") or "",
+                it.get("photo", "") or "",
+                str(it.get("retail", "") or ""),
+                str(it.get("wholesale", "") or ""),
+                str(it.get("wholesale_from", "") or ""),
+                it.get("category", "") or "Без категории",
+            ])
+        end_row = start_row + len(rows_to_add) - 1
+        try:
+            self.sheet_price.update(f"A{start_row}:G{end_row}", rows_to_add, value_input_option="USER_ENTERED")
+            self._invalidate_cache("price")
+            self.log_action("system", "Импорт товаров из CSV", f"добавлено {len(rows_to_add)}")
+            return len(rows_to_add)
+        except Exception as e:
+            logger.error(f"import_price_items: {e}")
+            raise
 
     def get_price_categories(self):
         items = self.get_price_items()
