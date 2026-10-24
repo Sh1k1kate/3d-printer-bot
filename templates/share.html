@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{ item.name }} — {{ item.retail }} ₽</title>
+  <meta name="description" content="{{ item.description[:160] or 'Товар из каталога Kobra Print' }}">
+
+  <meta property="og:type" content="product">
+  <meta property="og:title" content="{{ item.name }}">
+  <meta property="og:description" content="{{ item.description[:200] or 'Смотреть в каталоге' }}">
+  <meta property="og:url" content="{{ public_url }}/price#item={{ item.row_index }}">
+  {% if item.photo %}<meta property="og:image" content="{{ item.photo }}">{% endif %}
+
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="{{ item.name }}">
+  <meta name="twitter:description" content="{{ item.description[:200] or 'Смотреть в каталоге' }}">
+  {% if item.photo %}<meta name="twitter:image" content="{{ item.photo }}">{% endif %}
+
+  <meta http-equiv="refresh" content="0;url=/price#item={{ item.row_index }}">
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "Product",
+    "name": "{{ item.name }}",
+    {% if item.photo %}"image": "{{ item.photo }}",{% endif %}
+    "description": "{{ item.description[:300] }}",
+    "offers": {
+      "@type": "Offer",
+      "price": "{{ item.retail or '0' }}",
+      "priceCurrency": "RUB",
+      "availability": "https://schema.org/InStock"
+    }
+  }
+  </script>
+</head>
+<body>
+  <p>Перенаправление на товар… <a href="/price#item={{ item.row_index }}">Открыть</a></p>
+</body>
+</html>
