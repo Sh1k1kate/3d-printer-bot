@@ -3,7 +3,13 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>💰 Прайс-лист | 3D-печать</title>
+  <title>💰 Прайс-лист | Kobra Print</title>
+  <meta name="description" content="Каталог товаров для 3D-печати Kobra Print: цены, фото, розница и опт. Изготовление на заказ.">
+  <meta property="og:title" content="Kobra Print — прайс-лист">
+  <meta property="og:description" content="Каталог товаров для 3D-печати: цены, фото, розница и опт.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="/price">
+  <meta name="twitter:card" content="summary_large_image">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💰</text></svg>">
   <script src="https://cdn.tailwindcss.com"></script>
   <script>tailwind.config = { darkMode: 'class' };</script>
@@ -28,15 +34,11 @@
     }
     @keyframes shimmer { 0% { background-position: 100% 0; } 100% { background-position: -100% 0; } }
     .sel-checkbox { width: 20px; height: 20px; cursor: pointer; }
-
     @media print {
       header, #admin-panel, #filters-section, #cart-fab, #swWrap, #btn-print-top, .no-print, #empty-state { display: none !important; }
       body { background: #fff !important; color: #000 !important; }
-      #tab-content, #products-grid { display: block !important; }
-      #products-grid > * { page-break-inside: avoid; break-inside: avoid; box-shadow: none !important; border: 1px solid #ddd !important; margin-bottom: 8px; }
-      .card-hover:hover { transform: none !important; box-shadow: none !important; }
       #products-grid { display: flex !important; flex-wrap: wrap; gap: 8px; }
-      #products-grid > * { flex: 0 0 calc(50% - 4px); }
+      #products-grid > * { page-break-inside: avoid; break-inside: avoid; box-shadow: none !important; border: 1px solid #ddd !important; margin-bottom: 8px; flex: 0 0 calc(50% - 4px); }
     }
   </style>
 </head>
@@ -48,7 +50,7 @@
       <div class="flex items-center gap-3">
         <span class="text-2xl">💰</span>
         <h1 class="text-xl font-bold">Прайс-лист</h1>
-        <span class="text-xs bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300 px-2 py-0.5 rounded-full">3D-печать</span>
+        <span class="text-xs bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300 px-2 py-0.5 rounded-full">Kobra Print</span>
       </div>
       <div class="flex items-center gap-2">
         <button id="btn-print-top" onclick="printPage()" title="Печать/PDF" class="no-print bg-gray-200 dark:bg-gray-700 px-3 py-1.5 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600 transition text-sm">🖨</button>
@@ -62,7 +64,6 @@
     </div>
   </header>
 
-  <!-- HERO -->
   <section class="bg-gradient-to-br from-blue-500 via-indigo-500 to-purple-600 text-white">
     <div class="container mx-auto px-4 py-12 max-w-7xl">
       <h2 class="text-3xl md:text-4xl font-bold mb-3">Каталог товаров для 3D-печати</h2>
@@ -88,7 +89,6 @@
     </div>
   </section>
 
-  <!-- ADMIN PANEL -->
   <section id="admin-panel" class="hidden bg-amber-50 dark:bg-amber-950 border-b border-amber-200 dark:border-amber-800">
     <div class="container mx-auto px-4 py-3 max-w-7xl flex items-center justify-between flex-wrap gap-3">
       <div class="text-sm text-amber-800 dark:text-amber-200">🔓 <b>Режим администратора</b></div>
@@ -105,24 +105,23 @@
     </div>
   </section>
 
-  <!-- BULK PANEL -->
   <section id="bulk-panel" class="hidden bg-blue-50 dark:bg-blue-950 border-b border-blue-200 dark:border-blue-800">
     <div class="container mx-auto px-4 py-2 max-w-7xl flex items-center justify-between flex-wrap gap-2">
       <div class="text-sm text-blue-800 dark:text-blue-200">Выбрано: <b id="bulk-count">0</b></div>
       <div class="flex gap-2 flex-wrap">
         <button onclick="bulkSetCategory()" class="bg-indigo-600 hover:bg-indigo-700 text-white text-sm px-3 py-1.5 rounded-lg">🏷 Сменить категорию</button>
         <button onclick="bulkDelete()" class="bg-red-600 hover:bg-red-700 text-white text-sm px-3 py-1.5 rounded-lg">🗑 Удалить</button>
-        <button onclick="clearSelection()" class="bg-gray-300 dark:bg-gray-700 text-gray-800 dark:text-gray-200 text-sm px-3 py-1.5 rounded-lg">Снять выделение</button>
+        <button onclick="clearSelection()" class="bg-gray-300 dark:bg-gray-700 text-gray-800 dark:text-gray-200 text-sm px-3 py-1.5 rounded-lg">Снять</button>
       </div>
     </div>
   </section>
 
-  <!-- FILTERS -->
   <section id="filters-section" class="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
     <div class="container mx-auto px-4 py-4 max-w-7xl">
       <div class="flex flex-wrap items-center gap-3">
-        <div class="flex-1 min-w-[200px]">
-          <input type="text" id="search-input" placeholder="🔍 Поиск по названию или описанию" class="w-full px-4 py-2 border rounded-lg bg-white dark:bg-gray-700 dark:border-gray-600">
+        <div class="relative flex-1 min-w-[200px]">
+          <input type="text" id="search-input" placeholder="🔍 Поиск по названию или описанию" autocomplete="off" class="w-full px-4 py-2 border rounded-lg bg-white dark:bg-gray-700 dark:border-gray-600">
+          <div id="typeahead" class="hidden absolute z-20 top-full mt-1 left-0 right-0 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 overflow-hidden"></div>
         </div>
         <button onclick="toggleFilters()" class="md:hidden bg-gray-200 dark:bg-gray-700 px-4 py-2 rounded-lg text-sm">
           <span id="filters-toggle-text">Фильтры ▼</span>
@@ -148,7 +147,6 @@
     </div>
   </section>
 
-  <!-- PRODUCTS -->
   <section class="container mx-auto px-4 py-6 max-w-7xl">
     <div id="products-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4"></div>
     <div id="empty-state" class="hidden text-center py-20 text-gray-400 dark:text-gray-500">
@@ -170,7 +168,10 @@
           </div>
           <div class="p-6 md:p-8 flex flex-col">
             <h3 id="modal-name" class="text-2xl md:text-3xl font-bold mb-2 break-words pr-12 md:pr-14"></h3>
-            <div id="modal-category" class="inline-block text-xs bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300 px-2 py-0.5 rounded-full mb-3 self-start"></div>
+            <div class="flex items-center gap-2 mb-2 flex-wrap">
+              <div id="modal-category" class="inline-block text-xs bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300 px-2 py-0.5 rounded-full"></div>
+              <div id="modal-rating" class="text-sm text-yellow-500 hidden"></div>
+            </div>
             <p id="modal-description" class="text-sm md:text-base text-gray-600 dark:text-gray-300 mb-4 whitespace-pre-wrap"></p>
             <div class="space-y-2 border-t border-gray-200 dark:border-gray-700 pt-4 mt-auto">
               <div class="flex justify-between"><span class="text-gray-500 dark:text-gray-400">Розница:</span><span id="modal-retail" class="font-semibold"></span></div>
@@ -181,27 +182,68 @@
               <button onclick="addCurrentToCart()" class="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg">🛒 В корзину</button>
               <button onclick="shareCurrentItem()" class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg">📤 Поделиться</button>
             </div>
+            <div class="mt-5 border-t border-gray-200 dark:border-gray-700 pt-4">
+              <div class="flex items-center justify-between mb-2">
+                <h4 class="font-semibold">Отзывы <span id="modal-reviews-count" class="text-sm font-normal text-gray-500"></span></h4>
+                <button onclick="openReviewForm()" class="text-xs bg-blue-500 hover:bg-blue-600 text-white px-3 py-1 rounded">✍️ Оставить</button>
+              </div>
+              <div id="modal-reviews-list" class="space-y-2 max-h-40 overflow-y-auto"></div>
+              <div id="modal-reviews-empty" class="hidden text-sm text-gray-500 text-center py-2">Отзывов пока нет</div>
+            </div>
           </div>
         </div>
       </div>
     </div>
   </div>
 
-  <!-- MODAL: PASSWORD -->
+  <!-- MODAL: REVIEW FORM -->
+  <div id="modal-review" class="hidden fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+    <div class="bg-white dark:bg-gray-800 rounded-2xl max-w-md w-full p-6 shadow-2xl">
+      <div class="flex justify-between items-center mb-4">
+        <h3 class="text-xl font-bold">✍️ Оставить отзыв</h3>
+        <button type="button" onclick="closeModal('modal-review')" class="w-11 h-11 flex items-center justify-center rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 text-2xl leading-none">×</button>
+      </div>
+      <div class="space-y-3">
+        <div>
+          <label class="block text-sm font-medium mb-1">Ваше имя</label>
+          <input id="review-name" type="text" placeholder="Можно оставить пустым" class="w-full px-3 py-2 border rounded-lg bg-white dark:bg-gray-700 dark:border-gray-600">
+        </div>
+        <div>
+          <label class="block text-sm font-medium mb-1">Оценка *</label>
+          <div id="review-stars" class="flex gap-1 text-3xl">
+            <button type="button" onclick="setReviewRating(1)" class="star text-yellow-500 hover:scale-110 transition">★</button>
+            <button type="button" onclick="setReviewRating(2)" class="star text-yellow-500 hover:scale-110 transition">★</button>
+            <button type="button" onclick="setReviewRating(3)" class="star text-yellow-500 hover:scale-110 transition">★</button>
+            <button type="button" onclick="setReviewRating(4)" class="star text-yellow-500 hover:scale-110 transition">★</button>
+            <button type="button" onclick="setReviewRating(5)" class="star text-yellow-500 hover:scale-110 transition">★</button>
+          </div>
+        </div>
+        <div>
+          <label class="block text-sm font-medium mb-1">Текст *</label>
+          <textarea id="review-text" rows="4" placeholder="Расскажите о качестве печати, сроках, общении…" class="w-full px-3 py-2 border rounded-lg bg-white dark:bg-gray-700 dark:border-gray-600"></textarea>
+        </div>
+        <div id="review-error" class="hidden text-red-600 text-sm"></div>
+      </div>
+      <div class="flex gap-2 justify-end mt-5">
+        <button onclick="closeModal('modal-review')" class="px-4 py-2 rounded-lg bg-gray-200 dark:bg-gray-700 text-sm">Отмена</button>
+        <button onclick="submitReview()" class="px-4 py-2 rounded-lg bg-blue-500 hover:bg-blue-600 text-white text-sm">📤 Отправить</button>
+      </div>
+    </div>
+  </div>
+
   <div id="modal-password" class="hidden fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
     <div class="bg-white dark:bg-gray-800 rounded-2xl max-w-sm w-full p-6 shadow-2xl">
       <h3 class="text-xl font-bold mb-1">🔐 Вход в админку</h3>
-      <p class="text-sm text-gray-500 dark:text-gray-400 mb-4">Введите пароль администратора</p>
+      <p class="text-sm text-gray-500 dark:text-gray-400 mb-4">Пароль администратора</p>
       <input type="password" id="admin-password-input" class="w-full px-3 py-2 border rounded-lg bg-white dark:bg-gray-700 dark:border-gray-600 mb-3" placeholder="Пароль">
       <div id="password-error" class="hidden text-red-600 text-sm mb-3"></div>
       <div class="flex gap-2 justify-end">
-        <button onclick="closeModal('modal-password')" class="px-4 py-2 rounded-lg bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-sm">Отмена</button>
+        <button onclick="closeModal('modal-password')" class="px-4 py-2 rounded-lg bg-gray-200 dark:bg-gray-700 text-sm">Отмена</button>
         <button onclick="submitPassword()" class="px-4 py-2 rounded-lg bg-blue-500 hover:bg-blue-600 text-white text-sm">Войти</button>
       </div>
     </div>
   </div>
 
-  <!-- MODAL: EDITOR -->
   <div id="modal-editor" class="hidden fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
     <div class="bg-white dark:bg-gray-800 rounded-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto shadow-2xl p-6">
       <div class="flex justify-between items-center mb-4">
@@ -218,10 +260,10 @@
           <textarea id="edit-description" rows="3" class="w-full px-3 py-2 border rounded-lg bg-white dark:bg-gray-700 dark:border-gray-600"></textarea>
         </div>
         <div>
-          <label class="block text-sm font-medium mb-1">Фото товара</label>
+          <label class="block text-sm font-medium mb-1">Фото</label>
           <div class="flex gap-2">
-            <input id="edit-photo" type="text" class="flex-1 px-3 py-2 border rounded-lg bg-white dark:bg-gray-700 dark:border-gray-600" placeholder="https://... или загрузите файл">
-            <button type="button" onclick="document.getElementById('edit-photo-file').click()" class="px-3 py-2 rounded-lg bg-blue-500 hover:bg-blue-600 text-white text-sm whitespace-nowrap">📤</button>
+            <input id="edit-photo" type="text" class="flex-1 px-3 py-2 border rounded-lg bg-white dark:bg-gray-700 dark:border-gray-600" placeholder="URL или загрузить">
+            <button type="button" onclick="document.getElementById('edit-photo-file').click()" class="px-3 py-2 rounded-lg bg-blue-500 hover:bg-blue-600 text-white text-sm">📤</button>
           </div>
           <input type="file" id="edit-photo-file" accept="image/*" class="hidden">
           <div id="upload-status" class="text-xs mt-1 hidden"></div>
@@ -231,18 +273,9 @@
           </div>
         </div>
         <div class="grid grid-cols-3 gap-3">
-          <div>
-            <label class="block text-sm font-medium mb-1">Розница</label>
-            <input id="edit-retail" type="text" class="w-full px-3 py-2 border rounded-lg bg-white dark:bg-gray-700 dark:border-gray-600">
-          </div>
-          <div>
-            <label class="block text-sm font-medium mb-1">Опт</label>
-            <input id="edit-wholesale" type="text" class="w-full px-3 py-2 border rounded-lg bg-white dark:bg-gray-700 dark:border-gray-600">
-          </div>
-          <div>
-            <label class="block text-sm font-medium mb-1">Опт от</label>
-            <input id="edit-wholesale-from" type="text" class="w-full px-3 py-2 border rounded-lg bg-white dark:bg-gray-700 dark:border-gray-600">
-          </div>
+          <div><label class="block text-sm font-medium mb-1">Розница</label><input id="edit-retail" type="text" class="w-full px-3 py-2 border rounded-lg bg-white dark:bg-gray-700 dark:border-gray-600"></div>
+          <div><label class="block text-sm font-medium mb-1">Опт</label><input id="edit-wholesale" type="text" class="w-full px-3 py-2 border rounded-lg bg-white dark:bg-gray-700 dark:border-gray-600"></div>
+          <div><label class="block text-sm font-medium mb-1">Опт от</label><input id="edit-wholesale-from" type="text" class="w-full px-3 py-2 border rounded-lg bg-white dark:bg-gray-700 dark:border-gray-600"></div>
         </div>
         <div>
           <label class="block text-sm font-medium mb-1">Категория</label>
@@ -252,13 +285,12 @@
       </div>
       <div id="editor-error" class="hidden text-red-600 text-sm mt-3"></div>
       <div class="flex gap-2 justify-end mt-5">
-        <button onclick="closeModal('modal-editor')" class="px-4 py-2 rounded-lg bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-sm">Отмена</button>
+        <button onclick="closeModal('modal-editor')" class="px-4 py-2 rounded-lg bg-gray-200 dark:bg-gray-700 text-sm">Отмена</button>
         <button onclick="saveItem()" class="px-4 py-2 rounded-lg bg-blue-500 hover:bg-blue-600 text-white text-sm">💾 Сохранить</button>
       </div>
     </div>
   </div>
 
-  <!-- MODAL: CART -->
   <div id="modal-cart" class="hidden fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
     <div class="bg-white dark:bg-gray-800 rounded-2xl max-w-lg w-full max-h-[90vh] overflow-y-auto shadow-2xl p-6">
       <div class="flex justify-between items-center mb-4">
@@ -270,32 +302,34 @@
       <div id="cart-form" class="space-y-2 border-t border-gray-200 dark:border-gray-700 pt-4">
         <input id="cart-name" type="text" placeholder="Ваше имя" class="w-full px-3 py-2 border rounded-lg bg-white dark:bg-gray-700 dark:border-gray-600">
         <input id="cart-contact" type="text" placeholder="Телефон или @username *" class="w-full px-3 py-2 border rounded-lg bg-white dark:bg-gray-700 dark:border-gray-600">
-        <textarea id="cart-comment" rows="2" placeholder="Комментарий (необязательно)" class="w-full px-3 py-2 border rounded-lg bg-white dark:bg-gray-700 dark:border-gray-600"></textarea>
+        <textarea id="cart-comment" rows="2" placeholder="Комментарий" class="w-full px-3 py-2 border rounded-lg bg-white dark:bg-gray-700 dark:border-gray-600"></textarea>
+        <div class="flex gap-2">
+          <input id="cart-promo" type="text" placeholder="Промокод" autocomplete="off" class="flex-1 px-3 py-2 border rounded-lg bg-white dark:bg-gray-700 dark:border-gray-600 uppercase">
+          <button type="button" onclick="applyPromo()" class="px-4 py-2 rounded-lg bg-purple-600 hover:bg-purple-700 text-white text-sm">Применить</button>
+        </div>
+        <div id="promo-status" class="text-xs hidden"></div>
         <div id="cart-error" class="hidden text-red-600 text-sm"></div>
       </div>
       <div class="flex gap-2 justify-end mt-4">
         <button onclick="clearCart()" class="px-4 py-2 rounded-lg bg-red-100 hover:bg-red-200 dark:bg-red-900 dark:hover:bg-red-800 text-red-700 dark:text-red-200 text-sm">🗑 Очистить</button>
-        <button onclick="submitCart()" class="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm">📤 Отправить заявку</button>
+        <button onclick="submitCart()" class="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm">📤 Отправить</button>
       </div>
     </div>
   </div>
 
-  <!-- MODAL: QR -->
   <div id="modal-qr" class="hidden fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
     <div class="bg-white dark:bg-gray-800 rounded-2xl max-w-sm w-full p-6 shadow-2xl text-center">
-      <h3 class="text-xl font-bold mb-3">🔲 QR-код на прайс</h3>
-      <p class="text-xs text-gray-500 dark:text-gray-400 mb-4">Наведите камеру — откроется публичная страница прайса</p>
+      <h3 class="text-xl font-bold mb-3">🔲 QR на прайс</h3>
       <div id="qr-container" class="bg-white rounded-xl p-3 inline-block min-h-[220px] flex items-center justify-center">
         <span class="text-gray-400 text-sm">Загрузка…</span>
       </div>
       <div class="flex gap-2 justify-center mt-4">
         <button onclick="downloadQr()" class="px-4 py-2 rounded-lg bg-violet-600 hover:bg-violet-700 text-white text-sm">⬇️ Скачать</button>
-        <button onclick="closeModal('modal-qr')" class="px-4 py-2 rounded-lg bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-sm">Закрыть</button>
+        <button onclick="closeModal('modal-qr')" class="px-4 py-2 rounded-lg bg-gray-200 dark:bg-gray-700 text-sm">Закрыть</button>
       </div>
     </div>
   </div>
 
-  <!-- MODAL: LOGO -->
   <div id="modal-logo" class="hidden fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
     <div class="bg-white dark:bg-gray-800 rounded-2xl max-w-md w-full p-6 shadow-2xl text-center">
       <h3 class="text-xl font-bold mb-1">🖼 Логотип</h3>
@@ -314,7 +348,6 @@
     </div>
   </div>
 
-  <!-- MODAL: CONFIRM -->
   <div id="modal-confirm" class="hidden fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
     <div class="bg-white dark:bg-gray-800 rounded-2xl max-w-sm w-full p-6 shadow-2xl">
       <h3 id="confirm-title" class="text-xl font-bold mb-2">Удалить?</h3>
@@ -327,7 +360,6 @@
     </div>
   </div>
 
-  <!-- CART FAB -->
   <button id="cart-fab" onclick="openCart()" class="hidden fixed left-5 bottom-5 z-40 w-14 h-14 rounded-full bg-emerald-600 hover:bg-emerald-700 text-white shadow-xl transition">
     <span class="text-2xl">🛒</span>
     <span id="cart-badge" class="absolute -top-1 -right-1 bg-red-500 text-white text-xs font-bold rounded-full w-6 h-6 flex items-center justify-center hidden">0</span>
@@ -355,15 +387,16 @@
     let editingRowIndex = null;
     let deleteRowIndex = null;
     let qrBlobUrl = null;
-    let loading = true;
     let selectedRows = new Set();
     let currentModalItem = null;
+    let ratingsCache = {};
+    let appliedPromo = null;
+    let reviewRating = 5;
     let cart = JSON.parse(localStorage.getItem('priceCart') || '{}');
 
     const urlParams = new URLSearchParams(window.location.search);
     const quickAdminMode = urlParams.get('admin') === '1';
 
-    // ---------- UTILS ----------
     function escapeHtml(s) {
       if (s === null || s === undefined) return '';
       return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -383,7 +416,6 @@
       return isFinite(n) ? n : null;
     }
 
-    // ---------- FILTERS MOBILE ----------
     let filtersOpen = false;
     function toggleFilters() {
       filtersOpen = !filtersOpen;
@@ -394,7 +426,6 @@
 
     // ---------- LOAD ----------
     async function loadItems() {
-      loading = true;
       renderSkeleton();
       try {
         const url = adminToken ? '/api/price/admin' : '/api/price';
@@ -409,10 +440,14 @@
         const data = await resp.json();
         allItems = data.items || [];
         categories = data.categories || [];
-        loading = false;
         render();
         checkHash();
-      } catch (e) { loading = false; console.error(e); }
+      } catch (e) { console.error(e); }
+      try {
+        const resp = await fetch('/api/price/reviews_summary');
+        ratingsCache = await resp.json();
+        render();
+      } catch (e) { console.error(e); }
     }
 
     function renderSkeleton() {
@@ -427,7 +462,6 @@
               <div class="skeleton h-5 w-3/4"></div>
               <div class="skeleton h-3 w-1/3"></div>
               <div class="skeleton h-3 w-full"></div>
-              <div class="skeleton h-3 w-5/6"></div>
               <div class="skeleton h-6 w-1/2 mt-3"></div>
             </div>
           </div>`;
@@ -436,7 +470,6 @@
       document.getElementById('empty-state').classList.add('hidden');
     }
 
-    // ---------- RENDER ----------
     function render() {
       renderStats();
       renderCategories();
@@ -512,7 +545,6 @@
       const items = getFilteredSorted();
       const grid = document.getElementById('products-grid');
       const empty = document.getElementById('empty-state');
-
       if (!items.length) { grid.innerHTML = ''; empty.classList.remove('hidden'); return; }
       empty.classList.add('hidden');
 
@@ -539,10 +571,9 @@
       });
       grid.querySelectorAll('.sel-checkbox').forEach(el => {
         el.addEventListener('click', (ev) => ev.stopPropagation());
-        el.addEventListener('change', (ev) => {
+        el.addEventListener('change', () => {
           const r = Number(el.dataset.row);
-          if (el.checked) selectedRows.add(r);
-          else selectedRows.delete(r);
+          if (el.checked) selectedRows.add(r); else selectedRows.delete(r);
           renderBulkPanel();
         });
       });
@@ -569,17 +600,23 @@
       `;
     }
 
+    function renderRatingBadge(row) {
+      const r = ratingsCache[String(row)];
+      if (!r || !r.count) return '';
+      return `<div class="text-xs text-yellow-500 flex items-center gap-1">★ ${r.avg} <span class="text-gray-400">(${r.count})</span></div>`;
+    }
+
     function renderCard(it, idx) {
       const photo = it.photo
         ? `<div class="photo-zoom overflow-hidden rounded-t-xl bg-gray-100 dark:bg-gray-900 h-48 flex items-center justify-center relative">
              <img src="${escapeHtml(it.photo)}" alt="${escapeHtml(it.name)}" class="max-h-full max-w-full object-contain" onerror="this.parentElement.innerHTML='<span class=&quot;text-gray-400 text-3xl&quot;>📦</span>'">
              ${renderSelCheckbox(it.row_index)}
-             <button data-action="add-cart" data-row="${it.row_index}" class="no-print absolute bottom-2 right-2 bg-emerald-600 hover:bg-emerald-700 text-white w-10 h-10 rounded-full shadow-lg text-xl" title="В корзину">+</button>
+             <button data-action="add-cart" data-row="${it.row_index}" class="no-print absolute bottom-2 right-2 bg-emerald-600 hover:bg-emerald-700 text-white w-10 h-10 rounded-full shadow-lg text-xl">+</button>
            </div>`
         : `<div class="rounded-t-xl bg-gray-100 dark:bg-gray-900 h-48 flex items-center justify-center text-4xl text-gray-300 dark:text-gray-600 relative">
              📦
              ${renderSelCheckbox(it.row_index)}
-             <button data-action="add-cart" data-row="${it.row_index}" class="no-print absolute bottom-2 right-2 bg-emerald-600 hover:bg-emerald-700 text-white w-10 h-10 rounded-full shadow-lg text-xl" title="В корзину">+</button>
+             <button data-action="add-cart" data-row="${it.row_index}" class="no-print absolute bottom-2 right-2 bg-emerald-600 hover:bg-emerald-700 text-white w-10 h-10 rounded-full shadow-lg text-xl">+</button>
            </div>`;
       const priceHtml = it.retail ? `<div class="text-lg font-bold text-blue-600 dark:text-blue-400">${formatPrice(it.retail)}</div>` : '<div class="text-sm text-gray-400">Цена по запросу</div>';
       const wholesaleHtml = it.wholesale ? `<div class="text-xs text-gray-500 dark:text-gray-400">Опт: ${formatPrice(it.wholesale)}${it.wholesale_from ? ' от ' + escapeHtml(it.wholesale_from) + ' шт' : ''}</div>` : '';
@@ -591,7 +628,10 @@
               <h3 class="font-semibold break-words flex-1">${escapeHtml(it.name)}</h3>
               ${renderAdminButtons(it.row_index, it.name)}
             </div>
-            <div class="text-xs text-gray-500 dark:text-gray-400 mb-2">${escapeHtml(it.category || 'Без категории')}</div>
+            <div class="flex items-center gap-2 mb-1">
+              <span class="text-xs text-gray-500 dark:text-gray-400">${escapeHtml(it.category || 'Без категории')}</span>
+              ${renderRatingBadge(it.row_index)}
+            </div>
             ${it.description ? `<p class="text-sm text-gray-600 dark:text-gray-300 mb-3 line-clamp-2">${escapeHtml(it.description)}</p>` : ''}
             <div class="flex justify-between items-end"><div>${priceHtml}${wholesaleHtml}</div></div>
           </div>
@@ -611,13 +651,15 @@
               <h3 class="font-semibold break-words">${escapeHtml(it.name)}</h3>
               ${renderAdminButtons(it.row_index, it.name)}
             </div>
-            <div class="text-xs text-gray-500 dark:text-gray-400">${escapeHtml(it.category || 'Без категории')}</div>
+            <div class="flex items-center gap-2">
+              <span class="text-xs text-gray-500 dark:text-gray-400">${escapeHtml(it.category || 'Без категории')}</span>
+              ${renderRatingBadge(it.row_index)}
+            </div>
             ${it.description ? `<p class="text-sm text-gray-600 dark:text-gray-300 line-clamp-2 mt-1">${escapeHtml(it.description)}</p>` : ''}
           </div>
           <div class="text-right flex-shrink-0 flex flex-col items-end gap-1">
             <div class="font-bold text-blue-600 dark:text-blue-400">${it.retail ? formatPrice(it.retail) : '—'}</div>
-            ${it.wholesale ? `<div class="text-xs text-gray-500">Опт: ${formatPrice(it.wholesale)}</div>` : ''}
-            <button data-action="add-cart" data-row="${it.row_index}" class="no-print bg-emerald-600 hover:bg-emerald-700 text-white w-8 h-8 rounded-full shadow text-lg" title="В корзину">+</button>
+            <button data-action="add-cart" data-row="${it.row_index}" class="no-print bg-emerald-600 hover:bg-emerald-700 text-white w-8 h-8 rounded-full shadow text-lg">+</button>
           </div>
         </div>
       `;
@@ -635,10 +677,140 @@
       document.getElementById('modal-wholesale').textContent = it.wholesale ? formatPrice(it.wholesale) : '—';
       document.getElementById('modal-wholesale-from').textContent = it.wholesale_from ? escapeHtml(it.wholesale_from) + ' шт' : '—';
       const img = document.getElementById('modal-photo');
-      if (it.photo) { img.src = it.photo; img.classList.remove('hidden'); img.onerror = () => { img.src = ''; img.alt = '📦 нет фото'; }; }
-      else { img.removeAttribute('src'); img.alt = '📦 нет фото'; }
+      if (it.photo) { img.src = it.photo; img.classList.remove('hidden'); img.onerror = () => { img.src = ''; img.alt = '📦'; }; }
+      else { img.removeAttribute('src'); img.alt = '📦'; }
+      const ratingEl = document.getElementById('modal-rating');
+      const r = ratingsCache[String(it.row_index)];
+      if (r && r.count) {
+        ratingEl.textContent = '★'.repeat(Math.round(r.avg)) + '☆'.repeat(5 - Math.round(r.avg)) + ` ${r.avg} (${r.count})`;
+        ratingEl.classList.remove('hidden');
+      } else { ratingEl.classList.add('hidden'); }
       openModal('modal-product');
+      loadReviewsForProduct(it.row_index);
     }
+
+    async function loadReviewsForProduct(row) {
+      const listEl = document.getElementById('modal-reviews-list');
+      const emptyEl = document.getElementById('modal-reviews-empty');
+      const countEl = document.getElementById('modal-reviews-count');
+      listEl.innerHTML = '';
+      try {
+        const resp = await fetch('/api/price/reviews/' + row);
+        const data = await resp.json();
+        const items = data.items || [];
+        countEl.textContent = items.length ? `(${items.length})` : '';
+        if (!items.length) {
+          emptyEl.classList.remove('hidden');
+          listEl.classList.add('hidden');
+          return;
+        }
+        emptyEl.classList.add('hidden');
+        listEl.classList.remove('hidden');
+        listEl.innerHTML = items.map(r => `
+          <div class="bg-gray-50 dark:bg-gray-700 rounded p-2 text-sm">
+            <div class="flex justify-between mb-1">
+              <span class="font-medium">${escapeHtml(r.name || 'Аноним')}</span>
+              <span class="text-yellow-500">${'★'.repeat(r.rating)}${'☆'.repeat(5 - r.rating)}</span>
+            </div>
+            <div class="text-gray-600 dark:text-gray-300 break-words">${escapeHtml(r.text)}</div>
+            <div class="text-xs text-gray-400 mt-1">${escapeHtml(r.created)}</div>
+          </div>
+        `).join('');
+      } catch (e) { console.error(e); }
+    }
+
+    // ---------- REVIEW FORM ----------
+    function openReviewForm() {
+      if (!currentModalItem) return;
+      reviewRating = 5;
+      document.getElementById('review-name').value = '';
+      document.getElementById('review-text').value = '';
+      document.getElementById('review-error').classList.add('hidden');
+      updateReviewStars();
+      openModal('modal-review');
+    }
+
+    function setReviewRating(r) {
+      reviewRating = r;
+      updateReviewStars();
+    }
+
+    function updateReviewStars() {
+      document.querySelectorAll('#review-stars .star').forEach((el, i) => {
+        if (i < reviewRating) el.textContent = '★';
+        else el.textContent = '☆';
+      });
+    }
+
+    async function submitReview() {
+      const err = document.getElementById('review-error');
+      err.classList.add('hidden');
+      if (!currentModalItem) return;
+      const text = document.getElementById('review-text').value.trim();
+      if (!text) { err.textContent = 'Введите текст отзыва'; err.classList.remove('hidden'); return; }
+      try {
+        const resp = await fetch('/api/price/review', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            product_row: currentModalItem.row_index,
+            name: document.getElementById('review-name').value.trim(),
+            rating: reviewRating,
+            text: text,
+          }),
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(data.error || 'Ошибка');
+        closeModal('modal-review');
+        loadReviewsForProduct(currentModalItem.row_index);
+        try {
+          const rs = await fetch('/api/price/reviews_summary');
+          ratingsCache = await rs.json();
+          renderProducts();
+        } catch (e) {}
+        alert('✅ Спасибо за отзыв!');
+      } catch (e) {
+        err.textContent = '❌ ' + e.message;
+        err.classList.remove('hidden');
+      }
+    }
+
+    // ---------- TYPEAHEAD (C2) ----------
+    let typeaheadTimeout = null;
+    function renderTypeahead() {
+      const container = document.getElementById('typeahead');
+      const q = searchQuery.trim().toLowerCase();
+      if (!q) { container.classList.add('hidden'); return; }
+      const matches = allItems.filter(it =>
+        (it.name || '').toLowerCase().includes(q) ||
+        (it.description || '').toLowerCase().includes(q)
+      ).slice(0, 5);
+      if (!matches.length) { container.classList.add('hidden'); return; }
+      container.innerHTML = matches.map(it => `
+        <div onclick="openTypeaheadItem(${it.row_index})" class="flex items-center gap-2 p-2 hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer">
+          <div class="w-10 h-10 rounded bg-gray-100 dark:bg-gray-900 flex items-center justify-center overflow-hidden flex-shrink-0">
+            ${it.photo ? `<img src="${escapeHtml(it.photo)}" class="w-full h-full object-contain" onerror="this.parentElement.textContent='📦'">` : '📦'}
+          </div>
+          <div class="flex-1 min-w-0">
+            <div class="text-sm font-medium truncate">${escapeHtml(it.name)}</div>
+            <div class="text-xs text-gray-500">${formatPrice(it.retail)}</div>
+          </div>
+        </div>
+      `).join('');
+      container.classList.remove('hidden');
+    }
+    function openTypeaheadItem(row) {
+      document.getElementById('typeahead').classList.add('hidden');
+      const items = getFilteredSorted();
+      const idx = items.findIndex(it => it.row_index === row);
+      if (idx >= 0) openProduct(idx);
+    }
+    document.addEventListener('click', (e) => {
+      const ta = document.getElementById('typeahead');
+      if (!ta.contains(e.target) && e.target.id !== 'search-input') {
+        ta.classList.add('hidden');
+      }
+    });
 
     // ---------- DEEP LINK ----------
     function checkHash() {
@@ -654,7 +826,7 @@
 
     async function shareCurrentItem() {
       if (!currentModalItem) return;
-      const url = window.location.origin + window.location.pathname + '#item=' + currentModalItem.row_index;
+      const url = window.location.origin + '/share/' + currentModalItem.row_index;
       const shareData = { title: currentModalItem.name || 'Товар', text: currentModalItem.name || '', url };
       if (navigator.share) {
         try { await navigator.share(shareData); return; } catch (e) {}
@@ -662,8 +834,41 @@
       try {
         await navigator.clipboard.writeText(url);
         alert('✅ Ссылка скопирована:\n' + url);
+      } catch (e) { prompt('Скопируйте ссылку:', url); }
+    }
+
+    // ---------- ПРОМОКОД (A3) ----------
+    async function applyPromo() {
+      const code = document.getElementById('cart-promo').value.trim();
+      const status = document.getElementById('promo-status');
+      if (!code) {
+        appliedPromo = null;
+        status.classList.add('hidden');
+        return;
+      }
+      status.classList.remove('hidden');
+      status.className = 'text-xs text-blue-600 dark:text-blue-400';
+      status.textContent = '⏳ Проверяю…';
+      try {
+        const resp = await fetch('/api/price/validate_promo', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code }),
+        });
+        const data = await resp.json();
+        if (data.valid) {
+          appliedPromo = data;
+          status.className = 'text-xs text-green-600 dark:text-green-400';
+          status.textContent = `✅ Применено: -${data.discount_percent}%`;
+        } else {
+          appliedPromo = null;
+          status.className = 'text-xs text-red-600 dark:text-red-400';
+          status.textContent = '❌ ' + (data.reason || 'Недействительный код');
+        }
       } catch (e) {
-        prompt('Скопируйте ссылку:', url);
+        appliedPromo = null;
+        status.className = 'text-xs text-red-600 dark:text-red-400';
+        status.textContent = '❌ Ошибка проверки';
       }
     }
 
@@ -674,12 +879,8 @@
       const badge = document.getElementById('cart-badge');
       const n = cartCount();
       document.getElementById('cart-fab').classList.toggle('hidden', n === 0);
-      if (n > 0) {
-        badge.textContent = n;
-        badge.classList.remove('hidden');
-      } else {
-        badge.classList.add('hidden');
-      }
+      if (n > 0) { badge.textContent = n; badge.classList.remove('hidden'); }
+      else { badge.classList.add('hidden'); }
     }
     function addToCart(rowIndex, qty) {
       if (!rowIndex) return;
@@ -701,6 +902,7 @@
     function clearCart() {
       if (!confirm('Очистить корзину?')) return;
       cart = {};
+      appliedPromo = null;
       saveCart();
       updateCartFab();
       renderCartItems();
@@ -743,7 +945,7 @@
       const err = document.getElementById('cart-error');
       err.classList.add('hidden');
       const contact = document.getElementById('cart-contact').value.trim();
-      if (!contact) { err.textContent = 'Укажите телефон или @username'; err.classList.remove('hidden'); return; }
+      if (!contact) { err.textContent = 'Укажите контакт'; err.classList.remove('hidden'); return; }
       const items = Object.entries(cart).map(([row, qty]) => {
         const it = allItems.find(x => x.row_index === Number(row));
         return { name: it ? it.name : ('Товар #' + row), qty };
@@ -754,6 +956,7 @@
         name: document.getElementById('cart-name').value.trim(),
         contact,
         comment: document.getElementById('cart-comment').value.trim(),
+        promo_code: appliedPromo ? appliedPromo.code : '',
       };
       try {
         const resp = await fetch('/api/price/order_request', {
@@ -764,23 +967,22 @@
         const data = await resp.json().catch(() => ({}));
         if (!resp.ok) throw new Error(data.error || data.detail || ('HTTP ' + resp.status));
         cart = {};
+        appliedPromo = null;
         saveCart();
         updateCartFab();
         document.getElementById('cart-name').value = '';
         document.getElementById('cart-contact').value = '';
         document.getElementById('cart-comment').value = '';
+        document.getElementById('cart-promo').value = '';
+        document.getElementById('promo-status').classList.add('hidden');
         closeModal('modal-cart');
-
-        let msg = '✅ Заявка отправлена! Мы свяжемся с вами.';
+        let msg = '✅ Заявка отправлена!';
         if (data.orders && data.orders.length) {
           msg = `✅ Заявка принята!\n\nСоздано заказов: ${data.orders.length}`;
-          if (data.orders.length <= 8) {
-            msg += ' (№' + data.orders.join(', №') + ')';
-          }
-          if (data.deadline) {
-            msg += `\nСрок: ${data.deadline}`;
-          }
-          msg += '\n\nМы свяжемся с вами для уточнения деталей.';
+          if (data.orders.length <= 8) msg += ' (№' + data.orders.join(', №') + ')';
+          if (data.deadline) msg += `\nСрок: ${data.deadline}`;
+          if (data.promo_applied) msg += '\n🎁 Промокод применён';
+          msg += '\n\nМы свяжемся с вами.';
         }
         alert(msg);
       } catch (e) {
@@ -812,7 +1014,7 @@
         if (quickAdminMode) setTimeout(() => openEditor(null), 200);
       } else {
         const el = document.getElementById('password-error');
-        el.textContent = resp.status === 401 ? 'Неверный пароль' : 'Ошибка сервера';
+        el.textContent = resp.status === 401 ? 'Неверный пароль' : 'Ошибка';
         el.classList.remove('hidden');
       }
     }
@@ -841,7 +1043,7 @@
     }
     async function bulkDelete() {
       if (!selectedRows.size) return;
-      if (!confirm(`Удалить ${selectedRows.size} товаров? Это действие нельзя отменить.`)) return;
+      if (!confirm(`Удалить ${selectedRows.size} товаров?`)) return;
       try {
         const resp = await fetch('/api/price/bulk_delete', {
           method: 'POST',
@@ -849,7 +1051,7 @@
           body: JSON.stringify({ rows: Array.from(selectedRows) }),
         });
         const data = await resp.json().catch(() => ({}));
-        if (!resp.ok) throw new Error(data.error || data.detail || ('HTTP ' + resp.status));
+        if (!resp.ok) throw new Error(data.error || ('HTTP ' + resp.status));
         selectedRows.clear();
         await loadItems();
         alert('✅ Удалено: ' + (data.deleted || 0));
@@ -857,9 +1059,9 @@
     }
     async function bulkSetCategory() {
       if (!selectedRows.size) return;
-      const cat = prompt('Новая категория для выбранных товаров (' + selectedRows.size + ' шт):', '');
+      const cat = prompt('Новая категория для ' + selectedRows.size + ' товаров:', '');
       if (cat === null) return;
-      if (!cat.trim()) { alert('Категория не может быть пустой'); return; }
+      if (!cat.trim()) { alert('Пустая категория'); return; }
       try {
         const resp = await fetch('/api/price/bulk_set_category', {
           method: 'POST',
@@ -867,7 +1069,7 @@
           body: JSON.stringify({ rows: Array.from(selectedRows), category: cat.trim() }),
         });
         const data = await resp.json().catch(() => ({}));
-        if (!resp.ok) throw new Error(data.error || data.detail || ('HTTP ' + resp.status));
+        if (!resp.ok) throw new Error(data.error || ('HTTP ' + resp.status));
         selectedRows.clear();
         await loadItems();
         alert('✅ Обновлено: ' + (data.updated || 0));
@@ -893,13 +1095,11 @@
     document.getElementById('csv-file').addEventListener('change', async function() {
       const file = this.files && this.files[0];
       if (!file) return;
+      if (!confirm('Импортировать товары из CSV?\nКолонки: name, description, photo, retail, wholesale, wholesale_from, category')) {
+        this.value = ''; return;
+      }
       const fd = new FormData();
       fd.append('file', file);
-      const wait = await new Promise(r => {
-        const ok = confirm('Импортировать товары из CSV?\n\nКолонки: name/Название, description/Описание, photo/Фото, retail/Розница, wholesale/Опт, wholesale_from/Опт от, category/Категория');
-        r(ok);
-      });
-      if (!wait) { this.value = ''; return; }
       try {
         const resp = await fetch('/api/price/import_csv', {
           method: 'POST',
@@ -907,10 +1107,10 @@
           body: fd,
         });
         const data = await resp.json().catch(() => ({}));
-        if (!resp.ok) throw new Error(data.error || data.detail || ('HTTP ' + resp.status));
+        if (!resp.ok) throw new Error(data.error || ('HTTP ' + resp.status));
         alert('✅ Добавлено: ' + (data.added || 0));
         await loadItems();
-      } catch (e) { alert('Ошибка импорта: ' + e.message); }
+      } catch (e) { alert('Ошибка: ' + e.message); }
       this.value = '';
     });
 
@@ -921,10 +1121,7 @@
       btn.disabled = true; btn.textContent = '⏳';
       try {
         const resp = await fetch('/api/price/export_docx', { headers: { 'X-Admin-Token': adminToken } });
-        if (!resp.ok) {
-          const data = await resp.json().catch(() => ({}));
-          throw new Error(data.detail || data.error || ('HTTP ' + resp.status));
-        }
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
         const blob = await resp.blob();
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
@@ -936,7 +1133,7 @@
       finally { btn.disabled = false; btn.textContent = origText; }
     }
 
-    // ---------- QR ----------
+    // ---------- QR / LOGO ----------
     async function openQr() {
       const container = document.getElementById('qr-container');
       container.innerHTML = '<span class="text-gray-400 text-sm">Загрузка…</span>';
@@ -963,8 +1160,6 @@
       a.download = `price_qr_${new Date().toISOString().slice(0,10)}.png`;
       document.body.appendChild(a); a.click(); a.remove();
     }
-
-    // ---------- LOGO ----------
     async function openLogoModal() {
       openModal('modal-logo');
       document.getElementById('logo-status').classList.add('hidden');
@@ -985,7 +1180,7 @@
           img.classList.add('hidden'); img.removeAttribute('src');
           empty.classList.remove('hidden'); delBtn.classList.add('hidden');
         }
-      } catch (e) { console.error(e); }
+      } catch (e) {}
     }
     document.getElementById('logo-file').addEventListener('change', async function () {
       const file = this.files && this.files[0];
@@ -1001,7 +1196,7 @@
           method: 'POST', headers: { 'X-Admin-Token': adminToken }, body: fd,
         });
         const upData = await upResp.json().catch(() => ({}));
-        if (!upResp.ok) throw new Error(upData.error || upData.detail || 'Drive error');
+        if (!upResp.ok) throw new Error(upData.error || 'Drive error');
         const saveResp = await fetch('/api/price/logo', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'X-Admin-Token': adminToken },
@@ -1077,7 +1272,7 @@
           method: 'POST', headers: { 'X-Admin-Token': adminToken }, body: fd,
         });
         const data = await resp.json().catch(() => ({}));
-        if (!resp.ok) throw new Error(data.error || data.detail || ('HTTP ' + resp.status));
+        if (!resp.ok) throw new Error(data.error || ('HTTP ' + resp.status));
         document.getElementById('edit-photo').value = data.url;
         updatePhotoPreview();
         status.className = 'text-xs mt-1 text-green-600 dark:text-green-400';
@@ -1143,7 +1338,15 @@
     }
 
     // ---------- FILTERS / VIEW ----------
-    document.getElementById('search-input').addEventListener('input', function() { searchQuery = this.value; renderProducts(); });
+    document.getElementById('search-input').addEventListener('input', function() {
+      searchQuery = this.value;
+      renderProducts();
+      clearTimeout(typeaheadTimeout);
+      typeaheadTimeout = setTimeout(renderTypeahead, 200);
+    });
+    document.getElementById('search-input').addEventListener('focus', function() {
+      if (searchQuery.trim()) renderTypeahead();
+    });
     document.getElementById('category-select').addEventListener('change', function() { categoryFilter = this.value; renderPills(); renderProducts(); });
     document.getElementById('sort-select').addEventListener('change', function() { sortMode = this.value; renderProducts(); });
     function setView(mode) {
@@ -1157,7 +1360,6 @@
       document.getElementById('view-list-btn').classList.toggle('shadow-sm', mode === 'list');
       renderProducts();
     }
-
     function printPage() { window.print(); }
 
     document.getElementById('admin-password-input').addEventListener('keydown', e => {
@@ -1165,16 +1367,16 @@
     });
     document.addEventListener('keydown', e => {
       if (e.key === 'Escape') {
-        ['modal-product','modal-password','modal-editor','modal-confirm','modal-qr','modal-logo','modal-cart'].forEach(closeModal);
+        ['modal-product','modal-password','modal-editor','modal-confirm','modal-qr','modal-logo','modal-cart','modal-review'].forEach(closeModal);
+        document.getElementById('typeahead').classList.add('hidden');
       }
     });
-    ['modal-product','modal-password','modal-editor','modal-confirm','modal-qr','modal-logo','modal-cart'].forEach(id => {
+    ['modal-product','modal-password','modal-editor','modal-confirm','modal-qr','modal-logo','modal-cart','modal-review'].forEach(id => {
       document.getElementById(id).addEventListener('click', e => {
         if (e.target.id === id) closeModal(id);
       });
     });
 
-    // ---------- INIT ----------
     (async function init() {
       setView(viewMode);
       if (adminToken) setAdminUI(true);
@@ -1222,22 +1424,22 @@
 
   <div class="sw-wrap" id="swWrap">
     <div class="sw-links">
-      <a href="https://instagram.com/kobra_print_/" target="_blank" rel="noopener" class="sw-link sw-ig" title="Instagram" aria-label="Instagram">
+      <a href="https://instagram.com/kobra_print_/" target="_blank" rel="noopener" class="sw-link sw-ig" title="Instagram">
         <svg viewBox="0 0 24 24"><path d="M12 2.2c3.2 0 3.6 0 4.9.1 1.2.1 1.8.2 2.2.4.6.2 1 .5 1.4.9.4.4.7.8.9 1.4.2.4.3 1 .4 2.2.1 1.3.1 1.7.1 4.9s0 3.6-.1 4.9c-.1 1.2-.2 1.8-.4 2.2-.2.6-.5 1-.9 1.4-.4.4-.8.7-1.4.9-.4.2-1 .3-2.2.4-1.3.1-1.7.1-4.9.1s-3.6 0-4.9-.1c-1.2-.1-1.8-.2-2.2-.4-.6-.2-1-.5-1.4-.9-.4-.4-.7-.8-.9-1.4-.2-.4-.3-1-.4-2.2-.1-1.3-.1-1.7-.1-4.9s0-3.6.1-4.9c.1-1.2.2-1.8.4-2.2.2-.6.5-1 .9-1.4.4-.4.8-.7 1.4-.9.4-.2 1-.3 2.2-.4 1.3-.1 1.7-.1 4.9-.1zM12 0C8.7 0 8.3 0 7 .1 5.7.2 4.8.4 4 .7c-.8.3-1.5.7-2.2 1.4C1.1 2.8.7 3.5.4 4.3.1 5.1-.1 6 .0 7.3.0 8.6 0 9.0 0 12.3s0 3.7.1 5c.1 1.3.3 2.2.6 3 .3.8.7 1.5 1.4 2.2.7.7 1.4 1.1 2.2 1.4.8.3 1.7.5 3 .6 1.3.1 1.7.1 5 .1s3.7 0 5-.1c1.3-.1 2.2-.3 3-.6.8-.3 1.5-.7 2.2-1.4.7-.7 1.1-1.4 1.4-2.2.3-.8.5-1.7.6-3 .1-1.3.1-1.7.1-5s0-3.7-.1-5c-.1-1.3-.3-2.2-.6-3-.3-.8-.7-1.5-1.4-2.2C21.2 1.1 20.5.7 19.7.4c-.8-.3-1.7-.5-3-.6C15.7 0 15.3 0 12 0zm0 5.8a6.2 6.2 0 1 0 0 12.4A6.2 6.2 0 0 0 12 5.8zm0 10.2a4 4 0 1 1 0-8 4 4 0 0 1 0 8zm6.4-11.8a1.4 1.4 0 1 0 0 2.9 1.4 1.4 0 0 0 0-2.9z"/></svg>
       </a>
-      <a href="https://telegram.me/master3Dpech" target="_blank" rel="noopener" class="sw-link sw-tg" title="Telegram" aria-label="Telegram">
+      <a href="https://telegram.me/master3Dpech" target="_blank" rel="noopener" class="sw-link sw-tg" title="Telegram">
         <svg viewBox="0 0 24 24"><path d="M9.04 15.47l-.38 5.34c.54 0 .78-.23 1.06-.51l2.55-2.45 5.29 3.88c.97.54 1.66.26 1.92-.9L21.9 3.92c.32-1.46-.53-2.03-1.47-1.68L1.7 9.48C.27 10.04.3 10.86 1.46 11.21l4.79 1.5L17.5 5.9c.52-.35 1-.15.61.2L9.04 15.47z"/></svg>
       </a>
-      <a href="https://vk.ru/club238320840" target="_blank" rel="noopener" class="sw-link sw-vk" title="ВКонтакте" aria-label="ВКонтакте">
+      <a href="https://vk.ru/club238320840" target="_blank" rel="noopener" class="sw-link sw-vk" title="ВКонтакте">
         <svg viewBox="0 0 24 24"><path d="M13.16 18.5c-5.77 0-9.07-3.96-9.2-10.54h2.89c.09 4.83 2.22 6.88 3.91 7.3V7.96h2.72v4.17c1.67-.18 3.42-2.08 4.01-4.17h2.72c-.45 2.57-2.36 4.47-3.71 5.25 1.35.63 3.52 2.29 4.35 5.29h-3c-.64-1.99-2.23-3.53-4.37-3.74v3.74h-.32z"/></svg>
       </a>
-      <a href="mailto:kobraprintteam@gmail.com" class="sw-link sw-email" title="Email" aria-label="Email">
+      <a href="mailto:kobraprintteam@gmail.com" class="sw-link sw-email" title="Email">
         <svg viewBox="0 0 24 24"><path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4l-8 5-8-5V6l8 5 8-5v2z"/></svg>
       </a>
-      <a href="https://youtube.com/@kobra_print" target="_blank" rel="noopener" class="sw-link sw-yt" title="YouTube" aria-label="YouTube">
+      <a href="https://youtube.com/@kobra_print" target="_blank" rel="noopener" class="sw-link sw-yt" title="YouTube">
         <svg viewBox="0 0 24 24"><path d="M23.5 6.2c-.3-1.1-1.1-1.9-2.2-2.2C19.4 3.5 12 3.5 12 3.5s-7.4 0-9.3.5c-1.1.3-1.9 1.1-2.2 2.2C0 8.1 0 12 0 12s0 3.9.5 5.8c.3 1.1 1.1 1.9 2.2 2.2 1.9.5 9.3.5 9.3.5s7.4 0 9.3-.5c1.1-.3 1.9-1.1 2.2-2.2.5-1.9.5-5.8.5-5.8s0-3.9-.5-5.8zM9.6 15.6V8.4l6.2 3.6-6.2 3.6z"/></svg>
       </a>
-      <a href="https://max.ru/join/OD6pOzPka78ILkoRH181bISHzEHVhIGtMz5_9PsdDjc" target="_blank" rel="noopener" class="sw-link sw-max" title="Max" aria-label="Max">
+      <a href="https://max.ru/join/OD6pOzPka78ILkoRH181bISHzEHVhIGtMz5_9PsdDjc" target="_blank" rel="noopener" class="sw-link sw-max" title="Max">
         <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1.5 14.5v-9l5 4.5-5 4.5z"/></svg>
       </a>
     </div>
