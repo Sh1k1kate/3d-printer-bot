@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>💰 Прайс-лист | 3D-печать</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💰</text></svg>">
   <script src="https://cdn.tailwindcss.com"></script>
   <script>tailwind.config = { darkMode: 'class' };</script>
   <style>
@@ -15,6 +16,38 @@
     @keyframes fadeIn { from { opacity: 0; transform: translateY(4px);} to { opacity: 1; transform: none;} }
     .line-clamp-2 { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
     .line-clamp-3 { display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; }
+    .skeleton {
+      background: linear-gradient(90deg, rgba(0,0,0,0.06) 25%, rgba(0,0,0,0.12) 37%, rgba(0,0,0,0.06) 63%);
+      background-size: 400% 100%;
+      animation: shimmer 1.4s ease infinite;
+      border-radius: 0.5rem;
+    }
+    .dark .skeleton {
+      background: linear-gradient(90deg, rgba(255,255,255,0.06) 25%, rgba(255,255,255,0.14) 37%, rgba(255,255,255,0.06) 63%);
+      background-size: 400% 100%;
+    }
+    @keyframes shimmer { 0% { background-position: 100% 0; } 100% { background-position: -100% 0; } }
+    .sel-checkbox { width: 20px; height: 20px; cursor: pointer; }
+
+    /* ПЕЧАТЬ */
+    @media print {
+      header, #admin-panel, #filters-section, #cart-fab, #swWrap, #btn-print-top, .no-print, #empty-state { display: none !important; }
+      body { background: #fff !important; color: #000 !important; }
+      #tab-content, #products-grid {
+        display: block !important;
+        grid-template-columns: repeat(2, 1fr) !important;
+      }
+      #products-grid > * {
+        page-break-inside: avoid;
+        break-inside: avoid;
+        box-shadow: none !important;
+        border: 1px solid #ddd !important;
+        margin-bottom: 8px;
+      }
+      .card-hover:hover { transform: none !important; box-shadow: none !important; }
+      #products-grid { display: flex !important; flex-wrap: wrap; gap: 8px; }
+      #products-grid > * { flex: 0 0 calc(50% - 4px); }
+    }
   </style>
 </head>
 <body class="bg-gray-50 dark:bg-gray-900 text-gray-800 dark:text-gray-200 antialiased">
@@ -28,6 +61,7 @@
         <span class="text-xs bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300 px-2 py-0.5 rounded-full">3D-печать</span>
       </div>
       <div class="flex items-center gap-2">
+        <button id="btn-print-top" onclick="printPage()" title="Печать/PDF" class="no-print bg-gray-200 dark:bg-gray-700 px-3 py-1.5 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600 transition text-sm">🖨</button>
         <button onclick="toggleTheme()" class="bg-gray-200 dark:bg-gray-700 px-3 py-1.5 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600 transition text-sm">
           <span id="theme-icon">🌙</span>
         </button>
@@ -69,38 +103,58 @@
     <div class="container mx-auto px-4 py-3 max-w-7xl flex items-center justify-between flex-wrap gap-3">
       <div class="text-sm text-amber-800 dark:text-amber-200">🔓 <b>Режим администратора</b></div>
       <div class="flex gap-2 flex-wrap">
-        <button onclick="openEditor(null)" class="bg-blue-500 hover:bg-blue-600 text-white text-sm px-4 py-1.5 rounded-lg">➕ Добавить товар</button>
+        <button onclick="openEditor(null)" class="bg-blue-500 hover:bg-blue-600 text-white text-sm px-4 py-1.5 rounded-lg">➕ Добавить</button>
+        <button onclick="exportCsv()" class="bg-orange-600 hover:bg-orange-700 text-white text-sm px-4 py-1.5 rounded-lg">📥 CSV-экспорт</button>
+        <button onclick="document.getElementById('csv-file').click()" class="bg-orange-500 hover:bg-orange-600 text-white text-sm px-4 py-1.5 rounded-lg">📤 CSV-импорт</button>
+        <input type="file" id="csv-file" accept=".csv" class="hidden">
         <button id="export-docx-btn" onclick="exportDocx()" class="bg-emerald-600 hover:bg-emerald-700 text-white text-sm px-4 py-1.5 rounded-lg">📄 Word</button>
         <button onclick="openQr()" class="bg-violet-600 hover:bg-violet-700 text-white text-sm px-4 py-1.5 rounded-lg">🔲 QR</button>
-        <button onclick="openLogoModal()" class="bg-cyan-600 hover:bg-cyan-700 text-white text-sm px-4 py-1.5 rounded-lg">🖼 Логотип</button>
+        <button onclick="openLogoModal()" class="bg-cyan-600 hover:bg-cyan-700 text-white text-sm px-4 py-1.5 rounded-lg">🖼 Лого</button>
         <button onclick="logoutAdmin()" class="bg-gray-200 dark:bg-gray-700 text-sm px-4 py-1.5 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600">🚪 Выйти</button>
       </div>
     </div>
   </section>
 
-  <!-- FILTERS -->
-  <section class="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
-    <div class="container mx-auto px-4 py-4 max-w-7xl flex flex-wrap items-center gap-3">
-      <div class="flex-1 min-w-[200px]">
-        <input type="text" id="search-input" placeholder="🔍 Поиск по названию или описанию" class="w-full px-4 py-2 border rounded-lg bg-white dark:bg-gray-700 dark:border-gray-600">
-      </div>
-      <select id="category-select" class="px-3 py-2 border rounded-lg bg-white dark:bg-gray-700 dark:border-gray-600">
-        <option value="">Все категории</option>
-      </select>
-      <select id="sort-select" class="px-3 py-2 border rounded-lg bg-white dark:bg-gray-700 dark:border-gray-600">
-        <option value="default">Без сортировки</option>
-        <option value="name-asc">Имя A → Я</option>
-        <option value="name-desc">Имя Я → A</option>
-        <option value="price-asc">Цена ↑</option>
-        <option value="price-desc">Цена ↓</option>
-      </select>
-      <div class="flex gap-1 bg-gray-100 dark:bg-gray-700 rounded-lg p-1">
-        <button id="view-grid-btn" onclick="setView('grid')" class="px-3 py-1 text-sm rounded-md bg-white dark:bg-gray-800 shadow-sm">▦</button>
-        <button id="view-list-btn" onclick="setView('list')" class="px-3 py-1 text-sm rounded-md">☰</button>
+  <!-- BULK PANEL -->
+  <section id="bulk-panel" class="hidden bg-blue-50 dark:bg-blue-950 border-b border-blue-200 dark:border-blue-800">
+    <div class="container mx-auto px-4 py-2 max-w-7xl flex items-center justify-between flex-wrap gap-2">
+      <div class="text-sm text-blue-800 dark:text-blue-200">Выбрано: <b id="bulk-count">0</b></div>
+      <div class="flex gap-2 flex-wrap">
+        <button onclick="bulkSetCategory()" class="bg-indigo-600 hover:bg-indigo-700 text-white text-sm px-3 py-1.5 rounded-lg">🏷 Сменить категорию</button>
+        <button onclick="bulkDelete()" class="bg-red-600 hover:bg-red-700 text-white text-sm px-3 py-1.5 rounded-lg">🗑 Удалить</button>
+        <button onclick="clearSelection()" class="bg-gray-300 dark:bg-gray-700 text-gray-800 dark:text-gray-200 text-sm px-3 py-1.5 rounded-lg">Снять выделение</button>
       </div>
     </div>
-    <div class="container mx-auto px-4 pb-3 max-w-7xl">
-      <div id="category-pills" class="flex flex-wrap gap-2"></div>
+  </section>
+
+  <!-- FILTERS -->
+  <section id="filters-section" class="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
+    <div class="container mx-auto px-4 py-4 max-w-7xl">
+      <div class="flex flex-wrap items-center gap-3">
+        <div class="flex-1 min-w-[200px]">
+          <input type="text" id="search-input" placeholder="🔍 Поиск по названию или описанию" class="w-full px-4 py-2 border rounded-lg bg-white dark:bg-gray-700 dark:border-gray-600">
+        </div>
+        <button onclick="toggleFilters()" class="md:hidden bg-gray-200 dark:bg-gray-700 px-4 py-2 rounded-lg text-sm">
+          <span id="filters-toggle-text">Фильтры ▼</span>
+        </button>
+        <div id="filters-extra" class="hidden md:flex w-full md:w-auto flex-wrap items-center gap-3">
+          <select id="category-select" class="px-3 py-2 border rounded-lg bg-white dark:bg-gray-700 dark:border-gray-600">
+            <option value="">Все категории</option>
+          </select>
+          <select id="sort-select" class="px-3 py-2 border rounded-lg bg-white dark:bg-gray-700 dark:border-gray-600">
+            <option value="default">Без сортировки</option>
+            <option value="name-asc">Имя A → Я</option>
+            <option value="name-desc">Имя Я → A</option>
+            <option value="price-asc">Цена ↑</option>
+            <option value="price-desc">Цена ↓</option>
+          </select>
+          <div class="flex gap-1 bg-gray-100 dark:bg-gray-700 rounded-lg p-1">
+            <button id="view-grid-btn" onclick="setView('grid')" class="px-3 py-1 text-sm rounded-md bg-white dark:bg-gray-800 shadow-sm">▦</button>
+            <button id="view-list-btn" onclick="setView('list')" class="px-3 py-1 text-sm rounded-md">☰</button>
+          </div>
+        </div>
+      </div>
+      <div id="category-pills" class="flex flex-wrap gap-2 mt-3"></div>
     </div>
   </section>
 
@@ -114,24 +168,28 @@
     </div>
   </section>
 
-  <!-- MODAL: PRODUCT DETAILS (на ПК шире на 40%) -->
+  <!-- MODAL: PRODUCT -->
   <div id="modal-product" class="hidden fixed inset-0 bg-black/60 z-40 flex items-center justify-center p-4">
     <div class="bg-white dark:bg-gray-800 rounded-2xl max-w-3xl md:max-w-[1075px] w-full max-h-[90vh] overflow-y-auto shadow-2xl">
       <div class="grid md:grid-cols-2 gap-0">
         <div class="bg-gray-100 dark:bg-gray-900 flex items-center justify-center p-6 min-h-[240px] md:min-h-[340px]">
           <img id="modal-photo" src="" alt="" class="max-h-[380px] md:max-h-[530px] max-w-full rounded-lg object-contain">
         </div>
-        <div class="p-6 md:p-8">
+        <div class="p-6 md:p-8 flex flex-col">
           <div class="flex justify-between items-start gap-3 mb-2">
             <h3 id="modal-name" class="text-2xl md:text-3xl font-bold"></h3>
             <button onclick="closeModal('modal-product')" class="text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 text-2xl leading-none">×</button>
           </div>
-          <div id="modal-category" class="inline-block text-xs bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300 px-2 py-0.5 rounded-full mb-3"></div>
+          <div id="modal-category" class="inline-block text-xs bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300 px-2 py-0.5 rounded-full mb-3 self-start"></div>
           <p id="modal-description" class="text-sm md:text-base text-gray-600 dark:text-gray-300 mb-4 whitespace-pre-wrap"></p>
-          <div class="space-y-2 border-t border-gray-200 dark:border-gray-700 pt-4">
+          <div class="space-y-2 border-t border-gray-200 dark:border-gray-700 pt-4 mt-auto">
             <div class="flex justify-between"><span class="text-gray-500 dark:text-gray-400">Розница:</span><span id="modal-retail" class="font-semibold"></span></div>
             <div class="flex justify-between"><span class="text-gray-500 dark:text-gray-400">Опт:</span><span id="modal-wholesale" class="font-semibold"></span></div>
             <div class="flex justify-between"><span class="text-gray-500 dark:text-gray-400">Опт от:</span><span id="modal-wholesale-from" class="font-semibold"></span></div>
+          </div>
+          <div class="flex gap-2 mt-4 flex-wrap">
+            <button onclick="addCurrentToCart()" class="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg">🛒 В корзину</button>
+            <button onclick="shareCurrentItem()" class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg">📤 Поделиться</button>
           </div>
         </div>
       </div>
@@ -172,13 +230,13 @@
           <label class="block text-sm font-medium mb-1">Фото товара</label>
           <div class="flex gap-2">
             <input id="edit-photo" type="text" class="flex-1 px-3 py-2 border rounded-lg bg-white dark:bg-gray-700 dark:border-gray-600" placeholder="https://... или загрузите файл">
-            <button type="button" onclick="document.getElementById('edit-photo-file').click()" class="px-3 py-2 rounded-lg bg-blue-500 hover:bg-blue-600 text-white text-sm whitespace-nowrap">📤 Загрузить</button>
+            <button type="button" onclick="document.getElementById('edit-photo-file').click()" class="px-3 py-2 rounded-lg bg-blue-500 hover:bg-blue-600 text-white text-sm whitespace-nowrap">📤</button>
           </div>
           <input type="file" id="edit-photo-file" accept="image/*" capture="environment" class="hidden">
           <div id="upload-status" class="text-xs mt-1 hidden"></div>
           <div class="mt-2 bg-gray-100 dark:bg-gray-900 rounded-lg p-3 flex items-center justify-center min-h-[120px]">
             <img id="edit-photo-preview" src="" alt="" class="max-h-[160px] max-w-full rounded object-contain hidden">
-            <span id="edit-photo-empty" class="text-xs text-gray-400">Превью появится здесь</span>
+            <span id="edit-photo-empty" class="text-xs text-gray-400">Превью</span>
           </div>
         </div>
         <div class="grid grid-cols-3 gap-3">
@@ -191,7 +249,7 @@
             <input id="edit-wholesale" type="text" class="w-full px-3 py-2 border rounded-lg bg-white dark:bg-gray-700 dark:border-gray-600">
           </div>
           <div>
-            <label class="block text-sm font-medium mb-1">Опт от (шт)</label>
+            <label class="block text-sm font-medium mb-1">Опт от</label>
             <input id="edit-wholesale-from" type="text" class="w-full px-3 py-2 border rounded-lg bg-white dark:bg-gray-700 dark:border-gray-600">
           </div>
         </div>
@@ -209,6 +267,28 @@
     </div>
   </div>
 
+  <!-- MODAL: CART -->
+  <div id="modal-cart" class="hidden fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+    <div class="bg-white dark:bg-gray-800 rounded-2xl max-w-lg w-full max-h-[90vh] overflow-y-auto shadow-2xl p-6">
+      <div class="flex justify-between items-center mb-4">
+        <h3 class="text-xl font-bold">🛒 Корзина</h3>
+        <button onclick="closeModal('modal-cart')" class="text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 text-2xl leading-none">×</button>
+      </div>
+      <div id="cart-items" class="space-y-2 mb-4"></div>
+      <div id="cart-empty" class="hidden text-center py-8 text-gray-500">Корзина пуста</div>
+      <div id="cart-form" class="space-y-2 border-t border-gray-200 dark:border-gray-700 pt-4">
+        <input id="cart-name" type="text" placeholder="Ваше имя" class="w-full px-3 py-2 border rounded-lg bg-white dark:bg-gray-700 dark:border-gray-600">
+        <input id="cart-contact" type="text" placeholder="Телефон или @username *" class="w-full px-3 py-2 border rounded-lg bg-white dark:bg-gray-700 dark:border-gray-600">
+        <textarea id="cart-comment" rows="2" placeholder="Комментарий (необязательно)" class="w-full px-3 py-2 border rounded-lg bg-white dark:bg-gray-700 dark:border-gray-600"></textarea>
+        <div id="cart-error" class="hidden text-red-600 text-sm"></div>
+      </div>
+      <div class="flex gap-2 justify-end mt-4">
+        <button onclick="clearCart()" class="px-4 py-2 rounded-lg bg-red-100 hover:bg-red-200 dark:bg-red-900 dark:hover:bg-red-800 text-red-700 dark:text-red-200 text-sm">🗑 Очистить</button>
+        <button onclick="submitCart()" class="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm">📤 Отправить заявку</button>
+      </div>
+    </div>
+  </div>
+
   <!-- MODAL: QR -->
   <div id="modal-qr" class="hidden fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
     <div class="bg-white dark:bg-gray-800 rounded-2xl max-w-sm w-full p-6 shadow-2xl text-center">
@@ -218,7 +298,7 @@
         <span class="text-gray-400 text-sm">Загрузка…</span>
       </div>
       <div class="flex gap-2 justify-center mt-4">
-        <button onclick="downloadQr()" class="px-4 py-2 rounded-lg bg-violet-600 hover:bg-violet-700 text-white text-sm">⬇️ Скачать PNG</button>
+        <button onclick="downloadQr()" class="px-4 py-2 rounded-lg bg-violet-600 hover:bg-violet-700 text-white text-sm">⬇️ Скачать</button>
         <button onclick="closeModal('modal-qr')" class="px-4 py-2 rounded-lg bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-sm">Закрыть</button>
       </div>
     </div>
@@ -228,36 +308,39 @@
   <div id="modal-logo" class="hidden fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
     <div class="bg-white dark:bg-gray-800 rounded-2xl max-w-md w-full p-6 shadow-2xl text-center">
       <h3 class="text-xl font-bold mb-1">🖼 Логотип</h3>
-      <p class="text-xs text-gray-500 dark:text-gray-400 mb-4">Используется в шапке экспортируемого Word-прайса</p>
-
+      <p class="text-xs text-gray-500 dark:text-gray-400 mb-4">Для шапки Word-прайса</p>
       <div class="bg-gray-100 dark:bg-gray-900 rounded-xl p-4 mb-4 flex items-center justify-center min-h-[140px]">
         <img id="logo-preview" src="" alt="" class="max-h-[120px] max-w-full object-contain hidden">
-        <span id="logo-empty" class="text-sm text-gray-400">Логотип не загружен</span>
+        <span id="logo-empty" class="text-sm text-gray-400">Не загружен</span>
       </div>
-
       <input type="file" id="logo-file" accept="image/*" class="hidden">
       <div id="logo-status" class="text-xs mb-3 hidden"></div>
-
       <div class="flex gap-2 justify-center flex-wrap">
         <button onclick="document.getElementById('logo-file').click()" class="px-4 py-2 rounded-lg bg-blue-500 hover:bg-blue-600 text-white text-sm">📤 Загрузить</button>
-        <button id="logo-delete-btn" onclick="deleteLogo()" class="px-4 py-2 rounded-lg bg-red-500 hover:bg-red-600 text-white text-sm hidden">🗑 Удалить</button>
-        <button onclick="closeModal('modal-logo')" class="px-4 py-2 rounded-lg bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-sm">Закрыть</button>
+        <button id="logo-delete-btn" onclick="deleteLogo()" class="px-4 py-2 rounded-lg bg-red-500 hover:bg-red-600 text-white text-sm hidden">🗑</button>
+        <button onclick="closeModal('modal-logo')" class="px-4 py-2 rounded-lg bg-gray-200 dark:bg-gray-700 text-sm">Закрыть</button>
       </div>
     </div>
   </div>
 
-  <!-- MODAL: CONFIRM DELETE -->
+  <!-- MODAL: CONFIRM -->
   <div id="modal-confirm" class="hidden fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
     <div class="bg-white dark:bg-gray-800 rounded-2xl max-w-sm w-full p-6 shadow-2xl">
-      <h3 class="text-xl font-bold mb-2">🗑 Удалить товар?</h3>
+      <h3 id="confirm-title" class="text-xl font-bold mb-2">Удалить?</h3>
       <p class="text-sm text-gray-500 dark:text-gray-400 mb-4">Это действие нельзя отменить.</p>
       <div id="confirm-name" class="text-sm font-medium mb-4"></div>
       <div class="flex gap-2 justify-end">
-        <button onclick="closeModal('modal-confirm')" class="px-4 py-2 rounded-lg bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-sm">Отмена</button>
+        <button onclick="closeModal('modal-confirm')" class="px-4 py-2 rounded-lg bg-gray-200 dark:bg-gray-700 text-sm">Отмена</button>
         <button onclick="confirmDelete()" class="px-4 py-2 rounded-lg bg-red-500 hover:bg-red-600 text-white text-sm">Удалить</button>
       </div>
     </div>
   </div>
+
+  <!-- CART FAB -->
+  <button id="cart-fab" onclick="openCart()" class="hidden fixed left-5 bottom-5 z-40 w-14 h-14 rounded-full bg-emerald-600 hover:bg-emerald-700 text-white shadow-xl transition">
+    <span class="text-2xl">🛒</span>
+    <span id="cart-badge" class="absolute -top-1 -right-1 bg-red-500 text-white text-xs font-bold rounded-full w-6 h-6 flex items-center justify-center hidden">0</span>
+  </button>
 
   <script>
     // ---------- THEME ----------
@@ -281,6 +364,10 @@
     let editingRowIndex = null;
     let deleteRowIndex = null;
     let qrBlobUrl = null;
+    let loading = true;
+    let selectedRows = new Set();
+    let currentModalItem = null;
+    let cart = JSON.parse(localStorage.getItem('priceCart') || '{}');
 
     const urlParams = new URLSearchParams(window.location.search);
     const quickAdminMode = urlParams.get('admin') === '1';
@@ -288,29 +375,36 @@
     // ---------- UTILS ----------
     function escapeHtml(s) {
       if (s === null || s === undefined) return '';
-      return String(s)
-        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     }
-
     function closeModal(id) { document.getElementById(id).classList.add('hidden'); }
     function openModal(id) { document.getElementById(id).classList.remove('hidden'); }
-
     function formatPrice(v) {
       if (v === null || v === undefined || v === '') return '—';
       const n = Number(String(v).replace(',', '.'));
       if (!isFinite(n)) return escapeHtml(v);
       return n.toLocaleString('ru-RU') + ' ₽';
     }
-
     function parseNum(v) {
       if (v === null || v === undefined || v === '') return null;
       const n = Number(String(v).replace(',', '.'));
       return isFinite(n) ? n : null;
     }
 
+    // ---------- FILTERS MOBILE ----------
+    let filtersOpen = false;
+    function toggleFilters() {
+      filtersOpen = !filtersOpen;
+      document.getElementById('filters-extra').classList.toggle('hidden', !filtersOpen);
+      document.getElementById('filters-extra').classList.toggle('flex', filtersOpen);
+      document.getElementById('filters-toggle-text').textContent = filtersOpen ? 'Фильтры ▲' : 'Фильтры ▼';
+    }
+
     // ---------- LOAD ----------
     async function loadItems() {
+      loading = true;
+      renderSkeleton();
       try {
         const url = adminToken ? '/api/price/admin' : '/api/price';
         const headers = adminToken ? { 'X-Admin-Token': adminToken } : {};
@@ -324,8 +418,31 @@
         const data = await resp.json();
         allItems = data.items || [];
         categories = data.categories || [];
+        loading = false;
         render();
-      } catch (e) { console.error(e); }
+        checkHash();
+      } catch (e) { loading = false; console.error(e); }
+    }
+
+    function renderSkeleton() {
+      const grid = document.getElementById('products-grid');
+      grid.className = 'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4';
+      let html = '';
+      for (let i = 0; i < 8; i++) {
+        html += `
+          <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm overflow-hidden">
+            <div class="skeleton h-48 w-full"></div>
+            <div class="p-4 space-y-2">
+              <div class="skeleton h-5 w-3/4"></div>
+              <div class="skeleton h-3 w-1/3"></div>
+              <div class="skeleton h-3 w-full"></div>
+              <div class="skeleton h-3 w-5/6"></div>
+              <div class="skeleton h-6 w-1/2 mt-3"></div>
+            </div>
+          </div>`;
+      }
+      grid.innerHTML = html;
+      document.getElementById('empty-state').classList.add('hidden');
     }
 
     // ---------- RENDER ----------
@@ -334,6 +451,8 @@
       renderCategories();
       renderPills();
       renderProducts();
+      renderBulkPanel();
+      updateCartFab();
     }
 
     function renderStats() {
@@ -356,7 +475,6 @@
         select.appendChild(opt);
       });
       select.value = current;
-
       const dl = document.getElementById('category-list');
       dl.innerHTML = '';
       categories.forEach(c => {
@@ -418,6 +536,7 @@
       grid.querySelectorAll('[data-open]').forEach(el => {
         el.addEventListener('click', (ev) => {
           if (ev.target.closest('[data-action]')) return;
+          if (ev.target.closest('.sel-checkbox-wrap')) return;
           openProduct(Number(el.dataset.open));
         });
       });
@@ -427,6 +546,26 @@
       grid.querySelectorAll('[data-action="delete"]').forEach(el => {
         el.addEventListener('click', (ev) => { ev.stopPropagation(); openDeleteConfirm(Number(el.dataset.row), el.dataset.name); });
       });
+      grid.querySelectorAll('.sel-checkbox').forEach(el => {
+        el.addEventListener('click', (ev) => ev.stopPropagation());
+        el.addEventListener('change', (ev) => {
+          const r = Number(el.dataset.row);
+          if (el.checked) selectedRows.add(r);
+          else selectedRows.delete(r);
+          renderBulkPanel();
+        });
+      });
+      grid.querySelectorAll('[data-action="add-cart"]').forEach(el => {
+        el.addEventListener('click', (ev) => { ev.stopPropagation(); addToCart(Number(el.dataset.row), 1); });
+      });
+    }
+
+    function renderSelCheckbox(rowIndex) {
+      if (!adminToken || rowIndex === undefined) return '';
+      const checked = selectedRows.has(rowIndex) ? 'checked' : '';
+      return `<label class="sel-checkbox-wrap absolute top-2 left-2 bg-white dark:bg-gray-800 rounded p-1 cursor-pointer no-print" onclick="event.stopPropagation();">
+        <input type="checkbox" class="sel-checkbox" data-row="${rowIndex}" ${checked}>
+      </label>`;
     }
 
     function renderAdminButtons(rowIndex, name) {
@@ -441,14 +580,20 @@
 
     function renderCard(it, idx) {
       const photo = it.photo
-        ? `<div class="photo-zoom overflow-hidden rounded-t-xl bg-gray-100 dark:bg-gray-900 h-48 flex items-center justify-center">
+        ? `<div class="photo-zoom overflow-hidden rounded-t-xl bg-gray-100 dark:bg-gray-900 h-48 flex items-center justify-center relative">
              <img src="${escapeHtml(it.photo)}" alt="${escapeHtml(it.name)}" class="max-h-full max-w-full object-contain" onerror="this.parentElement.innerHTML='<span class=&quot;text-gray-400 text-3xl&quot;>📦</span>'">
+             ${renderSelCheckbox(it.row_index)}
+             <button data-action="add-cart" data-row="${it.row_index}" class="no-print absolute bottom-2 right-2 bg-emerald-600 hover:bg-emerald-700 text-white w-10 h-10 rounded-full shadow-lg text-xl" title="В корзину">+</button>
            </div>`
-        : `<div class="rounded-t-xl bg-gray-100 dark:bg-gray-900 h-48 flex items-center justify-center text-4xl text-gray-300 dark:text-gray-600">📦</div>`;
+        : `<div class="rounded-t-xl bg-gray-100 dark:bg-gray-900 h-48 flex items-center justify-center text-4xl text-gray-300 dark:text-gray-600 relative">
+             📦
+             ${renderSelCheckbox(it.row_index)}
+             <button data-action="add-cart" data-row="${it.row_index}" class="no-print absolute bottom-2 right-2 bg-emerald-600 hover:bg-emerald-700 text-white w-10 h-10 rounded-full shadow-lg text-xl" title="В корзину">+</button>
+           </div>`;
       const priceHtml = it.retail ? `<div class="text-lg font-bold text-blue-600 dark:text-blue-400">${formatPrice(it.retail)}</div>` : '<div class="text-sm text-gray-400">Цена по запросу</div>';
       const wholesaleHtml = it.wholesale ? `<div class="text-xs text-gray-500 dark:text-gray-400">Опт: ${formatPrice(it.wholesale)}${it.wholesale_from ? ' от ' + escapeHtml(it.wholesale_from) + ' шт' : ''}</div>` : '';
       return `
-        <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm card-hover transition cursor-pointer fade-in" data-open="${idx}">
+        <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm card-hover transition cursor-pointer fade-in relative" data-open="${idx}">
           ${photo}
           <div class="p-4">
             <div class="flex justify-between items-start gap-2 mb-1">
@@ -457,9 +602,7 @@
             </div>
             <div class="text-xs text-gray-500 dark:text-gray-400 mb-2">${escapeHtml(it.category || 'Без категории')}</div>
             ${it.description ? `<p class="text-sm text-gray-600 dark:text-gray-300 mb-3 line-clamp-2">${escapeHtml(it.description)}</p>` : ''}
-            <div class="flex justify-between items-end">
-              <div>${priceHtml}${wholesaleHtml}</div>
-            </div>
+            <div class="flex justify-between items-end"><div>${priceHtml}${wholesaleHtml}</div></div>
           </div>
         </div>
       `;
@@ -467,8 +610,8 @@
 
     function renderListItem(it, idx) {
       const photo = it.photo
-        ? `<div class="w-20 h-20 flex-shrink-0 rounded-lg overflow-hidden bg-gray-100 dark:bg-gray-900 flex items-center justify-center"><img src="${escapeHtml(it.photo)}" alt="" class="max-h-full max-w-full object-contain"></div>`
-        : `<div class="w-20 h-20 flex-shrink-0 rounded-lg bg-gray-100 dark:bg-gray-900 flex items-center justify-center text-2xl text-gray-300 dark:text-gray-600">📦</div>`;
+        ? `<div class="w-20 h-20 flex-shrink-0 rounded-lg overflow-hidden bg-gray-100 dark:bg-gray-900 flex items-center justify-center relative"><img src="${escapeHtml(it.photo)}" alt="" class="max-h-full max-w-full object-contain">${renderSelCheckbox(it.row_index)}</div>`
+        : `<div class="w-20 h-20 flex-shrink-0 rounded-lg bg-gray-100 dark:bg-gray-900 flex items-center justify-center text-2xl text-gray-300 dark:text-gray-600 relative">📦${renderSelCheckbox(it.row_index)}</div>`;
       return `
         <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm p-3 flex gap-3 items-center card-hover cursor-pointer fade-in" data-open="${idx}">
           ${photo}
@@ -480,9 +623,10 @@
             <div class="text-xs text-gray-500 dark:text-gray-400">${escapeHtml(it.category || 'Без категории')}</div>
             ${it.description ? `<p class="text-sm text-gray-600 dark:text-gray-300 line-clamp-2 mt-1">${escapeHtml(it.description)}</p>` : ''}
           </div>
-          <div class="text-right flex-shrink-0">
+          <div class="text-right flex-shrink-0 flex flex-col items-end gap-1">
             <div class="font-bold text-blue-600 dark:text-blue-400">${it.retail ? formatPrice(it.retail) : '—'}</div>
             ${it.wholesale ? `<div class="text-xs text-gray-500">Опт: ${formatPrice(it.wholesale)}</div>` : ''}
+            <button data-action="add-cart" data-row="${it.row_index}" class="no-print bg-emerald-600 hover:bg-emerald-700 text-white w-8 h-8 rounded-full shadow text-lg" title="В корзину">+</button>
           </div>
         </div>
       `;
@@ -492,6 +636,7 @@
     function openProduct(idx) {
       const it = getFilteredSorted()[idx];
       if (!it) return;
+      currentModalItem = it;
       document.getElementById('modal-name').textContent = it.name || '—';
       document.getElementById('modal-description').textContent = it.description || 'Без описания';
       document.getElementById('modal-category').textContent = it.category || 'Без категории';
@@ -504,6 +649,143 @@
       openModal('modal-product');
     }
 
+    // ---------- DEEP LINK ----------
+    function checkHash() {
+      const m = window.location.hash.match(/^#item=(\d+)$/);
+      if (m) {
+        const rowIdx = parseInt(m[1], 10);
+        const items = getFilteredSorted();
+        const idx = items.findIndex(it => it.row_index === rowIdx);
+        if (idx >= 0) openProduct(idx);
+      }
+    }
+    window.addEventListener('hashchange', checkHash);
+
+    async function shareCurrentItem() {
+      if (!currentModalItem) return;
+      const url = window.location.origin + window.location.pathname + '#item=' + currentModalItem.row_index;
+      const shareData = { title: currentModalItem.name || 'Товар', text: currentModalItem.name || '', url };
+      if (navigator.share) {
+        try { await navigator.share(shareData); return; } catch (e) {}
+      }
+      try {
+        await navigator.clipboard.writeText(url);
+        alert('✅ Ссылка скопирована:\n' + url);
+      } catch (e) {
+        prompt('Скопируйте ссылку:', url);
+      }
+    }
+
+    // ---------- КОРЗИНА ----------
+    function saveCart() { localStorage.setItem('priceCart', JSON.stringify(cart)); }
+    function cartCount() { return Object.values(cart).reduce((s, q) => s + q, 0); }
+    function updateCartFab() {
+      const badge = document.getElementById('cart-badge');
+      const n = cartCount();
+      document.getElementById('cart-fab').classList.toggle('hidden', n === 0);
+      if (n > 0) {
+        badge.textContent = n;
+        badge.classList.remove('hidden');
+      } else {
+        badge.classList.add('hidden');
+      }
+    }
+    function addToCart(rowIndex, qty) {
+      if (!rowIndex) return;
+      cart[rowIndex] = (cart[rowIndex] || 0) + qty;
+      saveCart();
+      updateCartFab();
+    }
+    function addCurrentToCart() {
+      if (!currentModalItem) return;
+      addToCart(currentModalItem.row_index, 1);
+      closeModal('modal-product');
+    }
+    function removeFromCart(rowIndex) {
+      delete cart[rowIndex];
+      saveCart();
+      updateCartFab();
+      renderCartItems();
+    }
+    function clearCart() {
+      if (!confirm('Очистить корзину?')) return;
+      cart = {};
+      saveCart();
+      updateCartFab();
+      renderCartItems();
+    }
+    function openCart() { renderCartItems(); openModal('modal-cart'); }
+    function renderCartItems() {
+      const container = document.getElementById('cart-items');
+      const empty = document.getElementById('cart-empty');
+      const form = document.getElementById('cart-form');
+      const rows = Object.entries(cart);
+      if (!rows.length) {
+        container.innerHTML = '';
+        empty.classList.remove('hidden');
+        form.classList.add('hidden');
+        return;
+      }
+      empty.classList.add('hidden');
+      form.classList.remove('hidden');
+      container.innerHTML = rows.map(([row, qty]) => {
+        const it = allItems.find(x => x.row_index === Number(row));
+        if (!it) return '';
+        const price = parseNum(it.retail);
+        const lineTotal = price ? (price * qty) : null;
+        return `
+          <div class="flex items-center justify-between gap-2 bg-gray-50 dark:bg-gray-700 p-2 rounded-lg">
+            <div class="flex-1 min-w-0">
+              <div class="font-medium text-sm truncate">${escapeHtml(it.name)}</div>
+              <div class="text-xs text-gray-500 dark:text-gray-400">${formatPrice(it.retail)} × ${qty}${lineTotal ? ' = ' + formatPrice(lineTotal) : ''}</div>
+            </div>
+            <div class="flex items-center gap-1">
+              <button onclick="addToCart(${row}, -1); if(cart[${row}]<=0) removeFromCart(${row}); else renderCartItems();" class="w-7 h-7 bg-gray-300 dark:bg-gray-600 rounded">−</button>
+              <span class="text-sm font-semibold w-6 text-center">${qty}</span>
+              <button onclick="addToCart(${row}, 1); renderCartItems();" class="w-7 h-7 bg-gray-300 dark:bg-gray-600 rounded">+</button>
+              <button onclick="removeFromCart(${row})" class="w-7 h-7 bg-red-500 text-white rounded ml-1">×</button>
+            </div>
+          </div>`;
+      }).join('');
+    }
+    async function submitCart() {
+      const err = document.getElementById('cart-error');
+      err.classList.add('hidden');
+      const contact = document.getElementById('cart-contact').value.trim();
+      if (!contact) { err.textContent = 'Укажите телефон или @username'; err.classList.remove('hidden'); return; }
+      const items = Object.entries(cart).map(([row, qty]) => {
+        const it = allItems.find(x => x.row_index === Number(row));
+        return { name: it ? it.name : ('Товар #' + row), qty };
+      });
+      if (!items.length) { err.textContent = 'Корзина пуста'; err.classList.remove('hidden'); return; }
+      const payload = {
+        items,
+        name: document.getElementById('cart-name').value.trim(),
+        contact,
+        comment: document.getElementById('cart-comment').value.trim(),
+      };
+      try {
+        const resp = await fetch('/api/price/order_request', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(data.error || data.detail || ('HTTP ' + resp.status));
+        cart = {};
+        saveCart();
+        updateCartFab();
+        document.getElementById('cart-name').value = '';
+        document.getElementById('cart-contact').value = '';
+        document.getElementById('cart-comment').value = '';
+        closeModal('modal-cart');
+        alert('✅ Заявка отправлена! Мы свяжемся с вами.');
+      } catch (e) {
+        err.textContent = '❌ ' + e.message;
+        err.classList.remove('hidden');
+      }
+    }
+
     // ---------- ADMIN AUTH ----------
     function openAdmin() {
       if (adminToken) { setAdminUI(true); loadItems(); }
@@ -514,7 +796,6 @@
         setTimeout(() => document.getElementById('admin-password-input').focus(), 100);
       }
     }
-
     async function submitPassword() {
       const pwd = document.getElementById('admin-password-input').value.trim();
       if (!pwd) return;
@@ -532,23 +813,109 @@
         el.classList.remove('hidden');
       }
     }
-
     function logoutAdmin() {
       adminToken = '';
       localStorage.removeItem('priceAdminToken');
+      selectedRows.clear();
       setAdminUI(false);
       loadItems();
     }
-
     function setAdminUI(on) {
       document.getElementById('admin-panel').classList.toggle('hidden', !on);
     }
+
+    // ---------- BULK ----------
+    function renderBulkPanel() {
+      const panel = document.getElementById('bulk-panel');
+      const n = selectedRows.size;
+      document.getElementById('bulk-count').textContent = n;
+      panel.classList.toggle('hidden', n === 0);
+    }
+    function clearSelection() {
+      selectedRows.clear();
+      document.querySelectorAll('.sel-checkbox').forEach(el => el.checked = false);
+      renderBulkPanel();
+    }
+    async function bulkDelete() {
+      if (!selectedRows.size) return;
+      if (!confirm(`Удалить ${selectedRows.size} товаров? Это действие нельзя отменить.`)) return;
+      try {
+        const resp = await fetch('/api/price/bulk_delete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Admin-Token': adminToken },
+          body: JSON.stringify({ rows: Array.from(selectedRows) }),
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(data.error || data.detail || ('HTTP ' + resp.status));
+        selectedRows.clear();
+        await loadItems();
+        alert('✅ Удалено: ' + (data.deleted || 0));
+      } catch (e) { alert('Ошибка: ' + e.message); }
+    }
+    async function bulkSetCategory() {
+      if (!selectedRows.size) return;
+      const cat = prompt('Новая категория для выбранных товаров (' + selectedRows.size + ' шт):', '');
+      if (cat === null) return;
+      if (!cat.trim()) { alert('Категория не может быть пустой'); return; }
+      try {
+        const resp = await fetch('/api/price/bulk_set_category', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Admin-Token': adminToken },
+          body: JSON.stringify({ rows: Array.from(selectedRows), category: cat.trim() }),
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(data.error || data.detail || ('HTTP ' + resp.status));
+        selectedRows.clear();
+        await loadItems();
+        alert('✅ Обновлено: ' + (data.updated || 0));
+      } catch (e) { alert('Ошибка: ' + e.message); }
+    }
+
+    // ---------- CSV ----------
+    function exportCsv() {
+      const rows = [['name', 'description', 'photo', 'retail', 'wholesale', 'wholesale_from', 'category']];
+      allItems.forEach(it => rows.push([
+        it.name || '', it.description || '', it.photo || '',
+        it.retail || '', it.wholesale || '', it.wholesale_from || '', it.category || '',
+      ]));
+      const csv = rows.map(r => r.map(v => '"' + String(v).replace(/"/g, '""') + '"').join(',')).join('\n');
+      const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `price_${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(a); a.click(); a.remove();
+      URL.revokeObjectURL(url);
+    }
+    document.getElementById('csv-file').addEventListener('change', async function() {
+      const file = this.files && this.files[0];
+      if (!file) return;
+      const fd = new FormData();
+      fd.append('file', file);
+      const wait = await new Promise(r => {
+        const ok = confirm('Импортировать товары из CSV?\n\nОжидаемые колонки: name/Название, description/Описание, photo/Фото, retail/Розница, wholesale/Опт, wholesale_from/Опт от, category/Категория');
+        r(ok);
+      });
+      if (!wait) { this.value = ''; return; }
+      try {
+        const resp = await fetch('/api/price/import_csv', {
+          method: 'POST',
+          headers: { 'X-Admin-Token': adminToken },
+          body: fd,
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(data.error || data.detail || ('HTTP ' + resp.status));
+        alert('✅ Добавлено: ' + (data.added || 0));
+        await loadItems();
+      } catch (e) { alert('Ошибка импорта: ' + e.message); }
+      this.value = '';
+    });
 
     // ---------- WORD ----------
     async function exportDocx() {
       const btn = document.getElementById('export-docx-btn');
       const origText = btn.textContent;
-      btn.disabled = true; btn.textContent = '⏳ Формирую…';
+      btn.disabled = true; btn.textContent = '⏳';
       try {
         const resp = await fetch('/api/price/export_docx', { headers: { 'X-Admin-Token': adminToken } });
         if (!resp.ok) {
@@ -559,11 +926,10 @@
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        const today = new Date().toISOString().slice(0, 10);
-        a.download = `price_${today}.docx`;
+        a.download = `price_${new Date().toISOString().slice(0, 10)}.docx`;
         document.body.appendChild(a); a.click(); a.remove();
         URL.revokeObjectURL(url);
-      } catch (e) { alert('Ошибка экспорта: ' + e.message); }
+      } catch (e) { alert('Ошибка: ' + e.message); }
       finally { btn.disabled = false; btn.textContent = origText; }
     }
 
@@ -587,7 +953,6 @@
         container.innerHTML = `<span class="text-red-500 text-sm">Ошибка: ${e.message}</span>`;
       }
     }
-
     function downloadQr() {
       if (!qrBlobUrl) return;
       const a = document.createElement('a');
@@ -596,14 +961,12 @@
       document.body.appendChild(a); a.click(); a.remove();
     }
 
-    // ---------- ЛОГОТИП ----------
+    // ---------- LOGO ----------
     async function openLogoModal() {
       openModal('modal-logo');
-      const status = document.getElementById('logo-status');
-      status.classList.add('hidden');
+      document.getElementById('logo-status').classList.add('hidden');
       await loadLogo();
     }
-
     async function loadLogo() {
       try {
         const resp = await fetch('/api/price/logo', { headers: { 'X-Admin-Token': adminToken } });
@@ -613,49 +976,37 @@
         const empty = document.getElementById('logo-empty');
         const delBtn = document.getElementById('logo-delete-btn');
         if (url) {
-          img.src = url;
-          img.classList.remove('hidden');
-          empty.classList.add('hidden');
+          img.src = url; img.classList.remove('hidden'); empty.classList.add('hidden');
           delBtn.classList.remove('hidden');
         } else {
-          img.classList.add('hidden');
-          img.removeAttribute('src');
-          empty.classList.remove('hidden');
-          delBtn.classList.add('hidden');
+          img.classList.add('hidden'); img.removeAttribute('src');
+          empty.classList.remove('hidden'); delBtn.classList.add('hidden');
         }
       } catch (e) { console.error(e); }
     }
-
     document.getElementById('logo-file').addEventListener('change', async function () {
       const file = this.files && this.files[0];
       if (!file) return;
       const status = document.getElementById('logo-status');
       status.classList.remove('hidden');
       status.className = 'text-xs mb-3 text-blue-600 dark:text-blue-400';
-      status.textContent = '⏳ Загружаю в Google Drive…';
+      status.textContent = '⏳ Загрузка…';
       try {
         const fd = new FormData();
         fd.append('file', file);
         const upResp = await fetch('/api/upload_image', {
-          method: 'POST',
-          headers: { 'X-Admin-Token': adminToken },
-          body: fd,
+          method: 'POST', headers: { 'X-Admin-Token': adminToken }, body: fd,
         });
         const upData = await upResp.json().catch(() => ({}));
-        if (!upResp.ok) throw new Error(upData.error || upData.detail || 'Ошибка загрузки в Drive');
-
+        if (!upResp.ok) throw new Error(upData.error || upData.detail || 'Drive error');
         const saveResp = await fetch('/api/price/logo', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'X-Admin-Token': adminToken },
           body: JSON.stringify({ url: upData.url }),
         });
-        if (!saveResp.ok) {
-          const sd = await saveResp.json().catch(() => ({}));
-          throw new Error(sd.error || sd.detail || 'Не удалось сохранить логотип');
-        }
-
+        if (!saveResp.ok) throw new Error('Save error');
         status.className = 'text-xs mb-3 text-green-600 dark:text-green-400';
-        status.textContent = '✅ Логотип обновлён';
+        status.textContent = '✅ Обновлён';
         await loadLogo();
         setTimeout(() => status.classList.add('hidden'), 2000);
       } catch (e) {
@@ -664,14 +1015,10 @@
       }
       this.value = '';
     });
-
     async function deleteLogo() {
-      if (!confirm('Удалить логотип? В Word-документе шапка станет пустой (или вернётся логотип из env).')) return;
+      if (!confirm('Удалить логотип?')) return;
       try {
-        const resp = await fetch('/api/price/logo', {
-          method: 'DELETE',
-          headers: { 'X-Admin-Token': adminToken },
-        });
+        const resp = await fetch('/api/price/logo', { method: 'DELETE', headers: { 'X-Admin-Token': adminToken } });
         if (!resp.ok) throw new Error('HTTP ' + resp.status);
         await loadLogo();
       } catch (e) { alert('Ошибка: ' + e.message); }
@@ -681,14 +1028,12 @@
     function openEditor(rowIndex) {
       editingRowIndex = rowIndex;
       const isEdit = rowIndex !== null && rowIndex !== undefined;
-      document.getElementById('editor-title').textContent = isEdit ? '✏️ Редактирование товара' : '➕ Новый товар';
-      const err = document.getElementById('editor-error');
-      err.classList.add('hidden');
-
+      document.getElementById('editor-title').textContent = isEdit ? '✏️ Редактирование' : '➕ Новый товар';
+      document.getElementById('editor-error').classList.add('hidden');
       let it = { name:'', description:'', photo:'', retail:'', wholesale:'', wholesale_from:'', category:'' };
       if (isEdit) {
         const found = allItems.find(x => x.row_index === rowIndex);
-        if (!found) { alert('Товар не найден — возможно, страница устарела. Обновите.'); return; }
+        if (!found) { alert('Товар не найден'); return; }
         it = found;
       }
       document.getElementById('edit-name').value = it.name || '';
@@ -702,43 +1047,38 @@
       updatePhotoPreview();
       openModal('modal-editor');
     }
-
     function updatePhotoPreview() {
       const url = document.getElementById('edit-photo').value.trim();
       const img = document.getElementById('edit-photo-preview');
       const empty = document.getElementById('edit-photo-empty');
       if (url) {
         img.src = url; img.classList.remove('hidden'); empty.classList.add('hidden');
-        img.onerror = () => { img.classList.add('hidden'); empty.classList.remove('hidden'); empty.textContent = '⚠️ Не удалось загрузить фото'; };
+        img.onerror = () => { img.classList.add('hidden'); empty.classList.remove('hidden'); empty.textContent = '⚠️'; };
       } else {
         img.classList.add('hidden'); img.removeAttribute('src');
-        empty.classList.remove('hidden'); empty.textContent = 'Превью появится здесь';
+        empty.classList.remove('hidden'); empty.textContent = 'Превью';
       }
     }
-
     document.getElementById('edit-photo').addEventListener('input', updatePhotoPreview);
-
     document.getElementById('edit-photo-file').addEventListener('change', async function () {
       const file = this.files && this.files[0];
       if (!file) return;
       const status = document.getElementById('upload-status');
       status.classList.remove('hidden');
       status.className = 'text-xs mt-1 text-blue-600 dark:text-blue-400';
-      status.textContent = '⏳ Загружаю в Google Drive…';
+      status.textContent = '⏳ Загрузка…';
       const fd = new FormData();
       fd.append('file', file);
       try {
         const resp = await fetch('/api/upload_image', {
-          method: 'POST',
-          headers: { 'X-Admin-Token': adminToken },
-          body: fd,
+          method: 'POST', headers: { 'X-Admin-Token': adminToken }, body: fd,
         });
         const data = await resp.json().catch(() => ({}));
         if (!resp.ok) throw new Error(data.error || data.detail || ('HTTP ' + resp.status));
         document.getElementById('edit-photo').value = data.url;
         updatePhotoPreview();
         status.className = 'text-xs mt-1 text-green-600 dark:text-green-400';
-        status.textContent = '✅ Загружено на Google Drive';
+        status.textContent = '✅ Загружено';
         setTimeout(() => status.classList.add('hidden'), 2500);
       } catch (e) {
         status.className = 'text-xs mt-1 text-red-600 dark:text-red-400';
@@ -746,7 +1086,6 @@
       }
       this.value = '';
     });
-
     async function saveItem() {
       const err = document.getElementById('editor-error');
       err.classList.add('hidden');
@@ -759,9 +1098,7 @@
         wholesale_from: document.getElementById('edit-wholesale-from').value.trim(),
         category: document.getElementById('edit-category').value.trim() || 'Без категории',
       };
-      if (!payload.name) {
-        err.textContent = 'Название обязательно'; err.classList.remove('hidden'); return;
-      }
+      if (!payload.name) { err.textContent = 'Название обязательно'; err.classList.remove('hidden'); return; }
       const isEdit = editingRowIndex !== null && editingRowIndex !== undefined;
       const url = isEdit ? `/api/price/${editingRowIndex}` : '/api/price';
       const method = isEdit ? 'PUT' : 'POST';
@@ -773,7 +1110,7 @@
         });
         if (!resp.ok) {
           const data = await resp.json().catch(() => ({}));
-          throw new Error(data.detail || data.error || 'Ошибка сохранения');
+          throw new Error(data.detail || data.error || 'Ошибка');
         }
         closeModal('modal-editor');
         await loadItems();
@@ -782,29 +1119,24 @@
       }
     }
 
-    // ---------- DELETE ----------
+    // ---------- DELETE SINGLE ----------
     function openDeleteConfirm(rowIndex, name) {
       deleteRowIndex = rowIndex;
+      document.getElementById('confirm-title').textContent = 'Удалить товар?';
       document.getElementById('confirm-name').textContent = name || '';
       openModal('modal-confirm');
     }
-
     async function confirmDelete() {
       if (deleteRowIndex === null) return;
       try {
         const resp = await fetch(`/api/price/${deleteRowIndex}`, {
-          method: 'DELETE',
-          headers: { 'X-Admin-Token': adminToken },
+          method: 'DELETE', headers: { 'X-Admin-Token': adminToken },
         });
-        if (!resp.ok) {
-          const data = await resp.json().catch(() => ({}));
-          alert('Ошибка удаления: ' + (data.detail || data.error || resp.status));
-          return;
-        }
+        if (!resp.ok) { alert('Ошибка'); return; }
         closeModal('modal-confirm');
         deleteRowIndex = null;
         await loadItems();
-      } catch (e) { alert('Ошибка соединения: ' + e.message); }
+      } catch (e) { alert('Ошибка: ' + e.message); }
     }
 
     // ---------- FILTERS / VIEW ----------
@@ -823,17 +1155,17 @@
       renderProducts();
     }
 
+    function printPage() { window.print(); }
+
     document.getElementById('admin-password-input').addEventListener('keydown', e => {
       if (e.key === 'Enter') submitPassword();
     });
-
     document.addEventListener('keydown', e => {
       if (e.key === 'Escape') {
-        ['modal-product','modal-password','modal-editor','modal-confirm','modal-qr','modal-logo'].forEach(closeModal);
+        ['modal-product','modal-password','modal-editor','modal-confirm','modal-qr','modal-logo','modal-cart'].forEach(closeModal);
       }
     });
-
-    ['modal-product','modal-password','modal-editor','modal-confirm','modal-qr','modal-logo'].forEach(id => {
+    ['modal-product','modal-password','modal-editor','modal-confirm','modal-qr','modal-logo','modal-cart'].forEach(id => {
       document.getElementById(id).addEventListener('click', e => {
         if (e.target.id === id) closeModal(id);
       });
@@ -851,96 +1183,26 @@
     })();
   </script>
 
-  <!-- ✅ Social Widget (вместо Taplink) -->
+  <!-- SOCIAL WIDGET -->
   <style>
-    .sw-wrap {
-      position: fixed;
-      right: 20px;
-      bottom: 20px;
-      z-index: 45;
-      display: flex;
-      flex-direction: column;
-      align-items: flex-end;
-      gap: 10px;
-      font-family: system-ui, -apple-system, sans-serif;
-    }
-    .sw-links {
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
-      opacity: 0;
-      transform: translateY(20px);
-      pointer-events: none;
-      transition: opacity 0.25s ease, transform 0.25s ease;
-    }
-    .sw-wrap.open .sw-links {
-      opacity: 1;
-      transform: translateY(0);
-      pointer-events: auto;
-    }
-    .sw-link {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      width: 48px;
-      height: 48px;
-      border-radius: 50%;
-      color: #fff;
-      text-decoration: none;
-      box-shadow: 0 4px 12px rgba(0,0,0,0.2);
-      transition: transform 0.15s ease, box-shadow 0.15s ease;
-      position: relative;
-    }
-    .sw-link:hover {
-      transform: scale(1.1);
-      box-shadow: 0 6px 16px rgba(0,0,0,0.3);
-    }
-    .sw-link svg {
-      width: 22px;
-      height: 22px;
-      fill: currentColor;
-    }
+    .sw-wrap { position: fixed; right: 20px; bottom: 20px; z-index: 45; display: flex; flex-direction: column; align-items: flex-end; gap: 10px; font-family: system-ui, sans-serif; }
+    .sw-links { display: flex; flex-direction: column; gap: 10px; opacity: 0; transform: translateY(20px); pointer-events: none; transition: opacity 0.25s ease, transform 0.25s ease; }
+    .sw-wrap.open .sw-links { opacity: 1; transform: translateY(0); pointer-events: auto; }
+    .sw-link { display: flex; align-items: center; justify-content: center; width: 48px; height: 48px; border-radius: 50%; color: #fff; text-decoration: none; box-shadow: 0 4px 12px rgba(0,0,0,0.2); transition: transform 0.15s ease; }
+    .sw-link:hover { transform: scale(1.1); }
+    .sw-link svg { width: 22px; height: 22px; fill: currentColor; }
     .sw-ig { background: linear-gradient(45deg, #f09433, #e6683c, #dc2743, #cc2366, #bc1888); }
     .sw-tg { background: #26A5E4; }
     .sw-vk { background: #0077FF; }
     .sw-email { background: #EA4335; }
     .sw-yt { background: #FF0000; }
     .sw-max { background: #6C3BF5; }
-
-    .sw-toggle {
-      width: 60px;
-      height: 60px;
-      border-radius: 50%;
-      border: none;
-      cursor: pointer;
-      background: #3b82f6;
-      box-shadow: 0 6px 20px rgba(59,130,246,0.5);
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      gap: 5px;
-      animation: sw-pulse 2s infinite;
-      transition: background 0.2s ease;
-    }
+    .sw-toggle { width: 60px; height: 60px; border-radius: 50%; border: none; cursor: pointer; background: #3b82f6; box-shadow: 0 6px 20px rgba(59,130,246,0.5); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; animation: sw-pulse 2s infinite; }
     .sw-toggle:hover { background: #2563eb; }
-    .sw-toggle span {
-      display: block;
-      width: 24px;
-      height: 3px;
-      background: #fff;
-      border-radius: 2px;
-      transition: transform 0.25s ease, opacity 0.2s ease;
-    }
-    .sw-wrap.open .sw-toggle span:nth-child(1) {
-      transform: translateY(8px) rotate(45deg);
-    }
-    .sw-wrap.open .sw-toggle span:nth-child(2) {
-      opacity: 0;
-    }
-    .sw-wrap.open .sw-toggle span:nth-child(3) {
-      transform: translateY(-8px) rotate(-45deg);
-    }
+    .sw-toggle span { display: block; width: 24px; height: 3px; background: #fff; border-radius: 2px; transition: transform 0.25s ease, opacity 0.2s ease; }
+    .sw-wrap.open .sw-toggle span:nth-child(1) { transform: translateY(8px) rotate(45deg); }
+    .sw-wrap.open .sw-toggle span:nth-child(2) { opacity: 0; }
+    .sw-wrap.open .sw-toggle span:nth-child(3) { transform: translateY(-8px) rotate(-45deg); }
     @keyframes sw-pulse {
       0% { box-shadow: 0 0 0 0 rgba(59,130,246,0.6); }
       70% { box-shadow: 0 0 0 16px rgba(59,130,246,0); }
@@ -950,7 +1212,9 @@
       .sw-wrap { right: 14px; bottom: 14px; }
       .sw-toggle { width: 54px; height: 54px; }
       .sw-link { width: 44px; height: 44px; }
+      #cart-fab { left: 14px; bottom: 14px; }
     }
+    @media print { .sw-wrap { display: none !important; } }
   </style>
 
   <div class="sw-wrap" id="swWrap">
@@ -988,9 +1252,7 @@
         wrap.classList.toggle('open');
       });
       document.addEventListener('click', function (e) {
-        if (!wrap.contains(e.target)) {
-          wrap.classList.remove('open');
-        }
+        if (!wrap.contains(e.target)) wrap.classList.remove('open');
       });
     })();
   </script>
