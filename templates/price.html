@@ -114,7 +114,7 @@
     </div>
   </section>
 
-  <!-- ✅ MODAL: PRODUCT DETAILS (на ПК шире на 40%) -->
+  <!-- MODAL: PRODUCT DETAILS (на ПК шире на 40%) -->
   <div id="modal-product" class="hidden fixed inset-0 bg-black/60 z-40 flex items-center justify-center p-4">
     <div class="bg-white dark:bg-gray-800 rounded-2xl max-w-3xl md:max-w-[1075px] w-full max-h-[90vh] overflow-y-auto shadow-2xl">
       <div class="grid md:grid-cols-2 gap-0">
@@ -851,7 +851,148 @@
     })();
   </script>
 
-  <!-- ✅ Taplink виджет -->
-  <script src="//taplink.cc/id:14714827/widget/" async></script>
+  <!-- ✅ Social Widget (вместо Taplink) -->
+  <style>
+    .sw-wrap {
+      position: fixed;
+      right: 20px;
+      bottom: 20px;
+      z-index: 45;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 10px;
+      font-family: system-ui, -apple-system, sans-serif;
+    }
+    .sw-links {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      opacity: 0;
+      transform: translateY(20px);
+      pointer-events: none;
+      transition: opacity 0.25s ease, transform 0.25s ease;
+    }
+    .sw-wrap.open .sw-links {
+      opacity: 1;
+      transform: translateY(0);
+      pointer-events: auto;
+    }
+    .sw-link {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      color: #fff;
+      text-decoration: none;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+      transition: transform 0.15s ease, box-shadow 0.15s ease;
+      position: relative;
+    }
+    .sw-link:hover {
+      transform: scale(1.1);
+      box-shadow: 0 6px 16px rgba(0,0,0,0.3);
+    }
+    .sw-link svg {
+      width: 22px;
+      height: 22px;
+      fill: currentColor;
+    }
+    .sw-ig { background: linear-gradient(45deg, #f09433, #e6683c, #dc2743, #cc2366, #bc1888); }
+    .sw-tg { background: #26A5E4; }
+    .sw-vk { background: #0077FF; }
+    .sw-email { background: #EA4335; }
+    .sw-yt { background: #FF0000; }
+    .sw-max { background: #6C3BF5; }
+
+    .sw-toggle {
+      width: 60px;
+      height: 60px;
+      border-radius: 50%;
+      border: none;
+      cursor: pointer;
+      background: #3b82f6;
+      box-shadow: 0 6px 20px rgba(59,130,246,0.5);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 5px;
+      animation: sw-pulse 2s infinite;
+      transition: background 0.2s ease;
+    }
+    .sw-toggle:hover { background: #2563eb; }
+    .sw-toggle span {
+      display: block;
+      width: 24px;
+      height: 3px;
+      background: #fff;
+      border-radius: 2px;
+      transition: transform 0.25s ease, opacity 0.2s ease;
+    }
+    .sw-wrap.open .sw-toggle span:nth-child(1) {
+      transform: translateY(8px) rotate(45deg);
+    }
+    .sw-wrap.open .sw-toggle span:nth-child(2) {
+      opacity: 0;
+    }
+    .sw-wrap.open .sw-toggle span:nth-child(3) {
+      transform: translateY(-8px) rotate(-45deg);
+    }
+    @keyframes sw-pulse {
+      0% { box-shadow: 0 0 0 0 rgba(59,130,246,0.6); }
+      70% { box-shadow: 0 0 0 16px rgba(59,130,246,0); }
+      100% { box-shadow: 0 0 0 0 rgba(59,130,246,0); }
+    }
+    @media (max-width: 480px) {
+      .sw-wrap { right: 14px; bottom: 14px; }
+      .sw-toggle { width: 54px; height: 54px; }
+      .sw-link { width: 44px; height: 44px; }
+    }
+  </style>
+
+  <div class="sw-wrap" id="swWrap">
+    <div class="sw-links">
+      <a href="https://instagram.com/kobra_print_/" target="_blank" rel="noopener" class="sw-link sw-ig" title="Instagram" aria-label="Instagram">
+        <svg viewBox="0 0 24 24"><path d="M12 2.2c3.2 0 3.6 0 4.9.1 1.2.1 1.8.2 2.2.4.6.2 1 .5 1.4.9.4.4.7.8.9 1.4.2.4.3 1 .4 2.2.1 1.3.1 1.7.1 4.9s0 3.6-.1 4.9c-.1 1.2-.2 1.8-.4 2.2-.2.6-.5 1-.9 1.4-.4.4-.8.7-1.4.9-.4.2-1 .3-2.2.4-1.3.1-1.7.1-4.9.1s-3.6 0-4.9-.1c-1.2-.1-1.8-.2-2.2-.4-.6-.2-1-.5-1.4-.9-.4-.4-.7-.8-.9-1.4-.2-.4-.3-1-.4-2.2-.1-1.3-.1-1.7-.1-4.9s0-3.6.1-4.9c.1-1.2.2-1.8.4-2.2.2-.6.5-1 .9-1.4.4-.4.8-.7 1.4-.9.4-.2 1-.3 2.2-.4 1.3-.1 1.7-.1 4.9-.1zM12 0C8.7 0 8.3 0 7 .1 5.7.2 4.8.4 4 .7c-.8.3-1.5.7-2.2 1.4C1.1 2.8.7 3.5.4 4.3.1 5.1-.1 6 .0 7.3.0 8.6 0 9.0 0 12.3s0 3.7.1 5c.1 1.3.3 2.2.6 3 .3.8.7 1.5 1.4 2.2.7.7 1.4 1.1 2.2 1.4.8.3 1.7.5 3 .6 1.3.1 1.7.1 5 .1s3.7 0 5-.1c1.3-.1 2.2-.3 3-.6.8-.3 1.5-.7 2.2-1.4.7-.7 1.1-1.4 1.4-2.2.3-.8.5-1.7.6-3 .1-1.3.1-1.7.1-5s0-3.7-.1-5c-.1-1.3-.3-2.2-.6-3-.3-.8-.7-1.5-1.4-2.2C21.2 1.1 20.5.7 19.7.4c-.8-.3-1.7-.5-3-.6C15.7 0 15.3 0 12 0zm0 5.8a6.2 6.2 0 1 0 0 12.4A6.2 6.2 0 0 0 12 5.8zm0 10.2a4 4 0 1 1 0-8 4 4 0 0 1 0 8zm6.4-11.8a1.4 1.4 0 1 0 0 2.9 1.4 1.4 0 0 0 0-2.9z"/></svg>
+      </a>
+      <a href="https://telegram.me/master3Dpech" target="_blank" rel="noopener" class="sw-link sw-tg" title="Telegram" aria-label="Telegram">
+        <svg viewBox="0 0 24 24"><path d="M9.04 15.47l-.38 5.34c.54 0 .78-.23 1.06-.51l2.55-2.45 5.29 3.88c.97.54 1.66.26 1.92-.9L21.9 3.92c.32-1.46-.53-2.03-1.47-1.68L1.7 9.48C.27 10.04.3 10.86 1.46 11.21l4.79 1.5L17.5 5.9c.52-.35 1-.15.61.2L9.04 15.47z"/></svg>
+      </a>
+      <a href="https://vk.ru/club238320840" target="_blank" rel="noopener" class="sw-link sw-vk" title="ВКонтакте" aria-label="ВКонтакте">
+        <svg viewBox="0 0 24 24"><path d="M13.16 18.5c-5.77 0-9.07-3.96-9.2-10.54h2.89c.09 4.83 2.22 6.88 3.91 7.3V7.96h2.72v4.17c1.67-.18 3.42-2.08 4.01-4.17h2.72c-.45 2.57-2.36 4.47-3.71 5.25 1.35.63 3.52 2.29 4.35 5.29h-3c-.64-1.99-2.23-3.53-4.37-3.74v3.74h-.32z"/></svg>
+      </a>
+      <a href="mailto:kobraprintteam@gmail.com" class="sw-link sw-email" title="Email" aria-label="Email">
+        <svg viewBox="0 0 24 24"><path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4l-8 5-8-5V6l8 5 8-5v2z"/></svg>
+      </a>
+      <a href="https://youtube.com/@kobra_print" target="_blank" rel="noopener" class="sw-link sw-yt" title="YouTube" aria-label="YouTube">
+        <svg viewBox="0 0 24 24"><path d="M23.5 6.2c-.3-1.1-1.1-1.9-2.2-2.2C19.4 3.5 12 3.5 12 3.5s-7.4 0-9.3.5c-1.1.3-1.9 1.1-2.2 2.2C0 8.1 0 12 0 12s0 3.9.5 5.8c.3 1.1 1.1 1.9 2.2 2.2 1.9.5 9.3.5 9.3.5s7.4 0 9.3-.5c1.1-.3 1.9-1.1 2.2-2.2.5-1.9.5-5.8.5-5.8s0-3.9-.5-5.8zM9.6 15.6V8.4l6.2 3.6-6.2 3.6z"/></svg>
+      </a>
+      <a href="https://max.ru/join/OD6pOzPka78ILkoRH181bISHzEHVhIGtMz5_9PsdDjc" target="_blank" rel="noopener" class="sw-link sw-max" title="Max" aria-label="Max">
+        <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1.5 14.5v-9l5 4.5-5 4.5z"/></svg>
+      </a>
+    </div>
+    <button class="sw-toggle" id="swToggle" aria-label="Соцсети">
+      <span></span><span></span><span></span>
+    </button>
+  </div>
+
+  <script>
+    (function () {
+      var wrap = document.getElementById('swWrap');
+      var toggle = document.getElementById('swToggle');
+      toggle.addEventListener('click', function (e) {
+        e.stopPropagation();
+        wrap.classList.toggle('open');
+      });
+      document.addEventListener('click', function (e) {
+        if (!wrap.contains(e.target)) {
+          wrap.classList.remove('open');
+        }
+      });
+    })();
+  </script>
 </body>
 </html>
