@@ -12,12 +12,15 @@ from fastapi import FastAPI, Request, UploadFile, File, Header, HTTPException, D
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, Response
 from fastapi.concurrency import run_in_threadpool
 from fastapi.templating import Jinja2Templates
+from fastapi.exceptions import RequestValidationError
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from pydantic import BaseModel
 from aiogram import Bot, Dispatcher
 from aiogram.types import Update, ErrorEvent
 from aiogram.fsm.storage.memory import MemoryStorage
 from handlers import routers
 from handlers.common import AccessMiddleware
+from handlers.client_bot import create_client_dispatcher, set_commands as set_client_commands
 from config import BOT_TOKEN, ADMIN_PASSWORD
 from google_sheets import SheetManager, moscow_now
 from bambu_cloud import BambuCloudManager
@@ -53,6 +56,7 @@ except Exception as e:
     logger.error(f"Ошибка инициализации SheetManager: {e}")
     sheet_manager = None
 
+# ---------- Основной бот (внутренний) ----------
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 dp.message.middleware(AccessMiddleware())
@@ -67,6 +71,12 @@ async def errors_handler(event: ErrorEvent):
     return True
 
 
+# ---------- Клиентский бот ----------
+CLIENT_BOT_TOKEN = os.getenv("CLIENT_BOT_TOKEN", "")
+client_bot = Bot(token=CLIENT_BOT_TOKEN) if CLIENT_BOT_TOKEN else None
+client_dp = create_client_dispatcher() if client_bot else None
+
+
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
 bambu_cloud = BambuCloudManager()
@@ -75,6 +85,28 @@ PRICE_LOGO_URL = os.getenv("PRICE_LOGO_URL", "")
 PUBLIC_URL = os.getenv("PUBLIC_URL", "")
 PRICE_ORDER_CHAT_ID = os.getenv("PRICE_ORDER_CHAT_ID", "")
 PRICE_ORDER_DEADLINE_DAYS = int(os.getenv("PRICE_ORDER_DEADLINE_DAYS", "7"))
+
+
+# ---------- EXCEPTION HANDLERS (C5) ----------
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request: Request, exc: StarletteHTTPException):
+    if exc.status_code == 404:
+        return templates.TemplateResponse("404.html", {"request": request}, status_code=404)
+    return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    return JSONResponse({"detail": "Неверный формат данных", "errors": exc.errors()}, status_code=422)
+
+
+@app.exception_handler(Exception)
+async def generic_exception_handler(request: Request, exc: Exception):
+    logger.error(f"Unhandled exception at {request.url.path}: {exc}", exc_info=exc)
+    try:
+        return templates.TemplateResponse("500.html", {"request": request}, status_code=500)
+    except Exception:
+        return JSONResponse({"detail": "Internal Server Error"}, status_code=500)
 
 
 # ---------- АВТОРИЗАЦИЯ ----------
@@ -119,6 +151,18 @@ class OrderRequestIn(BaseModel):
     name: str = ""
     contact: str = ""
     comment: str = ""
+    promo_code: str = ""
+
+
+class PromoIn(BaseModel):
+    code: str
+
+
+class ReviewIn(BaseModel):
+    product_row: int
+    name: str = ""
+    rating: int = 5
+    text: str
 
 
 # ---------- ЛОГОТИП ----------
@@ -223,7 +267,7 @@ async def price_qrcode(request: Request, _: bool = Depends(verify_admin)):
 
 
 # ---------- WORD ----------
-def _flatten_on_white(img: Image.Image) -> Image.Image:
+def _flatten_on_white(img):
     if img.mode == 'P':
         img = img.convert('RGBA')
     if img.mode in ('RGBA', 'LA'):
@@ -254,8 +298,7 @@ def _download_image(url: str, timeout: int = 10):
             img.save(out, format='PNG', optimize=True)
             out.seek(0)
             return out
-        except Exception as e:
-            logger.warning(f"PIL normalize failed: {e}")
+        except Exception:
             return io.BytesIO(data)
     except Exception as e:
         logger.warning(f"download {url}: {e}")
@@ -271,7 +314,7 @@ def _add_page_number_field(paragraph):
         run._r.append(el)
 
 
-def _setup_header_footer(doc, logo_url: str):
+def _setup_header_footer(doc, logo_url):
     section = doc.sections[0]
     section.different_first_page_header_footer = True
     try:
@@ -285,10 +328,10 @@ def _setup_header_footer(doc, logo_url: str):
             if logo_io:
                 try:
                     p.add_run().add_picture(logo_io, width=Cm(3.0))
-                except Exception as e:
-                    logger.warning(f"logo insert: {e}")
-    except Exception as e:
-        logger.warning(f"header setup: {e}")
+                except Exception:
+                    pass
+    except Exception:
+        pass
     try:
         regular_header = section.header
         regular_header.is_linked_to_previous = False
@@ -446,7 +489,6 @@ async def export_price_docx(_: bool = Depends(verify_admin)):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
-# ---------- УТИЛИТЫ ----------
 def get_days_left(deadline):
     try:
         due = datetime.strptime(deadline, "%Y-%m-%d")
@@ -459,7 +501,7 @@ def get_days_left(deadline):
         return "—"
 
 
-# ---------- WEBHOOK ----------
+# ---------- WEBHOOKS ----------
 @app.post("/webhook")
 async def webhook(request: Request):
     try:
@@ -468,6 +510,19 @@ async def webhook(request: Request):
         return {"status": "ok"}
     except Exception as e:
         logger.error(f"Webhook error: {e}")
+        return {"status": "error"}
+
+
+@app.post("/webhook_client")
+async def webhook_client(request: Request):
+    if not client_bot or not client_dp:
+        return JSONResponse({"error": "Client bot not configured"}, status_code=503)
+    try:
+        update = Update(**(await request.json()))
+        await client_dp.feed_update(client_bot, update)
+        return {"status": "ok"}
+    except Exception as e:
+        logger.error(f"Client webhook error: {e}")
         return {"status": "error"}
 
 
@@ -492,12 +547,58 @@ async def upload_3mf_page():
     return FileResponse("upload_3mf.html")
 
 
+@app.get("/share/{row}", response_class=HTMLResponse)
+async def share_page(request: Request, row: int):
+    if not sheet_manager:
+        return templates.TemplateResponse("404.html", {"request": request}, status_code=404)
+    it = sheet_manager.get_price_item_by_row(row)
+    if not it:
+        return templates.TemplateResponse("404.html", {"request": request}, status_code=404)
+    return templates.TemplateResponse("share.html", {
+        "request": request,
+        "item": it,
+        "public_url": _get_public_base_url(request),
+    })
+
+
+@app.get("/sitemap.xml")
+async def sitemap(request: Request):
+    base = _get_public_base_url(request)
+    urls = [f"{base}/", f"{base}/price"]
+    if sheet_manager:
+        try:
+            for it in sheet_manager.get_price_items():
+                urls.append(f"{base}/share/{it['row_index']}")
+        except Exception as e:
+            logger.warning(f"sitemap: {e}")
+    xml = '<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+    for u in urls:
+        xml += f"  <url><loc>{u}</loc></url>\n"
+    xml += "</urlset>"
+    return Response(content=xml, media_type="application/xml")
+
+
+@app.get("/robots.txt")
+async def robots(request: Request):
+    base = _get_public_base_url(request)
+    text = (
+        "User-agent: *\n"
+        "Allow: /\n"
+        "Disallow: /tracker\n"
+        "Disallow: /api/\n"
+        "Disallow: /webhook\n"
+        "Disallow: /check_tasks\n"
+        f"Sitemap: {base}/sitemap.xml\n"
+    )
+    return Response(content=text, media_type="text/plain")
+
+
 @app.get("/manifest.json")
 async def manifest():
     return JSONResponse(content={
-        "name": "3D Printer Tracker",
-        "short_name": "3D Tracker",
-        "start_url": "/tracker",
+        "name": "Kobra Print — прайс",
+        "short_name": "Kobra Print",
+        "start_url": "/price",
         "display": "standalone",
         "background_color": "#ffffff",
         "theme_color": "#3b82f6",
@@ -744,7 +845,7 @@ async def import_csv_api(file: UploadFile = File(...), _: bool = Depends(verify_
         try:
             text = content.decode("cp1251")
         except Exception:
-            return JSONResponse({"error": "Не удалось декодировать CSV (нужен UTF-8 или Windows-1251)"}, status_code=400)
+            return JSONResponse({"error": "Не удалось декодировать CSV"}, status_code=400)
 
     try:
         reader = csv.DictReader(io.StringIO(text))
@@ -766,7 +867,7 @@ async def import_csv_api(file: UploadFile = File(...), _: bool = Depends(verify_
         return JSONResponse({"error": f"Ошибка парсинга CSV: {e}"}, status_code=400)
 
     if not raw_items:
-        return JSONResponse({"error": "В CSV не найдено ни одной строки с заполненным name/Название"}, status_code=400)
+        return JSONResponse({"error": "В CSV не найдено ни одной строки"}, status_code=400)
 
     try:
         added = await run_in_threadpool(sheet_manager.import_price_items, raw_items)
@@ -776,7 +877,56 @@ async def import_csv_api(file: UploadFile = File(...), _: bool = Depends(verify_
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
-# ---------- API: ЗАЯВКА С ПРАЙСА (создаёт заказы) ----------
+# ---------- API: ПРОМОКОДЫ (A3) ----------
+@app.post("/api/price/validate_promo")
+async def validate_promo_api(payload: PromoIn):
+    if not sheet_manager:
+        return JSONResponse({"valid": False, "reason": "Сервис недоступен"}, status_code=500)
+    result = sheet_manager.validate_promo(payload.code)
+    return JSONResponse(result)
+
+
+# ---------- API: ОТЗЫВЫ (A4) ----------
+@app.get("/api/price/reviews/{row}")
+async def get_reviews_api(row: int):
+    if not sheet_manager:
+        return JSONResponse({"items": []})
+    try:
+        items = sheet_manager.get_reviews_for_product(row, limit=30)
+        return JSONResponse({"items": items})
+    except Exception as e:
+        logger.error(f"get_reviews error: {e}")
+        return JSONResponse({"items": []})
+
+
+@app.get("/api/price/reviews_summary")
+async def get_reviews_summary_api():
+    if not sheet_manager:
+        return JSONResponse({})
+    try:
+        return JSONResponse(sheet_manager.get_reviews_summary())
+    except Exception as e:
+        logger.error(f"reviews_summary error: {e}")
+        return JSONResponse({})
+
+
+@app.post("/api/price/review")
+async def add_review_api(payload: ReviewIn):
+    if not sheet_manager:
+        return JSONResponse({"error": "Сервис недоступен"}, status_code=500)
+    if not sheet_manager.get_price_item_by_row(payload.product_row):
+        return JSONResponse({"error": "Товар не найден"}, status_code=404)
+    if payload.rating < 1 or payload.rating > 5:
+        return JSONResponse({"error": "Оценка 1–5"}, status_code=400)
+    if not payload.text.strip():
+        return JSONResponse({"error": "Введите текст отзыва"}, status_code=400)
+    ok = sheet_manager.add_review(payload.product_row, payload.name, payload.rating, payload.text)
+    if not ok:
+        return JSONResponse({"error": "Не удалось сохранить отзыв"}, status_code=500)
+    return JSONResponse({"status": "ok"})
+
+
+# ---------- API: ЗАЯВКА С ПРАЙСА ----------
 @app.post("/api/price/order_request")
 async def price_order_request(payload: OrderRequestIn):
     if not payload.items:
@@ -788,6 +938,14 @@ async def price_order_request(payload: OrderRequestIn):
     customer_full = f"{customer_name} ({payload.contact.strip()})"
     deadline_str = (datetime.now() + timedelta(days=PRICE_ORDER_DEADLINE_DAYS)).strftime("%Y-%m-%d")
 
+    # Проверка промокода (если передан)
+    promo_info = None
+    promo_code = (payload.promo_code or "").strip()
+    if promo_code and sheet_manager:
+        promo_info = sheet_manager.validate_promo(promo_code)
+        if not promo_info.get("valid"):
+            promo_info = None  # тихо игнорируем невалидный промокод
+
     created_orders = []
     if sheet_manager:
         for it in payload.items:
@@ -798,19 +956,23 @@ async def price_order_request(payload: OrderRequestIn):
             except Exception as e:
                 logger.error(f"Не удалось создать заказ для '{it.name}': {e}")
 
+    # Учёт использований промокода
+    if promo_info:
+        sheet_manager.increment_promo_usage(promo_info["code"])
+
     lines = ["🛒 <b>Новая заявка с прайса</b>", ""]
     if payload.name.strip():
         lines.append(f"👤 Имя: {payload.name.strip()}")
     lines.append(f"📞 Контакт: {payload.contact.strip()}")
     if payload.comment.strip():
         lines.append(f"💬 Комментарий: {payload.comment.strip()}")
+    if promo_info:
+        lines.append(f"🎁 Промокод: <b>{promo_info['code']}</b> (-{promo_info['discount_percent']}%)")
 
     if created_orders:
         nums = ", ".join(f"№{n}" for n in created_orders)
         lines.append(f"📦 <b>Созданы заказы:</b> {nums}")
         lines.append(f"📅 Срок (по умолчанию): {deadline_str}")
-    elif sheet_manager:
-        lines.append("⚠️ Не удалось создать заказы автоматически")
 
     lines.append("")
     lines.append("📋 Состав:")
@@ -849,6 +1011,7 @@ async def price_order_request(payload: OrderRequestIn):
         "sent": sent,
         "orders": created_orders,
         "deadline": deadline_str,
+        "promo_applied": bool(promo_info),
     })
 
 
@@ -898,6 +1061,16 @@ async def check_tasks():
     except Exception as e:
         logger.error(f"check_tasks: {e}")
         return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
+
+
+@app.on_event("startup")
+async def on_startup():
+    if client_bot:
+        try:
+            await set_client_commands(client_bot)
+            logger.info("Client bot commands registered")
+        except Exception as e:
+            logger.warning(f"client bot setup: {e}")
 
 
 if __name__ == "__main__":
