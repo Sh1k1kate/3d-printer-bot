@@ -25,7 +25,6 @@ from config import BOT_TOKEN, ADMIN_PASSWORD
 from google_sheets import SheetManager, moscow_now
 from bambu_cloud import BambuCloudManager
 
-# DOCX
 from docx import Document
 from docx.shared import Pt, Cm, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -33,11 +32,9 @@ from docx.enum.table import WD_ALIGN_VERTICAL, WD_TABLE_ALIGNMENT
 from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
 
-# QR + PIL
 import qrcode
 from PIL import Image
 
-# 3MF
 from handlers_3mf import (
     extract_colors_from_3mf, hex_to_rgb, rgb_to_hex,
     group_similar_colors, find_closest_colors, generate_color_palette, BAMBU_COLORS,
@@ -56,7 +53,7 @@ except Exception as e:
     logger.error(f"Ошибка инициализации SheetManager: {e}")
     sheet_manager = None
 
-# ---------- Основной бот (внутренний) ----------
+# ---------- Основной бот ----------
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 dp.message.middleware(AccessMiddleware())
@@ -87,7 +84,7 @@ PRICE_ORDER_CHAT_ID = os.getenv("PRICE_ORDER_CHAT_ID", "")
 PRICE_ORDER_DEADLINE_DAYS = int(os.getenv("PRICE_ORDER_DEADLINE_DAYS", "7"))
 
 
-# ---------- EXCEPTION HANDLERS (C5) ----------
+# ---------- EXCEPTION HANDLERS ----------
 @app.exception_handler(StarletteHTTPException)
 async def http_exception_handler(request: Request, exc: StarletteHTTPException):
     if exc.status_code == 404:
@@ -587,6 +584,7 @@ async def robots(request: Request):
         "Disallow: /tracker\n"
         "Disallow: /api/\n"
         "Disallow: /webhook\n"
+        "Disallow: /webhook_client\n"
         "Disallow: /check_tasks\n"
         f"Sitemap: {base}/sitemap.xml\n"
     )
@@ -877,7 +875,7 @@ async def import_csv_api(file: UploadFile = File(...), _: bool = Depends(verify_
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
-# ---------- API: ПРОМОКОДЫ (A3) ----------
+# ---------- API: ПРОМОКОДЫ ----------
 @app.post("/api/price/validate_promo")
 async def validate_promo_api(payload: PromoIn):
     if not sheet_manager:
@@ -886,7 +884,7 @@ async def validate_promo_api(payload: PromoIn):
     return JSONResponse(result)
 
 
-# ---------- API: ОТЗЫВЫ (A4) ----------
+# ---------- API: ОТЗЫВЫ (с модерацией) ----------
 @app.get("/api/price/reviews/{row}")
 async def get_reviews_api(row: int):
     if not sheet_manager:
@@ -910,11 +908,50 @@ async def get_reviews_summary_api():
         return JSONResponse({})
 
 
+@app.get("/api/price/reviews/pending")
+async def get_pending_reviews_api(_: bool = Depends(verify_admin)):
+    if not sheet_manager:
+        return JSONResponse({"items": []})
+    try:
+        items = sheet_manager.get_pending_reviews()
+        enriched = []
+        for r in items:
+            product = sheet_manager.get_price_item_by_row(r["product_row"])
+            r_copy = dict(r)
+            r_copy["product_name"] = product["name"] if product else f"Товар #{r['product_row']}"
+            enriched.append(r_copy)
+        return JSONResponse({"items": enriched})
+    except Exception as e:
+        logger.error(f"pending_reviews error: {e}")
+        return JSONResponse({"items": []})
+
+
+@app.post("/api/price/review/{review_id}/approve")
+async def approve_review_api(review_id: int, _: bool = Depends(verify_admin)):
+    if not sheet_manager:
+        return JSONResponse({"error": "SheetManager не инициализирован"}, status_code=500)
+    ok = sheet_manager.approve_review(review_id)
+    if not ok:
+        return JSONResponse({"error": "Не удалось одобрить"}, status_code=400)
+    return JSONResponse({"status": "ok"})
+
+
+@app.post("/api/price/review/{review_id}/reject")
+async def reject_review_api(review_id: int, _: bool = Depends(verify_admin)):
+    if not sheet_manager:
+        return JSONResponse({"error": "SheetManager не инициализирован"}, status_code=500)
+    ok = sheet_manager.reject_review(review_id)
+    if not ok:
+        return JSONResponse({"error": "Не удалось отклонить"}, status_code=400)
+    return JSONResponse({"status": "ok"})
+
+
 @app.post("/api/price/review")
 async def add_review_api(payload: ReviewIn):
     if not sheet_manager:
         return JSONResponse({"error": "Сервис недоступен"}, status_code=500)
-    if not sheet_manager.get_price_item_by_row(payload.product_row):
+    product = sheet_manager.get_price_item_by_row(payload.product_row)
+    if not product:
         return JSONResponse({"error": "Товар не найден"}, status_code=404)
     if payload.rating < 1 or payload.rating > 5:
         return JSONResponse({"error": "Оценка 1–5"}, status_code=400)
@@ -923,7 +960,39 @@ async def add_review_api(payload: ReviewIn):
     ok = sheet_manager.add_review(payload.product_row, payload.name, payload.rating, payload.text)
     if not ok:
         return JSONResponse({"error": "Не удалось сохранить отзыв"}, status_code=500)
-    return JSONResponse({"status": "ok"})
+
+    try:
+        recipients = []
+        if PRICE_ORDER_CHAT_ID:
+            try:
+                recipients = [int(PRICE_ORDER_CHAT_ID)]
+            except ValueError:
+                pass
+        if not recipients:
+            try:
+                from config import ALLOWED_USERS
+                recipients = list(ALLOWED_USERS or [])
+            except Exception:
+                pass
+
+        stars = "★" * payload.rating + "☆" * (5 - payload.rating)
+        product_name = product.get("name", "—")
+        msg = (
+            f"📝 <b>Новый отзыв на модерации</b>\n\n"
+            f"Товар: {product_name}\n"
+            f"Оценка: {stars} ({payload.rating}/5)\n"
+            f"Имя: {payload.name or 'Аноним'}\n\n"
+            f"Текст:\n{payload.text[:300]}"
+        )
+        for rid in recipients:
+            try:
+                await bot.send_message(rid, msg, parse_mode="HTML")
+            except Exception as e:
+                logger.warning(f"review notify to {rid}: {e}")
+    except Exception as e:
+        logger.error(f"review notify error: {e}")
+
+    return JSONResponse({"status": "ok", "moderation": True})
 
 
 # ---------- API: ЗАЯВКА С ПРАЙСА ----------
@@ -938,13 +1007,12 @@ async def price_order_request(payload: OrderRequestIn):
     customer_full = f"{customer_name} ({payload.contact.strip()})"
     deadline_str = (datetime.now() + timedelta(days=PRICE_ORDER_DEADLINE_DAYS)).strftime("%Y-%m-%d")
 
-    # Проверка промокода (если передан)
     promo_info = None
     promo_code = (payload.promo_code or "").strip()
     if promo_code and sheet_manager:
         promo_info = sheet_manager.validate_promo(promo_code)
         if not promo_info.get("valid"):
-            promo_info = None  # тихо игнорируем невалидный промокод
+            promo_info = None
 
     created_orders = []
     if sheet_manager:
@@ -956,7 +1024,6 @@ async def price_order_request(payload: OrderRequestIn):
             except Exception as e:
                 logger.error(f"Не удалось создать заказ для '{it.name}': {e}")
 
-    # Учёт использований промокода
     if promo_info:
         sheet_manager.increment_promo_usage(promo_info["code"])
 
