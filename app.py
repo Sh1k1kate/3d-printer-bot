@@ -885,18 +885,7 @@ async def validate_promo_api(payload: PromoIn):
 
 
 # ---------- API: ОТЗЫВЫ (с модерацией) ----------
-@app.get("/api/price/reviews/{row}")
-async def get_reviews_api(row: int):
-    if not sheet_manager:
-        return JSONResponse({"items": []})
-    try:
-        items = sheet_manager.get_reviews_for_product(row, limit=30)
-        return JSONResponse({"items": items})
-    except Exception as e:
-        logger.error(f"get_reviews error: {e}")
-        return JSONResponse({"items": []})
-
-
+# ⚠️ ВАЖНО: конкретные пути идут ПЕРЕД /{row}, иначе "pending" попытается стать int → 422
 @app.get("/api/price/reviews_summary")
 async def get_reviews_summary_api():
     if not sheet_manager:
@@ -923,6 +912,19 @@ async def get_pending_reviews_api(_: bool = Depends(verify_admin)):
         return JSONResponse({"items": enriched})
     except Exception as e:
         logger.error(f"pending_reviews error: {e}")
+        return JSONResponse({"items": []})
+
+
+@app.get("/api/price/reviews/{row}")
+async def get_reviews_api(row: int):
+    """Публичный — только одобренные. ⚠️ Объявлен ПОСЛЕ конкретных путей."""
+    if not sheet_manager:
+        return JSONResponse({"items": []})
+    try:
+        items = sheet_manager.get_reviews_for_product(row, limit=30)
+        return JSONResponse({"items": items})
+    except Exception as e:
+        logger.error(f"get_reviews error: {e}")
         return JSONResponse({"items": []})
 
 
