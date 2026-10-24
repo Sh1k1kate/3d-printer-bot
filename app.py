@@ -7,6 +7,7 @@ import time
 import logging
 import aiohttp
 import requests
+from datetime import datetime, timedelta
 from fastapi import FastAPI, Request, UploadFile, File, Header, HTTPException, Depends
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, Response
 from fastapi.concurrency import run_in_threadpool
@@ -20,7 +21,6 @@ from handlers.common import AccessMiddleware
 from config import BOT_TOKEN, ADMIN_PASSWORD
 from google_sheets import SheetManager, moscow_now
 from bambu_cloud import BambuCloudManager
-from datetime import datetime
 
 # DOCX
 from docx import Document
@@ -74,6 +74,7 @@ bambu_cloud = BambuCloudManager()
 PRICE_LOGO_URL = os.getenv("PRICE_LOGO_URL", "")
 PUBLIC_URL = os.getenv("PUBLIC_URL", "")
 PRICE_ORDER_CHAT_ID = os.getenv("PRICE_ORDER_CHAT_ID", "")
+PRICE_ORDER_DEADLINE_DAYS = int(os.getenv("PRICE_ORDER_DEADLINE_DAYS", "7"))
 
 
 # ---------- АВТОРИЗАЦИЯ ----------
@@ -775,7 +776,7 @@ async def import_csv_api(file: UploadFile = File(...), _: bool = Depends(verify_
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
-# ---------- API: ЗАЯВКА С ПРАЙСА (корзина) ----------
+# ---------- API: ЗАЯВКА С ПРАЙСА (создаёт заказы) ----------
 @app.post("/api/price/order_request")
 async def price_order_request(payload: OrderRequestIn):
     if not payload.items:
@@ -783,12 +784,34 @@ async def price_order_request(payload: OrderRequestIn):
     if not payload.contact.strip():
         return JSONResponse({"error": "Укажите контакт для связи"}, status_code=400)
 
+    customer_name = payload.name.strip() or "Клиент с прайса"
+    customer_full = f"{customer_name} ({payload.contact.strip()})"
+    deadline_str = (datetime.now() + timedelta(days=PRICE_ORDER_DEADLINE_DAYS)).strftime("%Y-%m-%d")
+
+    created_orders = []
+    if sheet_manager:
+        for it in payload.items:
+            try:
+                position = f"С прайса: {it.name}"
+                num = sheet_manager.add_order(position, it.qty, deadline_str, customer_full)
+                created_orders.append(num)
+            except Exception as e:
+                logger.error(f"Не удалось создать заказ для '{it.name}': {e}")
+
     lines = ["🛒 <b>Новая заявка с прайса</b>", ""]
     if payload.name.strip():
         lines.append(f"👤 Имя: {payload.name.strip()}")
     lines.append(f"📞 Контакт: {payload.contact.strip()}")
     if payload.comment.strip():
         lines.append(f"💬 Комментарий: {payload.comment.strip()}")
+
+    if created_orders:
+        nums = ", ".join(f"№{n}" for n in created_orders)
+        lines.append(f"📦 <b>Созданы заказы:</b> {nums}")
+        lines.append(f"📅 Срок (по умолчанию): {deadline_str}")
+    elif sheet_manager:
+        lines.append("⚠️ Не удалось создать заказы автоматически")
+
     lines.append("")
     lines.append("📋 Состав:")
     for it in payload.items:
@@ -797,7 +820,6 @@ async def price_order_request(payload: OrderRequestIn):
     lines.append(f"Всего позиций: {len(payload.items)}")
     text = "\n".join(lines)
 
-    # Куда отправлять
     recipients = []
     if PRICE_ORDER_CHAT_ID:
         try:
@@ -821,10 +843,13 @@ async def price_order_request(payload: OrderRequestIn):
             sent += 1
         except Exception as e:
             logger.error(f"order_request send to {rid}: {e}")
-    if sent == 0:
-        return JSONResponse({"error": "Не удалось отправить заявку"}, status_code=500)
 
-    return JSONResponse({"status": "ok", "sent": sent})
+    return JSONResponse({
+        "status": "ok",
+        "sent": sent,
+        "orders": created_orders,
+        "deadline": deadline_str,
+    })
 
 
 # ---------- CRON ----------
