@@ -15,6 +15,8 @@ def moscow_now():
 
 
 PRICE_COLUMNS = ["Название", "Описание", "Фото (URL)", "Розница", "Опт", "Опт от (шт)", "Категория"]
+PROMO_COLUMNS = ["code", "discount_percent", "valid_until", "max_uses", "used_count", "active"]
+REVIEW_COLUMNS = ["id", "product_row", "name", "rating", "text", "created", "status"]
 
 
 class SheetManager:
@@ -77,6 +79,14 @@ class SheetManager:
             "Настройки системы", rows=100, cols=2,
             header=["key", "value"],
         )
+        self.sheet_promos = self._ensure_worksheet(
+            "Промокоды", rows=500, cols=6,
+            header=PROMO_COLUMNS,
+        )
+        self.sheet_reviews = self._ensure_worksheet(
+            "Отзывы", rows=2000, cols=7,
+            header=REVIEW_COLUMNS,
+        )
 
     def _ensure_worksheet(self, title, rows, cols, header):
         try:
@@ -105,7 +115,6 @@ class SheetManager:
                 return self.sheet.worksheet(title)
             raise
 
-    # ---------- Кеш ----------
     @staticmethod
     def _make_cache_key(key, args, kwargs):
         if not args and not kwargs:
@@ -139,7 +148,6 @@ class SheetManager:
         else:
             self._cache.clear()
 
-    # ---------- Системные настройки ----------
     def _fetch_setting(self, key):
         try:
             cell = self.sheet_system.find(str(key), in_column=1)
@@ -179,7 +187,6 @@ class SheetManager:
             logger.error(f"delete_setting({key}): {e}")
         return False
 
-    # ---------- Лог ----------
     def log_action(self, user_id, action, details=""):
         try:
             now_str = moscow_now().strftime("%Y-%m-%d %H:%M:%S")
@@ -200,8 +207,8 @@ class SheetManager:
                     "morning_time": row[1] if len(row) > 1 else "09:00",
                     "interval": row[2] if len(row) > 2 else "60",
                 }
-        except Exception as e:
-            logger.warning(f"get_user_settings: {e}")
+        except Exception:
+            pass
         return {"morning_time": "09:00", "interval": "60"}
 
     def set_user_settings(self, user_id, morning_time=None, interval=None):
@@ -628,12 +635,8 @@ class SheetManager:
                 row.append("")
             items.append({
                 "row_index": idx,
-                "name": row[0],
-                "description": row[1],
-                "photo": row[2],
-                "retail": row[3],
-                "wholesale": row[4],
-                "wholesale_from": row[5],
+                "name": row[0], "description": row[1], "photo": row[2],
+                "retail": row[3], "wholesale": row[4], "wholesale_from": row[5],
                 "category": row[6] or "Без категории",
             })
         return items
@@ -651,8 +654,7 @@ class SheetManager:
             return {
                 "row_index": row_index,
                 "name": row[0], "description": row[1], "photo": row[2],
-                "retail": row[3], "wholesale": row[4],
-                "wholesale_from": row[5],
+                "retail": row[3], "wholesale": row[4], "wholesale_from": row[5],
                 "category": row[6] or "Без категории",
             }
         except Exception:
@@ -698,8 +700,7 @@ class SheetManager:
             logger.error(f"delete_price_item: {e}")
             return False
 
-    def delete_price_items(self, rows: list) -> int:
-        """Удаляет несколько строк. Порядок по убыванию, чтобы не смещать индексы."""
+    def delete_price_items(self, rows):
         sorted_rows = sorted(set(rows), reverse=True)
         count = 0
         for r in sorted_rows:
@@ -712,8 +713,7 @@ class SheetManager:
         self.log_action("system", "Массовое удаление товаров", f"удалено {count}")
         return count
 
-    def set_category_for_rows(self, rows: list, category: str) -> int:
-        """Устанавливает категорию (колонка 7) для списка строк."""
+    def set_category_for_rows(self, rows, category):
         count = 0
         for r in set(rows):
             try:
@@ -725,8 +725,7 @@ class SheetManager:
         self.log_action("system", "Массовая смена категории", f"{count} товаров → {category}")
         return count
 
-    def import_price_items(self, items: list) -> int:
-        """Массовая вставка товаров через batch update (быстро)."""
+    def import_price_items(self, items):
         if not items:
             return 0
         all_rows = self.sheet_price.get_all_values()
@@ -755,6 +754,186 @@ class SheetManager:
     def get_price_categories(self):
         items = self.get_price_items()
         return sorted({it["category"] for it in items if it.get("category")})
+
+    # ---------- ПРОМОКОДЫ (A3) ----------
+    def _fetch_promos(self):
+        records = self.sheet_promos.get_all_values()
+        if len(records) <= 1:
+            return []
+        items = []
+        for idx, row in enumerate(records[1:], start=2):
+            if not row or not (row[0] or "").strip():
+                continue
+            while len(row) < 6:
+                row.append("")
+            try:
+                max_uses = int(row[3]) if row[3] else 0
+            except:
+                max_uses = 0
+            try:
+                used_count = int(row[4]) if row[4] else 0
+            except:
+                used_count = 0
+            items.append({
+                "row_index": idx,
+                "code": (row[0] or "").strip(),
+                "discount_percent": float(row[1]) if row[1] else 0.0,
+                "valid_until": (row[2] or "").strip(),
+                "max_uses": max_uses,
+                "used_count": used_count,
+                "active": (row[5] or "").strip().lower() in ("1", "true", "yes", "да", ""),
+            })
+        return items
+
+    def get_promos(self):
+        return self._get_cached("promos", self._fetch_promos)
+
+    def validate_promo(self, code):
+        code = (code or "").strip()
+        if not code:
+            return {"valid": False, "reason": "Пустой код"}
+        normalized = code.upper()
+        promos = self.get_promos()
+        promo = next((p for p in promos if p["code"].upper() == normalized), None)
+        if not promo:
+            return {"valid": False, "reason": "Промокод не найден"}
+        if not promo["active"]:
+            return {"valid": False, "reason": "Промокод отключён"}
+        if promo["discount_percent"] <= 0:
+            return {"valid": False, "reason": "Некорректная скидка"}
+        if promo["valid_until"]:
+            try:
+                until = datetime.strptime(promo["valid_until"], "%Y-%m-%d").date()
+                if datetime.now().date() > until:
+                    return {"valid": False, "reason": "Срок действия истёк"}
+            except Exception:
+                pass
+        if promo["max_uses"] > 0 and promo["used_count"] >= promo["max_uses"]:
+            return {"valid": False, "reason": "Лимит использований исчерпан"}
+        return {
+            "valid": True,
+            "code": promo["code"],
+            "discount_percent": promo["discount_percent"],
+            "row_index": promo["row_index"],
+        }
+
+    def increment_promo_usage(self, code):
+        code = (code or "").strip().upper()
+        if not code:
+            return False
+        promos = self.get_promos()
+        promo = next((p for p in promos if p["code"].upper() == code), None)
+        if not promo:
+            return False
+        try:
+            new_count = promo["used_count"] + 1
+            self.sheet_promos.update_cell(promo["row_index"], 5, str(new_count))
+            self._invalidate_cache("promos")
+            return True
+        except Exception as e:
+            logger.error(f"increment_promo_usage: {e}")
+            return False
+
+    # ---------- ОТЗЫВЫ (A4) ----------
+    def _fetch_all_reviews(self):
+        records = self.sheet_reviews.get_all_values()
+        if len(records) <= 1:
+            return []
+        items = []
+        for row in records[1:]:
+            if not row or not (row[0] or "").strip():
+                continue
+            while len(row) < 7:
+                row.append("")
+            try:
+                rid = int(row[0])
+            except:
+                continue
+            try:
+                product_row = int(row[1])
+            except:
+                continue
+            try:
+                rating = int(row[3])
+            except:
+                rating = 0
+            items.append({
+                "id": rid,
+                "product_row": product_row,
+                "name": row[2] or "",
+                "rating": max(1, min(5, rating)),
+                "text": row[4] or "",
+                "created": row[5] or "",
+                "status": (row[6] or "approved").strip().lower(),
+            })
+        return items
+
+    def get_all_reviews(self):
+        return self._get_cached("reviews", self._fetch_all_reviews)
+
+    def get_reviews_for_product(self, product_row, limit=20):
+        reviews = self.get_all_reviews()
+        filtered = [r for r in reviews if r["product_row"] == product_row and r["status"] == "approved"]
+        filtered.sort(key=lambda r: r.get("created", ""), reverse=True)
+        return filtered[:limit]
+
+    def get_reviews_summary(self):
+        reviews = self.get_all_reviews()
+        summary = {}
+        for r in reviews:
+            if r["status"] != "approved":
+                continue
+            key = r["product_row"]
+            if key not in summary:
+                summary[key] = {"count": 0, "sum": 0}
+            summary[key]["count"] += 1
+            summary[key]["sum"] += r["rating"]
+        result = {}
+        for k, v in summary.items():
+            result[str(k)] = {
+                "count": v["count"],
+                "avg": round(v["sum"] / v["count"], 1) if v["count"] else 0,
+            }
+        return result
+
+    def add_review(self, product_row, name, rating, text):
+        rating = max(1, min(5, int(rating)))
+        text = (text or "").strip()[:1000]
+        name = (name or "Аноним").strip()[:100]
+        if not text:
+            return False
+        all_reviews = self.get_all_reviews()
+        next_id = 1
+        if all_reviews:
+            try:
+                next_id = max(r["id"] for r in all_reviews) + 1
+            except Exception:
+                next_id = len(all_reviews) + 1
+        try:
+            self.sheet_reviews.append_row([
+                next_id, product_row, name, rating, text,
+                moscow_now().strftime("%Y-%m-%d %H:%M"), "approved",
+            ])
+            self._invalidate_cache("reviews")
+            return True
+        except Exception as e:
+            logger.error(f"add_review: {e}")
+            return False
+
+    def delete_review(self, review_id):
+        reviews = self.get_all_reviews()
+        review = next((r for r in reviews if r["id"] == int(review_id)), None)
+        if not review:
+            return False
+        try:
+            cell = self.sheet_reviews.find(str(review_id), in_column=1)
+            if cell:
+                self.sheet_reviews.delete_rows(cell.row)
+                self._invalidate_cache("reviews")
+                return True
+        except Exception as e:
+            logger.error(f"delete_review: {e}")
+        return False
 
     # ---------- Заглушки ----------
     def init_tasks_sheet(self): pass
