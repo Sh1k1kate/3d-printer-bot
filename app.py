@@ -1,5 +1,6 @@
 import os
 import io
+import csv
 import json
 import base64
 import time
@@ -29,13 +30,11 @@ from docx.enum.table import WD_ALIGN_VERTICAL, WD_TABLE_ALIGNMENT
 from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
 
-# QR
+# QR + PIL
 import qrcode
-
-# ✅ PIL — для выравнивания прозрачности логотипа/фото
 from PIL import Image
 
-# 3MF-анализ
+# 3MF
 from handlers_3mf import (
     extract_colors_from_3mf, hex_to_rgb, rgb_to_hex,
     group_similar_colors, find_closest_colors, generate_color_palette, BAMBU_COLORS,
@@ -74,6 +73,7 @@ bambu_cloud = BambuCloudManager()
 
 PRICE_LOGO_URL = os.getenv("PRICE_LOGO_URL", "")
 PUBLIC_URL = os.getenv("PUBLIC_URL", "")
+PRICE_ORDER_CHAT_ID = os.getenv("PRICE_ORDER_CHAT_ID", "")
 
 
 # ---------- АВТОРИЗАЦИЯ ----------
@@ -97,6 +97,27 @@ class PriceItemIn(BaseModel):
 
 class LogoIn(BaseModel):
     url: str = ""
+
+
+class BulkRowsIn(BaseModel):
+    rows: list[int]
+
+
+class BulkCategoryIn(BaseModel):
+    rows: list[int]
+    category: str
+
+
+class OrderItemIn(BaseModel):
+    name: str
+    qty: int = 1
+
+
+class OrderRequestIn(BaseModel):
+    items: list[OrderItemIn]
+    name: str = ""
+    contact: str = ""
+    comment: str = ""
 
 
 # ---------- ЛОГОТИП ----------
@@ -136,7 +157,7 @@ async def delete_price_logo(_: bool = Depends(verify_admin)):
     return JSONResponse({"status": "ok"})
 
 
-# ---------- ЗАГРУЗКА ФОТО В GOOGLE DRIVE ----------
+# ---------- ЗАГРУЗКА ФОТО ----------
 DRIVE_UPLOAD_URL = os.getenv("DRIVE_UPLOAD_URL", "")
 DRIVE_UPLOAD_SECRET = os.getenv("DRIVE_UPLOAD_SECRET", "")
 MAX_IMAGE_SIZE = 5 * 1024 * 1024
@@ -145,9 +166,9 @@ MAX_IMAGE_SIZE = 5 * 1024 * 1024
 @app.post("/api/upload_image")
 async def upload_image_api(file: UploadFile = File(...), _: bool = Depends(verify_admin)):
     if not DRIVE_UPLOAD_URL or not DRIVE_UPLOAD_SECRET:
-        return JSONResponse({"error": "DRIVE_UPLOAD_URL / DRIVE_UPLOAD_SECRET не заданы на сервере"}, status_code=500)
+        return JSONResponse({"error": "DRIVE_UPLOAD_URL / DRIVE_UPLOAD_SECRET не заданы"}, status_code=500)
     if not file.content_type or not file.content_type.startswith("image/"):
-        return JSONResponse({"error": "Только изображения (jpg, png, webp, gif)"}, status_code=400)
+        return JSONResponse({"error": "Только изображения"}, status_code=400)
     content = await file.read()
     if not content:
         return JSONResponse({"error": "Пустой файл"}, status_code=400)
@@ -156,12 +177,7 @@ async def upload_image_api(file: UploadFile = File(...), _: bool = Depends(verif
 
     b64 = base64.b64encode(content).decode("ascii")
     filename = file.filename or f"upload_{int(time.time())}.jpg"
-    payload = {
-        "secret": DRIVE_UPLOAD_SECRET,
-        "filename": filename,
-        "mime": file.content_type,
-        "image": b64,
-    }
+    payload = {"secret": DRIVE_UPLOAD_SECRET, "filename": filename, "mime": file.content_type, "image": b64}
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(DRIVE_UPLOAD_URL, json=payload,
@@ -175,7 +191,7 @@ async def upload_image_api(file: UploadFile = File(...), _: bool = Depends(verif
         logger.error(f"Drive upload exception: {e}")
         return JSONResponse({"error": f"Ошибка соединения с Drive: {e}"}, status_code=502)
     if not data.get("ok"):
-        return JSONResponse({"error": data.get("error") or "Drive отказал в загрузке"}, status_code=502)
+        return JSONResponse({"error": data.get("error") or "Drive отказал"}, status_code=502)
     return JSONResponse({"url": data["url"]})
 
 
@@ -205,14 +221,12 @@ async def price_qrcode(request: Request, _: bool = Depends(verify_admin)):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
-# ---------- ЗАГРУЗКА КАРТИНОК ДЛЯ WORD ----------
+# ---------- WORD ----------
 def _flatten_on_white(img: Image.Image) -> Image.Image:
-    """Накладывает прозрачные пиксели на белый фон и приводит к RGB."""
     if img.mode == 'P':
         img = img.convert('RGBA')
     if img.mode in ('RGBA', 'LA'):
         bg = Image.new('RGB', img.size, (255, 255, 255))
-        # Используем альфа-канал как маску
         alpha = img.split()[-1]
         bg.paste(img, mask=alpha)
         return bg
@@ -222,7 +236,6 @@ def _flatten_on_white(img: Image.Image) -> Image.Image:
 
 
 def _download_image(url: str, timeout: int = 10):
-    """Скачивает картинку, нормализует её через PIL и возвращает BytesIO."""
     try:
         resp = requests.get(url, timeout=timeout, stream=True, allow_redirects=True)
         if resp.status_code != 200:
@@ -233,8 +246,6 @@ def _download_image(url: str, timeout: int = 10):
         data = resp.content
         if not data or len(data) > MAX_IMAGE_SIZE:
             return None
-
-        # ✅ Нормализация: снимаем прозрачность, избавляемся от «бледности»
         try:
             img = Image.open(io.BytesIO(data))
             img = _flatten_on_white(img)
@@ -243,14 +254,13 @@ def _download_image(url: str, timeout: int = 10):
             out.seek(0)
             return out
         except Exception as e:
-            logger.warning(f"PIL нормализация не удалась, использую оригинал: {e}")
+            logger.warning(f"PIL normalize failed: {e}")
             return io.BytesIO(data)
     except Exception as e:
-        logger.warning(f"Не удалось скачать {url}: {e}")
+        logger.warning(f"download {url}: {e}")
         return None
 
 
-# ---------- ШАПКА / ПОДВАЛ ----------
 def _add_page_number_field(paragraph):
     run = paragraph.add_run()
     begin = OxmlElement('w:fldChar'); begin.set(qn('w:fldCharType'), 'begin')
@@ -261,13 +271,8 @@ def _add_page_number_field(paragraph):
 
 
 def _setup_header_footer(doc, logo_url: str):
-    """Логотип — только на ПЕРВОЙ странице. Подвал — на всех."""
     section = doc.sections[0]
-
-    # ✅ Разные шапки для первой и последующих страниц
     section.different_first_page_header_footer = True
-
-    # --- Первая страница: логотип по центру ---
     try:
         first_header = section.first_page_header
         first_header.is_linked_to_previous = False
@@ -280,20 +285,16 @@ def _setup_header_footer(doc, logo_url: str):
                 try:
                     p.add_run().add_picture(logo_io, width=Cm(3.0))
                 except Exception as e:
-                    logger.warning(f"Не удалось вставить логотип: {e}")
+                    logger.warning(f"logo insert: {e}")
     except Exception as e:
-        logger.warning(f"First page header setup failed: {e}")
-
-    # --- Обычные страницы: пустая шапка (без логотипа) ---
+        logger.warning(f"header setup: {e}")
     try:
         regular_header = section.header
         regular_header.is_linked_to_previous = False
         for para in regular_header.paragraphs:
             para.text = ""
-    except Exception as e:
-        logger.warning(f"Regular header setup failed: {e}")
-
-    # --- Подвал: на всех страницах ---
+    except Exception:
+        pass
     try:
         footer = section.footer
         footer.is_linked_to_previous = False
@@ -309,96 +310,72 @@ def _setup_header_footer(doc, logo_url: str):
             r.font.size = Pt(8)
             r.font.color.rgb = RGBColor(0x88, 0x88, 0x88)
             r.italic = True
-    except Exception as e:
-        logger.warning(f"Footer setup failed: {e}")
-
-    # Первую страницу тоже снабжаем подвалом
+    except Exception:
+        pass
     try:
-        first_footer = section.first_page_footer
-        first_footer.is_linked_to_previous = True  # ссылается на обычный подвал
+        section.first_page_footer.is_linked_to_previous = True
     except Exception:
         pass
 
 
-# ---------- СБОРКА ДОКУМЕНТА ----------
 def _build_price_docx(items):
     doc = Document()
-
     normal = doc.styles["Normal"]
     normal.font.name = "Calibri"
     normal.font.size = Pt(11)
-
     _setup_header_footer(doc, _get_price_logo_url())
-
     title = doc.add_heading("Прайс-лист", level=0)
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-
     if not items:
         doc.add_paragraph("Прайс пуст.")
         buf = io.BytesIO(); doc.save(buf); buf.seek(0)
         return buf.getvalue()
-
-    # Группировка по категориям
     by_cat = {}
     for it in items:
         cat = (it.get("category") or "Без категории").strip() or "Без категории"
         by_cat.setdefault(cat, []).append(it)
-
     sorted_cats = sorted(by_cat.keys(), key=lambda s: s.lower())
-
-    # ✅ СТАТИЧНОЕ ОГЛАВЛЕНИЕ (без поля TOC и без «обновить поле»)
     toc_title = doc.add_paragraph()
     toc_title.alignment = WD_ALIGN_PARAGRAPH.CENTER
     r = toc_title.add_run("Содержание")
     r.bold = True
     r.font.size = Pt(14)
-
-    for idx, cat in enumerate(sorted_cats, 1):
+    for cat in sorted_cats:
         p = doc.add_paragraph(style="List Number")
         run = p.add_run(cat)
         run.font.size = Pt(11)
-        cnt = len(by_cat[cat])
-        cnt_run = p.add_run(f"  —  {cnt} поз.")
+        cnt_run = p.add_run(f"  —  {len(by_cat[cat])} поз.")
         cnt_run.font.size = Pt(9)
         cnt_run.font.color.rgb = RGBColor(0x88, 0x88, 0x88)
         cnt_run.italic = True
-
     doc.add_page_break()
-
-    # Разделы
     for cat in sorted_cats:
         doc.add_heading(cat, level=1)
-
         table = doc.add_table(rows=1, cols=5)
         table.style = "Light Grid Accent 1"
         table.autofit = False
         table.alignment = WD_TABLE_ALIGNMENT.CENTER
-
         tblPr = table._tbl.tblPr
         layout = OxmlElement('w:tblLayout')
         layout.set(qn('w:type'), 'fixed')
         tblPr.append(layout)
-
         hdr = table.rows[0].cells
         for i, h in enumerate(["Фото", "Название", "Описание", "Розница", "Опт"]):
             hdr[i].text = ""
-            p = hdr[i].paragraphs[0]
-            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            run = p.add_run(h)
+            pp = hdr[i].paragraphs[0]
+            pp.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            run = pp.add_run(h)
             run.bold = True
             run.font.size = Pt(10)
-
         widths = [Cm(2.2), Cm(3.5), Cm(5.5), Cm(2.2), Cm(2.5)]
         for row in table.rows:
             for i, w in enumerate(widths):
                 row.cells[i].width = w
-
         for it in by_cat[cat]:
             row = table.add_row().cells
             for i, w in enumerate(widths):
                 row[i].width = w
                 row[i].vertical_alignment = WD_ALIGN_VERTICAL.CENTER
-
             photo_url = (it.get("photo") or "").strip()
             p_photo = row[0].paragraphs[0]
             p_photo.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -407,33 +384,27 @@ def _build_price_docx(items):
                 if img_io:
                     try:
                         p_photo.add_run().add_picture(img_io, width=Cm(2.0))
-                    except Exception as e:
-                        logger.warning(f"Не удалось вставить фото: {e}")
+                    except Exception:
                         p_photo.add_run("—")
                 else:
                     p_photo.add_run("—")
             else:
                 p_photo.add_run("—")
-
             name_p = row[1].paragraphs[0]
             name_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
             name_p.add_run(it.get("name", "") or "")
-
             desc_p = row[2].paragraphs[0]
             desc_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
             desc_p.add_run((it.get("description", "") or "").replace("\r\n", "\n"))
-
             retail = (it.get("retail") or "").strip()
             wholesale = (it.get("wholesale") or "").strip()
             wholesale_from = (it.get("wholesale_from") or "").strip()
-
             retail_p = row[3].paragraphs[0]
             retail_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
             if retail:
                 rr = retail_p.add_run(f"{retail} ₽"); rr.bold = True
             else:
                 retail_p.add_run("—")
-
             ws_p = row[4].paragraphs[0]
             ws_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
             if wholesale:
@@ -445,16 +416,13 @@ def _build_price_docx(items):
                     fp.runs[0].font.color.rgb = RGBColor(0x88, 0x88, 0x88)
             else:
                 ws_p.add_run("—")
-
         doc.add_paragraph()
-
     summary = doc.add_paragraph()
     summary.alignment = WD_ALIGN_PARAGRAPH.CENTER
     run = summary.add_run(f"Всего товаров: {len(items)} · Категорий: {len(by_cat)}")
     run.italic = True
     run.font.size = Pt(9)
     run.font.color.rgb = RGBColor(0x88, 0x88, 0x88)
-
     buf = io.BytesIO(); doc.save(buf); buf.seek(0)
     return buf.getvalue()
 
@@ -619,7 +587,7 @@ def _process_3mf_bytes(content: bytes):
         if palette_bytes:
             palette_b64 = base64.b64encode(palette_bytes).decode("ascii")
     except Exception as e:
-        logger.warning(f"Ошибка генерации палитры: {e}")
+        logger.warning(f"palette error: {e}")
     return {"colors": unique_matches, "count": len(unique_matches), "palette": palette_b64}
 
 
@@ -637,7 +605,7 @@ async def analyze_3mf_api(file: UploadFile = File(...)):
         result = await run_in_threadpool(_process_3mf_bytes, content)
         return JSONResponse(result)
     except Exception as e:
-        logger.error(f"Ошибка анализа 3MF: {e}", exc_info=e)
+        logger.error(f"3MF error: {e}", exc_info=e)
         return JSONResponse({"detail": f"Ошибка анализа: {e}"}, status_code=500)
 
 
@@ -650,6 +618,7 @@ async def get_price_api():
         items = sheet_manager.get_price_items()
         categories = sheet_manager.get_price_categories()
         public_items = [{
+            "row_index": it["row_index"],
             "name": it["name"], "description": it["description"],
             "photo": it["photo"], "retail": it["retail"],
             "wholesale": it["wholesale"], "wholesale_from": it["wholesale_from"],
@@ -681,7 +650,7 @@ async def add_price_api(payload: PriceItemIn, _: bool = Depends(verify_admin)):
             payload.retail, payload.wholesale, payload.wholesale_from, payload.category
         )
         if not ok:
-            return JSONResponse({"error": "Не удалось добавить (пустое имя?)"}, status_code=400)
+            return JSONResponse({"error": "Не удалось добавить"}, status_code=400)
         return JSONResponse({"status": "ok"})
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -721,6 +690,143 @@ async def delete_price_api(row_index: int, _: bool = Depends(verify_admin)):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
+# ---------- API: МАССОВЫЕ ДЕЙСТВИЯ ----------
+@app.post("/api/price/bulk_delete")
+async def bulk_delete_api(payload: BulkRowsIn, _: bool = Depends(verify_admin)):
+    if not sheet_manager:
+        return JSONResponse({"error": "SheetManager не инициализирован"}, status_code=500)
+    if not payload.rows:
+        return JSONResponse({"error": "Пустой список"}, status_code=400)
+    try:
+        deleted = sheet_manager.delete_price_items(payload.rows)
+        return JSONResponse({"status": "ok", "deleted": deleted})
+    except Exception as e:
+        logger.error(f"bulk_delete error: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.post("/api/price/bulk_set_category")
+async def bulk_set_category_api(payload: BulkCategoryIn, _: bool = Depends(verify_admin)):
+    if not sheet_manager:
+        return JSONResponse({"error": "SheetManager не инициализирован"}, status_code=500)
+    if not payload.rows:
+        return JSONResponse({"error": "Пустой список"}, status_code=400)
+    if not payload.category.strip():
+        return JSONResponse({"error": "Категория не может быть пустой"}, status_code=400)
+    try:
+        updated = sheet_manager.set_category_for_rows(payload.rows, payload.category.strip())
+        return JSONResponse({"status": "ok", "updated": updated})
+    except Exception as e:
+        logger.error(f"bulk_set_category error: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+# ---------- API: CSV ----------
+@app.post("/api/price/import_csv")
+async def import_csv_api(file: UploadFile = File(...), _: bool = Depends(verify_admin)):
+    if not sheet_manager:
+        return JSONResponse({"error": "SheetManager не инициализирован"}, status_code=500)
+    if not file.filename or not file.filename.lower().endswith(".csv"):
+        return JSONResponse({"error": "Нужен файл .csv"}, status_code=400)
+    try:
+        content = await file.read()
+    except Exception as e:
+        return JSONResponse({"error": f"Не удалось прочитать файл: {e}"}, status_code=400)
+    if not content:
+        return JSONResponse({"error": "Пустой файл"}, status_code=400)
+    if len(content) > 5 * 1024 * 1024:
+        return JSONResponse({"error": "Файл больше 5 МБ"}, status_code=400)
+
+    try:
+        text = content.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        try:
+            text = content.decode("cp1251")
+        except Exception:
+            return JSONResponse({"error": "Не удалось декодировать CSV (нужен UTF-8 или Windows-1251)"}, status_code=400)
+
+    try:
+        reader = csv.DictReader(io.StringIO(text))
+        raw_items = []
+        for row in reader:
+            name = (row.get("name") or row.get("Название") or "").strip()
+            if not name:
+                continue
+            raw_items.append({
+                "name": name,
+                "description": (row.get("description") or row.get("Описание") or "").strip(),
+                "photo": (row.get("photo") or row.get("Фото") or "").strip(),
+                "retail": (row.get("retail") or row.get("Розница") or "").strip(),
+                "wholesale": (row.get("wholesale") or row.get("Опт") or "").strip(),
+                "wholesale_from": (row.get("wholesale_from") or row.get("Опт от") or "").strip(),
+                "category": (row.get("category") or row.get("Категория") or "Без категории").strip() or "Без категории",
+            })
+    except Exception as e:
+        return JSONResponse({"error": f"Ошибка парсинга CSV: {e}"}, status_code=400)
+
+    if not raw_items:
+        return JSONResponse({"error": "В CSV не найдено ни одной строки с заполненным name/Название"}, status_code=400)
+
+    try:
+        added = await run_in_threadpool(sheet_manager.import_price_items, raw_items)
+        return JSONResponse({"status": "ok", "added": added})
+    except Exception as e:
+        logger.error(f"import_csv error: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+# ---------- API: ЗАЯВКА С ПРАЙСА (корзина) ----------
+@app.post("/api/price/order_request")
+async def price_order_request(payload: OrderRequestIn):
+    if not payload.items:
+        return JSONResponse({"error": "Корзина пуста"}, status_code=400)
+    if not payload.contact.strip():
+        return JSONResponse({"error": "Укажите контакт для связи"}, status_code=400)
+
+    lines = ["🛒 <b>Новая заявка с прайса</b>", ""]
+    if payload.name.strip():
+        lines.append(f"👤 Имя: {payload.name.strip()}")
+    lines.append(f"📞 Контакт: {payload.contact.strip()}")
+    if payload.comment.strip():
+        lines.append(f"💬 Комментарий: {payload.comment.strip()}")
+    lines.append("")
+    lines.append("📋 Состав:")
+    for it in payload.items:
+        lines.append(f"• {it.name} — {it.qty} шт")
+    lines.append("")
+    lines.append(f"Всего позиций: {len(payload.items)}")
+    text = "\n".join(lines)
+
+    # Куда отправлять
+    recipients = []
+    if PRICE_ORDER_CHAT_ID:
+        try:
+            recipients = [int(PRICE_ORDER_CHAT_ID)]
+        except ValueError:
+            recipients = []
+    if not recipients:
+        try:
+            from config import ALLOWED_USERS
+            recipients = list(ALLOWED_USERS or [])
+        except Exception:
+            recipients = []
+
+    if not recipients:
+        return JSONResponse({"error": "Получатель не настроен (PRICE_ORDER_CHAT_ID)"}, status_code=500)
+
+    sent = 0
+    for rid in recipients:
+        try:
+            await bot.send_message(rid, text, parse_mode="HTML")
+            sent += 1
+        except Exception as e:
+            logger.error(f"order_request send to {rid}: {e}")
+    if sent == 0:
+        return JSONResponse({"error": "Не удалось отправить заявку"}, status_code=500)
+
+    return JSONResponse({"status": "ok", "sent": sent})
+
+
 # ---------- CRON ----------
 @app.get("/check_tasks")
 async def check_tasks():
@@ -746,7 +852,7 @@ async def check_tasks():
                             await bot.send_message(recipient, f"🌅 Напоминание: сегодня задача '{title}' должна быть выполнена до {task['deadline_dt'].strftime('%H:%M')}!")
                             notified_count += 1
                         except Exception as e:
-                            logger.error(f"Ошибка утреннего уведомления: {e}")
+                            logger.error(f"morning notify: {e}")
                     sheet_manager.update_task_notification(task_id, 'notified_morning', '1')
 
                 for minutes, field in [(60, 'notified_60'), (30, 'notified_30'), (15, 'notified_15'), (0, 'notified_0')]:
@@ -759,13 +865,13 @@ async def check_tasks():
                                 await bot.send_message(recipient, text)
                                 notified_count += 1
                             except Exception as e:
-                                logger.error(f"Ошибка уведомления за {minutes} минут: {e}")
+                                logger.error(f"notify {minutes}: {e}")
                         sheet_manager.update_task_notification(task_id, field, '1')
             except Exception as e:
-                logger.error(f"Ошибка обработки задачи {task.get('id')}: {e}")
+                logger.error(f"task {task.get('id')}: {e}")
         return JSONResponse({"status": "ok", "notified": notified_count})
     except Exception as e:
-        logger.error(f"Критическая ошибка в /check_tasks: {e}")
+        logger.error(f"check_tasks: {e}")
         return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
 
 
