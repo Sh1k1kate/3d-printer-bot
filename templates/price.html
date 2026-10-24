@@ -8,7 +8,6 @@
   <meta property="og:title" content="Kobra Print — прайс-лист">
   <meta property="og:description" content="Каталог товаров для 3D-печати: цены, фото, розница и опт.">
   <meta property="og:type" content="website">
-  <meta property="og:url" content="/price">
   <meta name="twitter:card" content="summary_large_image">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💰</text></svg>">
   <script src="https://cdn.tailwindcss.com"></script>
@@ -24,9 +23,7 @@
     .line-clamp-3 { display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; }
     .skeleton {
       background: linear-gradient(90deg, rgba(0,0,0,0.06) 25%, rgba(0,0,0,0.12) 37%, rgba(0,0,0,0.06) 63%);
-      background-size: 400% 100%;
-      animation: shimmer 1.4s ease infinite;
-      border-radius: 0.5rem;
+      background-size: 400% 100%; animation: shimmer 1.4s ease infinite; border-radius: 0.5rem;
     }
     .dark .skeleton {
       background: linear-gradient(90deg, rgba(255,255,255,0.06) 25%, rgba(255,255,255,0.14) 37%, rgba(255,255,255,0.06) 63%);
@@ -44,7 +41,6 @@
 </head>
 <body class="bg-gray-50 dark:bg-gray-900 text-gray-800 dark:text-gray-200 antialiased">
 
-  <!-- HEADER -->
   <header class="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 sticky top-0 z-30">
     <div class="container mx-auto px-4 py-3 flex items-center justify-between max-w-7xl">
       <div class="flex items-center gap-3">
@@ -57,9 +53,7 @@
         <button onclick="toggleTheme()" class="bg-gray-200 dark:bg-gray-700 px-3 py-1.5 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600 transition text-sm">
           <span id="theme-icon">🌙</span>
         </button>
-        <button onclick="openAdmin()" title="Админка" class="bg-gray-200 dark:bg-gray-700 px-3 py-1.5 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600 transition text-sm">
-          ⚙️
-        </button>
+        <button onclick="openAdmin()" title="Админка" class="bg-gray-200 dark:bg-gray-700 px-3 py-1.5 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600 transition text-sm">⚙️</button>
       </div>
     </div>
   </header>
@@ -67,7 +61,7 @@
   <section class="bg-gradient-to-br from-blue-500 via-indigo-500 to-purple-600 text-white">
     <div class="container mx-auto px-4 py-12 max-w-7xl">
       <h2 class="text-3xl md:text-4xl font-bold mb-3">Каталог товаров для 3D-печати</h2>
-      <p class="text-white/90 max-w-2xl mb-6">Актуальные розничные и оптовые цены. Обновляется автоматически.</p>
+      <p class="text-white/90 max-w-2xl mb-6">Актуальные розничные и оптовые цены.</p>
       <div class="grid grid-cols-2 md:grid-cols-4 gap-4 max-w-3xl">
         <div class="bg-white/15 backdrop-blur rounded-xl p-4">
           <div class="text-2xl font-bold" id="stat-total">—</div>
@@ -100,6 +94,10 @@
         <button id="export-docx-btn" onclick="exportDocx()" class="bg-emerald-600 hover:bg-emerald-700 text-white text-sm px-4 py-1.5 rounded-lg">📄 Word</button>
         <button onclick="openQr()" class="bg-violet-600 hover:bg-violet-700 text-white text-sm px-4 py-1.5 rounded-lg">🔲 QR</button>
         <button onclick="openLogoModal()" class="bg-cyan-600 hover:bg-cyan-700 text-white text-sm px-4 py-1.5 rounded-lg">🖼 Лого</button>
+        <button onclick="openReviewsModal()" class="relative bg-pink-600 hover:bg-pink-700 text-white text-sm px-4 py-1.5 rounded-lg">
+          📝 Отзывы
+          <span id="reviews-badge" class="hidden absolute -top-1.5 -right-1.5 bg-red-500 text-white text-xs font-bold rounded-full min-w-[22px] h-[22px] flex items-center justify-center px-1">0</span>
+        </button>
         <button onclick="logoutAdmin()" class="bg-gray-200 dark:bg-gray-700 text-sm px-4 py-1.5 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600">🚪 Выйти</button>
       </div>
     </div>
@@ -152,11 +150,10 @@
     <div id="empty-state" class="hidden text-center py-20 text-gray-400 dark:text-gray-500">
       <p class="text-5xl mb-3">📦</p>
       <p class="text-xl">Ничего не найдено</p>
-      <p class="text-sm mt-2">Попробуйте изменить фильтры или сбросить поиск.</p>
     </div>
   </section>
 
-  <!-- MODAL: PRODUCT -->
+  <!-- PRODUCT MODAL -->
   <div id="modal-product" class="hidden fixed inset-0 bg-black/60 z-40 flex items-center justify-center p-4">
     <div class="relative max-w-3xl md:max-w-[1075px] w-full max-h-[90vh] overflow-hidden rounded-2xl shadow-2xl">
       <button type="button" onclick="closeModal('modal-product')"
@@ -196,7 +193,7 @@
     </div>
   </div>
 
-  <!-- MODAL: REVIEW FORM -->
+  <!-- REVIEW FORM -->
   <div id="modal-review" class="hidden fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
     <div class="bg-white dark:bg-gray-800 rounded-2xl max-w-md w-full p-6 shadow-2xl">
       <div class="flex justify-between items-center mb-4">
@@ -222,11 +219,30 @@
           <label class="block text-sm font-medium mb-1">Текст *</label>
           <textarea id="review-text" rows="4" placeholder="Расскажите о качестве печати, сроках, общении…" class="w-full px-3 py-2 border rounded-lg bg-white dark:bg-gray-700 dark:border-gray-600"></textarea>
         </div>
+        <div class="text-xs text-gray-500 dark:text-gray-400">
+          ℹ️ Отзыв будет опубликован после проверки администратором
+        </div>
         <div id="review-error" class="hidden text-red-600 text-sm"></div>
       </div>
       <div class="flex gap-2 justify-end mt-5">
         <button onclick="closeModal('modal-review')" class="px-4 py-2 rounded-lg bg-gray-200 dark:bg-gray-700 text-sm">Отмена</button>
         <button onclick="submitReview()" class="px-4 py-2 rounded-lg bg-blue-500 hover:bg-blue-600 text-white text-sm">📤 Отправить</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- REVIEWS MODERATION -->
+  <div id="modal-reviews" class="hidden fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+    <div class="bg-white dark:bg-gray-800 rounded-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto shadow-2xl p-6">
+      <div class="flex justify-between items-center mb-4">
+        <h3 class="text-xl font-bold">📝 Отзывы на модерации</h3>
+        <button type="button" onclick="closeModal('modal-reviews')" class="w-11 h-11 flex items-center justify-center rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 text-2xl leading-none">×</button>
+      </div>
+      <div id="reviews-list" class="space-y-3"></div>
+      <div id="reviews-empty" class="hidden text-center py-12 text-gray-500">
+        <p class="text-5xl mb-3">✅</p>
+        <p class="text-lg">Нет отзывов на модерации</p>
+        <p class="text-sm mt-2">Все отзывы проверены</p>
       </div>
     </div>
   </div>
@@ -251,14 +267,8 @@
         <button type="button" onclick="closeModal('modal-editor')" class="w-11 h-11 flex items-center justify-center rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 text-2xl leading-none">×</button>
       </div>
       <div class="space-y-3">
-        <div>
-          <label class="block text-sm font-medium mb-1">Название *</label>
-          <input id="edit-name" type="text" class="w-full px-3 py-2 border rounded-lg bg-white dark:bg-gray-700 dark:border-gray-600" required>
-        </div>
-        <div>
-          <label class="block text-sm font-medium mb-1">Описание</label>
-          <textarea id="edit-description" rows="3" class="w-full px-3 py-2 border rounded-lg bg-white dark:bg-gray-700 dark:border-gray-600"></textarea>
-        </div>
+        <div><label class="block text-sm font-medium mb-1">Название *</label><input id="edit-name" type="text" class="w-full px-3 py-2 border rounded-lg bg-white dark:bg-gray-700 dark:border-gray-600" required></div>
+        <div><label class="block text-sm font-medium mb-1">Описание</label><textarea id="edit-description" rows="3" class="w-full px-3 py-2 border rounded-lg bg-white dark:bg-gray-700 dark:border-gray-600"></textarea></div>
         <div>
           <label class="block text-sm font-medium mb-1">Фото</label>
           <div class="flex gap-2">
@@ -366,7 +376,6 @@
   </button>
 
   <script>
-    // ---------- THEME ----------
     let darkMode = localStorage.getItem('theme') === 'dark';
     function applyTheme() {
       document.documentElement.classList.toggle('dark', darkMode);
@@ -376,7 +385,6 @@
     function toggleTheme() { darkMode = !darkMode; applyTheme(); }
     applyTheme();
 
-    // ---------- STATE ----------
     let allItems = [];
     let categories = [];
     let adminToken = localStorage.getItem('priceAdminToken') || '';
@@ -424,9 +432,9 @@
       document.getElementById('filters-toggle-text').textContent = filtersOpen ? 'Фильтры ▲' : 'Фильтры ▼';
     }
 
-    // ---------- LOAD ----------
     async function loadItems() {
       renderSkeleton();
+      if (adminToken) refreshReviewsBadge();
       try {
         const url = adminToken ? '/api/price/admin' : '/api/price';
         const headers = adminToken ? { 'X-Admin-Token': adminToken } : {};
@@ -455,8 +463,7 @@
       grid.className = 'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4';
       let html = '';
       for (let i = 0; i < 8; i++) {
-        html += `
-          <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm overflow-hidden">
+        html += `<div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm overflow-hidden">
             <div class="skeleton h-48 w-full"></div>
             <div class="p-4 space-y-2">
               <div class="skeleton h-5 w-3/4"></div>
@@ -547,7 +554,6 @@
       const empty = document.getElementById('empty-state');
       if (!items.length) { grid.innerHTML = ''; empty.classList.remove('hidden'); return; }
       empty.classList.add('hidden');
-
       if (viewMode === 'grid') {
         grid.className = 'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4';
         grid.innerHTML = items.map((it, i) => renderCard(it, i)).join('');
@@ -555,7 +561,6 @@
         grid.className = 'flex flex-col gap-3';
         grid.innerHTML = items.map((it, i) => renderListItem(it, i)).join('');
       }
-
       grid.querySelectorAll('[data-open]').forEach(el => {
         el.addEventListener('click', (ev) => {
           if (ev.target.closest('[data-action]')) return;
@@ -620,8 +625,7 @@
            </div>`;
       const priceHtml = it.retail ? `<div class="text-lg font-bold text-blue-600 dark:text-blue-400">${formatPrice(it.retail)}</div>` : '<div class="text-sm text-gray-400">Цена по запросу</div>';
       const wholesaleHtml = it.wholesale ? `<div class="text-xs text-gray-500 dark:text-gray-400">Опт: ${formatPrice(it.wholesale)}${it.wholesale_from ? ' от ' + escapeHtml(it.wholesale_from) + ' шт' : ''}</div>` : '';
-      return `
-        <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm card-hover transition cursor-pointer fade-in relative" data-open="${idx}">
+      return `<div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm card-hover transition cursor-pointer fade-in relative" data-open="${idx}">
           ${photo}
           <div class="p-4">
             <div class="flex justify-between items-start gap-2 mb-1">
@@ -635,16 +639,14 @@
             ${it.description ? `<p class="text-sm text-gray-600 dark:text-gray-300 mb-3 line-clamp-2">${escapeHtml(it.description)}</p>` : ''}
             <div class="flex justify-between items-end"><div>${priceHtml}${wholesaleHtml}</div></div>
           </div>
-        </div>
-      `;
+        </div>`;
     }
 
     function renderListItem(it, idx) {
       const photo = it.photo
         ? `<div class="w-20 h-20 flex-shrink-0 rounded-lg overflow-hidden bg-gray-100 dark:bg-gray-900 flex items-center justify-center relative"><img src="${escapeHtml(it.photo)}" alt="" class="max-h-full max-w-full object-contain">${renderSelCheckbox(it.row_index)}</div>`
         : `<div class="w-20 h-20 flex-shrink-0 rounded-lg bg-gray-100 dark:bg-gray-900 flex items-center justify-center text-2xl text-gray-300 dark:text-gray-600 relative">📦${renderSelCheckbox(it.row_index)}</div>`;
-      return `
-        <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm p-3 flex gap-3 items-center card-hover cursor-pointer fade-in" data-open="${idx}">
+      return `<div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm p-3 flex gap-3 items-center card-hover cursor-pointer fade-in" data-open="${idx}">
           ${photo}
           <div class="flex-1 min-w-0">
             <div class="flex justify-between items-start gap-2">
@@ -661,11 +663,9 @@
             <div class="font-bold text-blue-600 dark:text-blue-400">${it.retail ? formatPrice(it.retail) : '—'}</div>
             <button data-action="add-cart" data-row="${it.row_index}" class="no-print bg-emerald-600 hover:bg-emerald-700 text-white w-8 h-8 rounded-full shadow text-lg">+</button>
           </div>
-        </div>
-      `;
+        </div>`;
     }
 
-    // ---------- PRODUCT MODAL ----------
     function openProduct(idx) {
       const it = getFilteredSorted()[idx];
       if (!it) return;
@@ -719,7 +719,6 @@
       } catch (e) { console.error(e); }
     }
 
-    // ---------- REVIEW FORM ----------
     function openReviewForm() {
       if (!currentModalItem) return;
       reviewRating = 5;
@@ -729,19 +728,12 @@
       updateReviewStars();
       openModal('modal-review');
     }
-
-    function setReviewRating(r) {
-      reviewRating = r;
-      updateReviewStars();
-    }
-
+    function setReviewRating(r) { reviewRating = r; updateReviewStars(); }
     function updateReviewStars() {
       document.querySelectorAll('#review-stars .star').forEach((el, i) => {
-        if (i < reviewRating) el.textContent = '★';
-        else el.textContent = '☆';
+        el.textContent = i < reviewRating ? '★' : '☆';
       });
     }
-
     async function submitReview() {
       const err = document.getElementById('review-error');
       err.classList.add('hidden');
@@ -762,57 +754,97 @@
         const data = await resp.json().catch(() => ({}));
         if (!resp.ok) throw new Error(data.error || 'Ошибка');
         closeModal('modal-review');
-        loadReviewsForProduct(currentModalItem.row_index);
-        try {
-          const rs = await fetch('/api/price/reviews_summary');
-          ratingsCache = await rs.json();
-          renderProducts();
-        } catch (e) {}
-        alert('✅ Спасибо за отзыв!');
+        alert('✅ Спасибо! Отзыв отправлен на модерацию и скоро появится на сайте.');
+        if (adminToken) refreshReviewsBadge();
       } catch (e) {
         err.textContent = '❌ ' + e.message;
         err.classList.remove('hidden');
       }
     }
 
-    // ---------- TYPEAHEAD (C2) ----------
-    let typeaheadTimeout = null;
-    function renderTypeahead() {
-      const container = document.getElementById('typeahead');
-      const q = searchQuery.trim().toLowerCase();
-      if (!q) { container.classList.add('hidden'); return; }
-      const matches = allItems.filter(it =>
-        (it.name || '').toLowerCase().includes(q) ||
-        (it.description || '').toLowerCase().includes(q)
-      ).slice(0, 5);
-      if (!matches.length) { container.classList.add('hidden'); return; }
-      container.innerHTML = matches.map(it => `
-        <div onclick="openTypeaheadItem(${it.row_index})" class="flex items-center gap-2 p-2 hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer">
-          <div class="w-10 h-10 rounded bg-gray-100 dark:bg-gray-900 flex items-center justify-center overflow-hidden flex-shrink-0">
-            ${it.photo ? `<img src="${escapeHtml(it.photo)}" class="w-full h-full object-contain" onerror="this.parentElement.textContent='📦'">` : '📦'}
-          </div>
-          <div class="flex-1 min-w-0">
-            <div class="text-sm font-medium truncate">${escapeHtml(it.name)}</div>
-            <div class="text-xs text-gray-500">${formatPrice(it.retail)}</div>
-          </div>
-        </div>
-      `).join('');
-      container.classList.remove('hidden');
+    async function openReviewsModal() {
+      openModal('modal-reviews');
+      await loadPendingReviews();
     }
-    function openTypeaheadItem(row) {
-      document.getElementById('typeahead').classList.add('hidden');
-      const items = getFilteredSorted();
-      const idx = items.findIndex(it => it.row_index === row);
-      if (idx >= 0) openProduct(idx);
-    }
-    document.addEventListener('click', (e) => {
-      const ta = document.getElementById('typeahead');
-      if (!ta.contains(e.target) && e.target.id !== 'search-input') {
-        ta.classList.add('hidden');
+    async function loadPendingReviews() {
+      const listEl = document.getElementById('reviews-list');
+      const emptyEl = document.getElementById('reviews-empty');
+      listEl.innerHTML = '<div class="text-center py-6 text-gray-400">Загрузка…</div>';
+      try {
+        const resp = await fetch('/api/price/reviews/pending', {
+          headers: { 'X-Admin-Token': adminToken },
+        });
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        const data = await resp.json();
+        const items = data.items || [];
+        updateReviewsBadge(items.length);
+        if (!items.length) { listEl.innerHTML = ''; emptyEl.classList.remove('hidden'); return; }
+        emptyEl.classList.add('hidden');
+        listEl.innerHTML = items.map(r => `
+          <div class="bg-gray-50 dark:bg-gray-700 rounded-lg p-3 border border-gray-200 dark:border-gray-600">
+            <div class="flex justify-between items-start gap-2 mb-2 flex-wrap">
+              <div class="flex-1 min-w-0">
+                <div class="font-semibold text-sm truncate">${escapeHtml(r.product_name || '—')}</div>
+                <div class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">${escapeHtml(r.name || 'Аноним')} · ${escapeHtml(r.created || '')}</div>
+              </div>
+              <div class="text-yellow-500 text-sm whitespace-nowrap">${'★'.repeat(r.rating)}${'☆'.repeat(5 - r.rating)}</div>
+            </div>
+            <div class="text-sm text-gray-700 dark:text-gray-200 mb-3 break-words whitespace-pre-wrap">${escapeHtml(r.text)}</div>
+            <div class="flex gap-2">
+              <button onclick="approveReview(${r.id})" class="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white text-sm px-3 py-1.5 rounded-lg">✅ Опубликовать</button>
+              <button onclick="rejectReview(${r.id})" class="flex-1 bg-red-500 hover:bg-red-600 text-white text-sm px-3 py-1.5 rounded-lg">🗑 Отклонить</button>
+            </div>
+          </div>
+        `).join('');
+      } catch (e) {
+        listEl.innerHTML = `<div class="text-center py-6 text-red-500">Ошибка: ${e.message}</div>`;
       }
-    });
+    }
+    function updateReviewsBadge(count) {
+      const badge = document.getElementById('reviews-badge');
+      if (!badge) return;
+      if (count > 0) { badge.textContent = count; badge.classList.remove('hidden'); }
+      else badge.classList.add('hidden');
+    }
+    async function approveReview(id) {
+      if (!confirm('Опубликовать отзыв?')) return;
+      try {
+        const resp = await fetch(`/api/price/review/${id}/approve`, {
+          method: 'POST',
+          headers: { 'X-Admin-Token': adminToken },
+        });
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        await loadPendingReviews();
+        try {
+          const rs = await fetch('/api/price/reviews_summary');
+          ratingsCache = await rs.json();
+          renderProducts();
+        } catch (e) {}
+      } catch (e) { alert('Ошибка: ' + e.message); }
+    }
+    async function rejectReview(id) {
+      if (!confirm('Отклонить и удалить отзыв? Действие необратимо.')) return;
+      try {
+        const resp = await fetch(`/api/price/review/${id}/reject`, {
+          method: 'POST',
+          headers: { 'X-Admin-Token': adminToken },
+        });
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        await loadPendingReviews();
+      } catch (e) { alert('Ошибка: ' + e.message); }
+    }
+    async function refreshReviewsBadge() {
+      if (!adminToken) { updateReviewsBadge(0); return; }
+      try {
+        const resp = await fetch('/api/price/reviews/pending', {
+          headers: { 'X-Admin-Token': adminToken },
+        });
+        if (!resp.ok) return;
+        const data = await resp.json();
+        updateReviewsBadge((data.items || []).length);
+      } catch (e) {}
+    }
 
-    // ---------- DEEP LINK ----------
     function checkHash() {
       const m = window.location.hash.match(/^#item=(\d+)$/);
       if (m) {
@@ -837,15 +869,10 @@
       } catch (e) { prompt('Скопируйте ссылку:', url); }
     }
 
-    // ---------- ПРОМОКОД (A3) ----------
     async function applyPromo() {
       const code = document.getElementById('cart-promo').value.trim();
       const status = document.getElementById('promo-status');
-      if (!code) {
-        appliedPromo = null;
-        status.classList.add('hidden');
-        return;
-      }
+      if (!code) { appliedPromo = null; status.classList.add('hidden'); return; }
       status.classList.remove('hidden');
       status.className = 'text-xs text-blue-600 dark:text-blue-400';
       status.textContent = '⏳ Проверяю…';
@@ -872,7 +899,6 @@
       }
     }
 
-    // ---------- КОРЗИНА ----------
     function saveCart() { localStorage.setItem('priceCart', JSON.stringify(cart)); }
     function cartCount() { return Object.values(cart).reduce((s, q) => s + q, 0); }
     function updateCartFab() {
@@ -926,8 +952,7 @@
         if (!it) return '';
         const price = parseNum(it.retail);
         const lineTotal = price ? (price * qty) : null;
-        return `
-          <div class="flex items-center justify-between gap-2 bg-gray-50 dark:bg-gray-700 p-2 rounded-lg">
+        return `<div class="flex items-center justify-between gap-2 bg-gray-50 dark:bg-gray-700 p-2 rounded-lg">
             <div class="flex-1 min-w-0">
               <div class="font-medium text-sm truncate">${escapeHtml(it.name)}</div>
               <div class="text-xs text-gray-500 dark:text-gray-400">${formatPrice(it.retail)} × ${qty}${lineTotal ? ' = ' + formatPrice(lineTotal) : ''}</div>
@@ -991,7 +1016,6 @@
       }
     }
 
-    // ---------- ADMIN AUTH ----------
     function openAdmin() {
       if (adminToken) { setAdminUI(true); loadItems(); }
       else {
@@ -1027,9 +1051,9 @@
     }
     function setAdminUI(on) {
       document.getElementById('admin-panel').classList.toggle('hidden', !on);
+      if (!on) updateReviewsBadge(0);
     }
 
-    // ---------- BULK ----------
     function renderBulkPanel() {
       const panel = document.getElementById('bulk-panel');
       const n = selectedRows.size;
@@ -1076,7 +1100,6 @@
       } catch (e) { alert('Ошибка: ' + e.message); }
     }
 
-    // ---------- CSV ----------
     function exportCsv() {
       const rows = [['name', 'description', 'photo', 'retail', 'wholesale', 'wholesale_from', 'category']];
       allItems.forEach(it => rows.push([
@@ -1095,16 +1118,12 @@
     document.getElementById('csv-file').addEventListener('change', async function() {
       const file = this.files && this.files[0];
       if (!file) return;
-      if (!confirm('Импортировать товары из CSV?\nКолонки: name, description, photo, retail, wholesale, wholesale_from, category')) {
-        this.value = ''; return;
-      }
+      if (!confirm('Импортировать товары из CSV?')) { this.value = ''; return; }
       const fd = new FormData();
       fd.append('file', file);
       try {
         const resp = await fetch('/api/price/import_csv', {
-          method: 'POST',
-          headers: { 'X-Admin-Token': adminToken },
-          body: fd,
+          method: 'POST', headers: { 'X-Admin-Token': adminToken }, body: fd,
         });
         const data = await resp.json().catch(() => ({}));
         if (!resp.ok) throw new Error(data.error || ('HTTP ' + resp.status));
@@ -1114,7 +1133,6 @@
       this.value = '';
     });
 
-    // ---------- WORD ----------
     async function exportDocx() {
       const btn = document.getElementById('export-docx-btn');
       const origText = btn.textContent;
@@ -1133,7 +1151,6 @@
       finally { btn.disabled = false; btn.textContent = origText; }
     }
 
-    // ---------- QR / LOGO ----------
     async function openQr() {
       const container = document.getElementById('qr-container');
       container.innerHTML = '<span class="text-gray-400 text-sm">Загрузка…</span>';
@@ -1160,6 +1177,7 @@
       a.download = `price_qr_${new Date().toISOString().slice(0,10)}.png`;
       document.body.appendChild(a); a.click(); a.remove();
     }
+
     async function openLogoModal() {
       openModal('modal-logo');
       document.getElementById('logo-status').classList.add('hidden');
@@ -1222,7 +1240,6 @@
       } catch (e) { alert('Ошибка: ' + e.message); }
     }
 
-    // ---------- EDITOR ----------
     function openEditor(rowIndex) {
       editingRowIndex = rowIndex;
       const isEdit = rowIndex !== null && rowIndex !== undefined;
@@ -1317,7 +1334,6 @@
       }
     }
 
-    // ---------- DELETE SINGLE ----------
     function openDeleteConfirm(rowIndex, name) {
       deleteRowIndex = rowIndex;
       document.getElementById('confirm-title').textContent = 'Удалить товар?';
@@ -1337,7 +1353,40 @@
       } catch (e) { alert('Ошибка: ' + e.message); }
     }
 
-    // ---------- FILTERS / VIEW ----------
+    let typeaheadTimeout = null;
+    function renderTypeahead() {
+      const container = document.getElementById('typeahead');
+      const q = searchQuery.trim().toLowerCase();
+      if (!q) { container.classList.add('hidden'); return; }
+      const matches = allItems.filter(it =>
+        (it.name || '').toLowerCase().includes(q) ||
+        (it.description || '').toLowerCase().includes(q)
+      ).slice(0, 5);
+      if (!matches.length) { container.classList.add('hidden'); return; }
+      container.innerHTML = matches.map(it => `
+        <div onclick="openTypeaheadItem(${it.row_index})" class="flex items-center gap-2 p-2 hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer">
+          <div class="w-10 h-10 rounded bg-gray-100 dark:bg-gray-900 flex items-center justify-center overflow-hidden flex-shrink-0">
+            ${it.photo ? `<img src="${escapeHtml(it.photo)}" class="w-full h-full object-contain" onerror="this.parentElement.textContent='📦'">` : '📦'}
+          </div>
+          <div class="flex-1 min-w-0">
+            <div class="text-sm font-medium truncate">${escapeHtml(it.name)}</div>
+            <div class="text-xs text-gray-500">${formatPrice(it.retail)}</div>
+          </div>
+        </div>
+      `).join('');
+      container.classList.remove('hidden');
+    }
+    function openTypeaheadItem(row) {
+      document.getElementById('typeahead').classList.add('hidden');
+      const items = getFilteredSorted();
+      const idx = items.findIndex(it => it.row_index === row);
+      if (idx >= 0) openProduct(idx);
+    }
+    document.addEventListener('click', (e) => {
+      const ta = document.getElementById('typeahead');
+      if (!ta.contains(e.target) && e.target.id !== 'search-input') ta.classList.add('hidden');
+    });
+
     document.getElementById('search-input').addEventListener('input', function() {
       searchQuery = this.value;
       renderProducts();
@@ -1367,11 +1416,11 @@
     });
     document.addEventListener('keydown', e => {
       if (e.key === 'Escape') {
-        ['modal-product','modal-password','modal-editor','modal-confirm','modal-qr','modal-logo','modal-cart','modal-review'].forEach(closeModal);
+        ['modal-product','modal-password','modal-editor','modal-confirm','modal-qr','modal-logo','modal-cart','modal-review','modal-reviews'].forEach(closeModal);
         document.getElementById('typeahead').classList.add('hidden');
       }
     });
-    ['modal-product','modal-password','modal-editor','modal-confirm','modal-qr','modal-logo','modal-cart','modal-review'].forEach(id => {
+    ['modal-product','modal-password','modal-editor','modal-confirm','modal-qr','modal-logo','modal-cart','modal-review','modal-reviews'].forEach(id => {
       document.getElementById(id).addEventListener('click', e => {
         if (e.target.id === id) closeModal(id);
       });
@@ -1388,7 +1437,6 @@
     })();
   </script>
 
-  <!-- SOCIAL WIDGET -->
   <style>
     .sw-wrap { position: fixed; right: 20px; bottom: 20px; z-index: 45; display: flex; flex-direction: column; align-items: flex-end; gap: 10px; font-family: system-ui, sans-serif; }
     .sw-links { display: flex; flex-direction: column; gap: 10px; opacity: 0; transform: translateY(20px); pointer-events: none; transition: opacity 0.25s ease, transform 0.25s ease; }
@@ -1425,12 +1473,12 @@
   <div class="sw-wrap" id="swWrap">
     <div class="sw-links">
       <a href="https://instagram.com/kobra_print_/" target="_blank" rel="noopener" class="sw-link sw-ig" title="Instagram">
-        <svg viewBox="0 0 24 24"><path d="M12 2.2c3.2 0 3.6 0 4.9.1 1.2.1 1.8.2 2.2.4.6.2 1 .5 1.4.9.4.4.7.8.9 1.4.2.4.3 1 .4 2.2.1 1.3.1 1.7.1 4.9s0 3.6-.1 4.9c-.1 1.2-.2 1.8-.4 2.2-.2.6-.5 1-.9 1.4-.4.4-.8.7-1.4.9-.4.2-1 .3-2.2.4-1.3.1-1.7.1-4.9.1s-3.6 0-4.9-.1c-1.2-.1-1.8-.2-2.2-.4-.6-.2-1-.5-1.4-.9-.4-.4-.7-.8-.9-1.4-.2-.4-.3-1-.4-2.2-.1-1.3-.1-1.7-.1-4.9s0-3.6.1-4.9c.1-1.2.2-1.8.4-2.2.2-.6.5-1 .9-1.4.4-.4.8-.7 1.4-.9.4-.2 1-.3 2.2-.4 1.3-.1 1.7-.1 4.9-.1zM12 0C8.7 0 8.3 0 7 .1 5.7.2 4.8.4 4 .7c-.8.3-1.5.7-2.2 1.4C1.1 2.8.7 3.5.4 4.3.1 5.1-.1 6 .0 7.3.0 8.6 0 9.0 0 12.3s0 3.7.1 5c.1 1.3.3 2.2.6 3 .3.8.7 1.5 1.4 2.2.7.7 1.4 1.1 2.2 1.4.8.3 1.7.5 3 .6 1.3.1 1.7.1 5 .1s3.7 0 5-.1c1.3-.1 2.2-.3 3-.6.8-.3 1.5-.7 2.2-1.4.7-.7 1.1-1.4 1.4-2.2.3-.8.5-1.7.6-3 .1-1.3.1-1.7.1-5s0-3.7-.1-5c-.1-1.3-.3-2.2-.6-3-.3-.8-.7-1.5-1.4-2.2C21.2 1.1 20.5.7 19.7.4c-.8-.3-1.7-.5-3-.6C15.7 0 15.3 0 12 0zm0 5.8a6.2 6.2 0 1 0 0 12.4A6.2 6.2 0 0 0 12 5.8zm0 10.2a4 4 0 1 1 0-8 4 4 0 0 1 0 8zm6.4-11.8a1.4 1.4 0 1 0 0 2.9 1.4 1.4 0 0 0 0-2.9z"/></svg>
+        <svg viewBox="0 0 24 24"><path d="M12 2.2c3.2 0 3.6 0 4.9.1 1.2.1 1.8.2 2.2.4.6.2 1 .5 1.4.9.4.4.7.8.9 1.4.2.4.3 1 .4 2.2.1 1.3.1 1.7.1 4.9s0 3.6-.1 4.9c-.1 1.2-.2 1.8-.4 2.2-.2.6-.5 1-.9 1.4-.4.4-.8.7-1.4.9-.4.2-1 .3-2.2.4-1.3.1-1.7.1-4.9.1s-3.6 0-4.9-.1c-1.2-.1-1.8-.2-2.2-.4-.6-.2-1-.5-1.4-.9-.4-.4-.7-.8-.9-1.4-.2-.4-.3-1-.4-2.2-.1-1.3-.1-1.7-.1-4.9s0-3.6.1-4.9c.1-1.2.2-1.8.4-2.2.2-.6.5-1 .9-1.4.4-.4.8-.7 1.4-.9.4-.2 1-.3 2.2-.4 1.3-.1 1.7-.1 4.9-.1z"/></svg>
       </a>
       <a href="https://telegram.me/master3Dpech" target="_blank" rel="noopener" class="sw-link sw-tg" title="Telegram">
         <svg viewBox="0 0 24 24"><path d="M9.04 15.47l-.38 5.34c.54 0 .78-.23 1.06-.51l2.55-2.45 5.29 3.88c.97.54 1.66.26 1.92-.9L21.9 3.92c.32-1.46-.53-2.03-1.47-1.68L1.7 9.48C.27 10.04.3 10.86 1.46 11.21l4.79 1.5L17.5 5.9c.52-.35 1-.15.61.2L9.04 15.47z"/></svg>
       </a>
-      <a href="https://vk.ru/club238320840" target="_blank" rel="noopener" class="sw-link sw-vk" title="ВКонтакте">
+      <a href="https://vk.ru/club238320840" target="_blank" rel="noopener" class="sw-link sw-vk" title="VK">
         <svg viewBox="0 0 24 24"><path d="M13.16 18.5c-5.77 0-9.07-3.96-9.2-10.54h2.89c.09 4.83 2.22 6.88 3.91 7.3V7.96h2.72v4.17c1.67-.18 3.42-2.08 4.01-4.17h2.72c-.45 2.57-2.36 4.47-3.71 5.25 1.35.63 3.52 2.29 4.35 5.29h-3c-.64-1.99-2.23-3.53-4.37-3.74v3.74h-.32z"/></svg>
       </a>
       <a href="mailto:kobraprintteam@gmail.com" class="sw-link sw-email" title="Email">
@@ -1438,9 +1486,6 @@
       </a>
       <a href="https://youtube.com/@kobra_print" target="_blank" rel="noopener" class="sw-link sw-yt" title="YouTube">
         <svg viewBox="0 0 24 24"><path d="M23.5 6.2c-.3-1.1-1.1-1.9-2.2-2.2C19.4 3.5 12 3.5 12 3.5s-7.4 0-9.3.5c-1.1.3-1.9 1.1-2.2 2.2C0 8.1 0 12 0 12s0 3.9.5 5.8c.3 1.1 1.1 1.9 2.2 2.2 1.9.5 9.3.5 9.3.5s7.4 0 9.3-.5c1.1-.3 1.9-1.1 2.2-2.2.5-1.9.5-5.8.5-5.8s0-3.9-.5-5.8zM9.6 15.6V8.4l6.2 3.6-6.2 3.6z"/></svg>
-      </a>
-      <a href="https://max.ru/join/OD6pOzPka78ILkoRH181bISHzEHVhIGtMz5_9PsdDjc" target="_blank" rel="noopener" class="sw-link sw-max" title="Max">
-        <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1.5 14.5v-9l5 4.5-5 4.5z"/></svg>
       </a>
     </div>
     <button class="sw-toggle" id="swToggle" aria-label="Соцсети">
