@@ -141,6 +141,9 @@ class BulkCategoryIn(BaseModel):
 class OrderItemIn(BaseModel):
     name: str
     qty: int = 1
+    unit_price: float = 0
+    line_total: float = 0
+    is_wholesale: bool = False
 
 
 class OrderRequestIn(BaseModel):
@@ -149,6 +152,8 @@ class OrderRequestIn(BaseModel):
     contact: str = ""
     comment: str = ""
     promo_code: str = ""
+    discount_amount: float = 0
+    total_after_discount: float = 0
 
 
 class PromoIn(BaseModel):
@@ -885,7 +890,6 @@ async def validate_promo_api(payload: PromoIn):
 
 
 # ---------- API: ОТЗЫВЫ (с модерацией) ----------
-# ⚠️ ВАЖНО: конкретные пути идут ПЕРЕД /{row}, иначе "pending" попытается стать int → 422
 @app.get("/api/price/reviews_summary")
 async def get_reviews_summary_api():
     if not sheet_manager:
@@ -917,7 +921,6 @@ async def get_pending_reviews_api(_: bool = Depends(verify_admin)):
 
 @app.get("/api/price/reviews/{row}")
 async def get_reviews_api(row: int):
-    """Публичный — только одобренные. ⚠️ Объявлен ПОСЛЕ конкретных путей."""
     if not sheet_manager:
         return JSONResponse({"items": []})
     try:
@@ -997,7 +1000,7 @@ async def add_review_api(payload: ReviewIn):
     return JSONResponse({"status": "ok", "moderation": True})
 
 
-# ---------- API: ЗАЯВКА С ПРАЙСА ----------
+# ---------- API: ЗАЯВКА С ПРАЙСА (опт + промокод) ----------
 @app.post("/api/price/order_request")
 async def price_order_request(payload: OrderRequestIn):
     if not payload.items:
@@ -1009,13 +1012,28 @@ async def price_order_request(payload: OrderRequestIn):
     customer_full = f"{customer_name} ({payload.contact.strip()})"
     deadline_str = (datetime.now() + timedelta(days=PRICE_ORDER_DEADLINE_DAYS)).strftime("%Y-%m-%d")
 
+    # ✅ Сервер сам считает подытог из line_total, не доверяем total_after_discount с клиента
+    grand_total = 0.0
+    for it in payload.items:
+        if it.line_total and it.line_total > 0:
+            grand_total += it.line_total
+        elif it.unit_price and it.unit_price > 0:
+            grand_total += it.unit_price * it.qty
+
+    # Проверка промокода (серверная)
     promo_info = None
+    discount = 0.0
     promo_code = (payload.promo_code or "").strip()
     if promo_code and sheet_manager:
         promo_info = sheet_manager.validate_promo(promo_code)
-        if not promo_info.get("valid"):
+        if promo_info.get("valid"):
+            discount = round(grand_total * promo_info["discount_percent"] / 100.0)
+        else:
             promo_info = None
+            discount = 0.0
+    final_total = max(0.0, grand_total - discount)
 
+    # Создаём заказы
     created_orders = []
     if sheet_manager:
         for it in payload.items:
@@ -1029,14 +1047,13 @@ async def price_order_request(payload: OrderRequestIn):
     if promo_info:
         sheet_manager.increment_promo_usage(promo_info["code"])
 
+    # ✅ Сообщение менеджеру с разбивкой
     lines = ["🛒 <b>Новая заявка с прайса</b>", ""]
     if payload.name.strip():
         lines.append(f"👤 Имя: {payload.name.strip()}")
     lines.append(f"📞 Контакт: {payload.contact.strip()}")
     if payload.comment.strip():
         lines.append(f"💬 Комментарий: {payload.comment.strip()}")
-    if promo_info:
-        lines.append(f"🎁 Промокод: <b>{promo_info['code']}</b> (-{promo_info['discount_percent']}%)")
 
     if created_orders:
         nums = ", ".join(f"№{n}" for n in created_orders)
@@ -1046,7 +1063,26 @@ async def price_order_request(payload: OrderRequestIn):
     lines.append("")
     lines.append("📋 Состав:")
     for it in payload.items:
-        lines.append(f"• {it.name} — {it.qty} шт")
+        if it.unit_price and it.unit_price > 0:
+            line_price = it.line_total if it.line_total > 0 else it.unit_price * it.qty
+            tag = " <i>(опт)</i>" if it.is_wholesale else ""
+            lines.append(
+                f"• {it.name} — {it.qty} шт × {it.unit_price:.0f} ₽ "
+                f"= <b>{line_price:.0f} ₽</b>{tag}"
+            )
+        else:
+            lines.append(f"• {it.name} — {it.qty} шт")
+
+    if grand_total > 0:
+        lines.append("")
+        lines.append(f"💰 Подытог: {grand_total:.0f} ₽")
+        if promo_info and discount > 0:
+            lines.append(
+                f"🎁 Промокод <b>{promo_info['code']}</b> "
+                f"(−{promo_info['discount_percent']}%): −{discount:.0f} ₽"
+            )
+        lines.append(f"💰 <b>Итого: {final_total:.0f} ₽</b>")
+
     lines.append("")
     lines.append(f"Всего позиций: {len(payload.items)}")
     text = "\n".join(lines)
@@ -1081,6 +1117,9 @@ async def price_order_request(payload: OrderRequestIn):
         "orders": created_orders,
         "deadline": deadline_str,
         "promo_applied": bool(promo_info),
+        "grand_total": grand_total,
+        "discount": discount,
+        "final_total": final_total,
     })
 
 
