@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>💰 Прайс-лист | Kobra Print</title>
-  <meta name="description" content="Каталог товаров для 3D-печати Kobra Print: цены, фото, розница и опт. Изготовление на заказ.">
+  <meta name="description" content="Каталог товаров для 3D-печати Kobra Print: цены, фото, розница и опт.">
   <meta property="og:title" content="Kobra Print — прайс-лист">
   <meta property="og:description" content="Каталог товаров для 3D-печати: цены, фото, розница и опт.">
   <meta property="og:type" content="website">
@@ -31,8 +31,95 @@
     }
     @keyframes shimmer { 0% { background-position: 100% 0; } 100% { background-position: -100% 0; } }
     .sel-checkbox { width: 20px; height: 20px; cursor: pointer; }
+
+    /* ============ ADMIN FAB ============ */
+    .af-wrap {
+      position: fixed;
+      left: 20px;
+      bottom: 90px;
+      z-index: 45;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 10px;
+      font-family: system-ui, sans-serif;
+    }
+    .af-links {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      opacity: 0;
+      transform: translateY(20px);
+      pointer-events: none;
+      transition: opacity 0.25s ease, transform 0.25s ease;
+    }
+    .af-wrap.open .af-links {
+      opacity: 1;
+      transform: translateY(0);
+      pointer-events: auto;
+    }
+    .af-link {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 46px;
+      height: 46px;
+      border-radius: 50%;
+      color: #fff;
+      border: none;
+      cursor: pointer;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+      transition: transform 0.15s ease;
+      position: relative;
+      font-size: 20px;
+      line-height: 1;
+      padding: 0;
+    }
+    .af-link:hover { transform: scale(1.1); }
+    .af-add { background: #3b82f6; }
+    .af-word { background: #059669; }
+    .af-csv-out { background: #ea580c; }
+    .af-csv-in { background: #f97316; }
+    .af-qr { background: #7c3aed; }
+    .af-logo { background: #0891b2; }
+    .af-reviews { background: #db2777; }
+    .af-logout { background: #6b7280; }
+
+    .af-toggle {
+      width: 60px;
+      height: 60px;
+      border-radius: 50%;
+      border: none;
+      cursor: pointer;
+      background: #f59e0b;
+      color: #fff;
+      font-size: 26px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 6px 20px rgba(245,158,11,0.5);
+      animation: af-pulse 2s infinite;
+      transition: background 0.2s ease;
+      position: relative;
+      padding: 0;
+    }
+    .af-toggle:hover { background: #d97706; }
+    .af-wrap.open .af-toggle { animation: none; background: #d97706; }
+    @keyframes af-pulse {
+      0% { box-shadow: 0 0 0 0 rgba(245,158,11,0.6); }
+      70% { box-shadow: 0 0 0 16px rgba(245,158,11,0); }
+      100% { box-shadow: 0 0 0 0 rgba(245,158,11,0); }
+    }
+
+    @media (max-width: 480px) {
+      .af-wrap { left: 14px; bottom: 80px; }
+      .af-toggle { width: 54px; height: 54px; font-size: 22px; }
+      .af-link { width: 42px; height: 42px; font-size: 18px; }
+    }
+    @media print { .af-wrap { display: none !important; } }
+
     @media print {
-      header, #admin-panel, #filters-section, #cart-fab, #swWrap, #btn-print-top, .no-print, #empty-state { display: none !important; }
+      header, #filters-section, #cart-fab, #swWrap, #btn-print-top, .no-print, #empty-state { display: none !important; }
       body { background: #fff !important; color: #000 !important; }
       #products-grid { display: flex !important; flex-wrap: wrap; gap: 8px; }
       #products-grid > * { page-break-inside: avoid; break-inside: avoid; box-shadow: none !important; border: 1px solid #ddd !important; margin-bottom: 8px; flex: 0 0 calc(50% - 4px); }
@@ -79,26 +166,6 @@
           <div class="text-2xl font-bold" id="stat-max">—</div>
           <div class="text-xs uppercase tracking-wide text-white/80">Макс. цена</div>
         </div>
-      </div>
-    </div>
-  </section>
-
-  <section id="admin-panel" class="hidden bg-amber-50 dark:bg-amber-950 border-b border-amber-200 dark:border-amber-800">
-    <div class="container mx-auto px-4 py-3 max-w-7xl flex items-center justify-between flex-wrap gap-3">
-      <div class="text-sm text-amber-800 dark:text-amber-200">🔓 <b>Режим администратора</b></div>
-      <div class="flex gap-2 flex-wrap">
-        <button onclick="openEditor(null)" class="bg-blue-500 hover:bg-blue-600 text-white text-sm px-4 py-1.5 rounded-lg">➕ Добавить</button>
-        <button onclick="exportCsv()" class="bg-orange-600 hover:bg-orange-700 text-white text-sm px-4 py-1.5 rounded-lg">📥 CSV-экспорт</button>
-        <button onclick="document.getElementById('csv-file').click()" class="bg-orange-500 hover:bg-orange-600 text-white text-sm px-4 py-1.5 rounded-lg">📤 CSV-импорт</button>
-        <input type="file" id="csv-file" accept=".csv" class="hidden">
-        <button id="export-docx-btn" onclick="exportDocx()" class="bg-emerald-600 hover:bg-emerald-700 text-white text-sm px-4 py-1.5 rounded-lg">📄 Word</button>
-        <button onclick="openQr()" class="bg-violet-600 hover:bg-violet-700 text-white text-sm px-4 py-1.5 rounded-lg">🔲 QR</button>
-        <button onclick="openLogoModal()" class="bg-cyan-600 hover:bg-cyan-700 text-white text-sm px-4 py-1.5 rounded-lg">🖼 Лого</button>
-        <button onclick="openReviewsModal()" class="relative bg-pink-600 hover:bg-pink-700 text-white text-sm px-4 py-1.5 rounded-lg">
-          📝 Отзывы
-          <span id="reviews-badge" class="hidden absolute -top-1.5 -right-1.5 bg-red-500 text-white text-xs font-bold rounded-full min-w-[22px] h-[22px] flex items-center justify-center px-1">0</span>
-        </button>
-        <button onclick="logoutAdmin()" class="bg-gray-200 dark:bg-gray-700 text-sm px-4 py-1.5 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600">🚪 Выйти</button>
       </div>
     </div>
   </section>
@@ -193,7 +260,6 @@
     </div>
   </div>
 
-  <!-- REVIEW FORM -->
   <div id="modal-review" class="hidden fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
     <div class="bg-white dark:bg-gray-800 rounded-2xl max-w-md w-full p-6 shadow-2xl">
       <div class="flex justify-between items-center mb-4">
@@ -201,10 +267,7 @@
         <button type="button" onclick="closeModal('modal-review')" class="w-11 h-11 flex items-center justify-center rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 text-2xl leading-none">×</button>
       </div>
       <div class="space-y-3">
-        <div>
-          <label class="block text-sm font-medium mb-1">Ваше имя</label>
-          <input id="review-name" type="text" placeholder="Можно оставить пустым" class="w-full px-3 py-2 border rounded-lg bg-white dark:bg-gray-700 dark:border-gray-600">
-        </div>
+        <div><label class="block text-sm font-medium mb-1">Ваше имя</label><input id="review-name" type="text" placeholder="Можно пустым" class="w-full px-3 py-2 border rounded-lg bg-white dark:bg-gray-700 dark:border-gray-600"></div>
         <div>
           <label class="block text-sm font-medium mb-1">Оценка *</label>
           <div id="review-stars" class="flex gap-1 text-3xl">
@@ -215,13 +278,8 @@
             <button type="button" onclick="setReviewRating(5)" class="star text-yellow-500 hover:scale-110 transition">★</button>
           </div>
         </div>
-        <div>
-          <label class="block text-sm font-medium mb-1">Текст *</label>
-          <textarea id="review-text" rows="4" placeholder="Расскажите о качестве печати, сроках, общении…" class="w-full px-3 py-2 border rounded-lg bg-white dark:bg-gray-700 dark:border-gray-600"></textarea>
-        </div>
-        <div class="text-xs text-gray-500 dark:text-gray-400">
-          ℹ️ Отзыв будет опубликован после проверки администратором
-        </div>
+        <div><label class="block text-sm font-medium mb-1">Текст *</label><textarea id="review-text" rows="4" class="w-full px-3 py-2 border rounded-lg bg-white dark:bg-gray-700 dark:border-gray-600"></textarea></div>
+        <div class="text-xs text-gray-500 dark:text-gray-400">ℹ️ Отзыв появится после проверки администратором</div>
         <div id="review-error" class="hidden text-red-600 text-sm"></div>
       </div>
       <div class="flex gap-2 justify-end mt-5">
@@ -231,7 +289,6 @@
     </div>
   </div>
 
-  <!-- REVIEWS MODERATION -->
   <div id="modal-reviews" class="hidden fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
     <div class="bg-white dark:bg-gray-800 rounded-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto shadow-2xl p-6">
       <div class="flex justify-between items-center mb-4">
@@ -242,7 +299,6 @@
       <div id="reviews-empty" class="hidden text-center py-12 text-gray-500">
         <p class="text-5xl mb-3">✅</p>
         <p class="text-lg">Нет отзывов на модерации</p>
-        <p class="text-sm mt-2">Все отзывы проверены</p>
       </div>
     </div>
   </div>
@@ -307,7 +363,8 @@
         <h3 class="text-xl font-bold">🛒 Корзина</h3>
         <button type="button" onclick="closeModal('modal-cart')" class="w-11 h-11 flex items-center justify-center rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 text-2xl leading-none">×</button>
       </div>
-      <div id="cart-items" class="space-y-2 mb-4"></div>
+      <div id="cart-items" class="space-y-2 mb-3"></div>
+      <div id="cart-footer" class="hidden mb-3 px-1"></div>
       <div id="cart-empty" class="hidden text-center py-8 text-gray-500">Корзина пуста</div>
       <div id="cart-form" class="space-y-2 border-t border-gray-200 dark:border-gray-700 pt-4">
         <input id="cart-name" type="text" placeholder="Ваше имя" class="w-full px-3 py-2 border rounded-lg bg-white dark:bg-gray-700 dark:border-gray-600">
@@ -370,6 +427,28 @@
     </div>
   </div>
 
+  <!-- ADMIN FAB -->
+  <div id="admin-fab-wrap" class="af-wrap hidden">
+    <input type="file" id="csv-file" accept=".csv" class="hidden">
+    <div class="af-links">
+      <button onclick="openEditor(null)" class="af-link af-add" title="Добавить товар">➕</button>
+      <button id="export-docx-btn" onclick="exportDocx()" class="af-link af-word" title="Word">📄</button>
+      <button onclick="exportCsv()" class="af-link af-csv-out" title="CSV-экспорт">📥</button>
+      <button onclick="document.getElementById('csv-file').click()" class="af-link af-csv-in" title="CSV-импорт">📤</button>
+      <button onclick="openQr()" class="af-link af-qr" title="QR">🔲</button>
+      <button onclick="openLogoModal()" class="af-link af-logo" title="Логотип">🖼</button>
+      <button onclick="openReviewsModal()" class="af-link af-reviews" title="Отзывы на модерации">
+        📝
+        <span id="af-reviews-badge" class="hidden absolute -top-1 -right-1 bg-red-500 text-white text-xs font-bold rounded-full min-w-[18px] h-[18px] flex items-center justify-center px-1">0</span>
+      </button>
+      <button onclick="logoutAdmin()" class="af-link af-logout" title="Выйти">🚪</button>
+    </div>
+    <button class="af-toggle" id="adminFabToggle" aria-label="Админ-панель">
+      <span>⚙️</span>
+      <span id="af-main-badge" class="hidden absolute -top-1 -right-1 bg-red-500 text-white text-xs font-bold rounded-full min-w-[20px] h-[20px] flex items-center justify-center px-1">0</span>
+    </button>
+  </div>
+
   <button id="cart-fab" onclick="openCart()" class="hidden fixed left-5 bottom-5 z-40 w-14 h-14 rounded-full bg-emerald-600 hover:bg-emerald-700 text-white shadow-xl transition">
     <span class="text-2xl">🛒</span>
     <span id="cart-badge" class="absolute -top-1 -right-1 bg-red-500 text-white text-xs font-bold rounded-full w-6 h-6 flex items-center justify-center hidden">0</span>
@@ -422,6 +501,21 @@
       if (v === null || v === undefined || v === '') return null;
       const n = Number(String(v).replace(',', '.'));
       return isFinite(n) ? n : null;
+    }
+
+    function getUnitPrice(item, qty) {
+      if (!item) return { price: null, isWholesale: false, wholesaleFrom: null };
+      const retail = parseNum(item.retail);
+      const wholesale = parseNum(item.wholesale);
+      const wholesaleFrom = parseNum(item.wholesale_from);
+      if (
+        wholesale !== null && wholesale > 0 &&
+        wholesaleFrom !== null && wholesaleFrom > 0 &&
+        qty >= wholesaleFrom
+      ) {
+        return { price: wholesale, isWholesale: true, wholesaleFrom };
+      }
+      return { price: retail, isWholesale: false, wholesaleFrom };
     }
 
     let filtersOpen = false;
@@ -597,12 +691,10 @@
 
     function renderAdminButtons(rowIndex, name) {
       if (!adminToken || rowIndex === undefined) return '';
-      return `
-        <div class="flex gap-1">
+      return `<div class="flex gap-1">
           <button data-action="edit" data-row="${rowIndex}" class="text-xs bg-blue-500 hover:bg-blue-600 text-white px-2 py-1 rounded">✏️</button>
           <button data-action="delete" data-row="${rowIndex}" data-name="${escapeHtml(name)}" class="text-xs bg-red-500 hover:bg-red-600 text-white px-2 py-1 rounded">🗑</button>
-        </div>
-      `;
+        </div>`;
     }
 
     function renderRatingBadge(row) {
@@ -754,7 +846,7 @@
         const data = await resp.json().catch(() => ({}));
         if (!resp.ok) throw new Error(data.error || 'Ошибка');
         closeModal('modal-review');
-        alert('✅ Спасибо! Отзыв отправлен на модерацию и скоро появится на сайте.');
+        alert('✅ Спасибо! Отзыв отправлен на модерацию.');
         if (adminToken) refreshReviewsBadge();
       } catch (e) {
         err.textContent = '❌ ' + e.message;
@@ -763,6 +855,7 @@
     }
 
     async function openReviewsModal() {
+      closeAdminFab();
       openModal('modal-reviews');
       await loadPendingReviews();
     }
@@ -801,17 +894,21 @@
       }
     }
     function updateReviewsBadge(count) {
-      const badge = document.getElementById('reviews-badge');
-      if (!badge) return;
-      if (count > 0) { badge.textContent = count; badge.classList.remove('hidden'); }
-      else badge.classList.add('hidden');
+      const badges = [
+        document.getElementById('af-main-badge'),
+        document.getElementById('af-reviews-badge'),
+      ];
+      badges.forEach(badge => {
+        if (!badge) return;
+        if (count > 0) { badge.textContent = count; badge.classList.remove('hidden'); }
+        else badge.classList.add('hidden');
+      });
     }
     async function approveReview(id) {
       if (!confirm('Опубликовать отзыв?')) return;
       try {
         const resp = await fetch(`/api/price/review/${id}/approve`, {
-          method: 'POST',
-          headers: { 'X-Admin-Token': adminToken },
+          method: 'POST', headers: { 'X-Admin-Token': adminToken },
         });
         if (!resp.ok) throw new Error('HTTP ' + resp.status);
         await loadPendingReviews();
@@ -823,11 +920,10 @@
       } catch (e) { alert('Ошибка: ' + e.message); }
     }
     async function rejectReview(id) {
-      if (!confirm('Отклонить и удалить отзыв? Действие необратимо.')) return;
+      if (!confirm('Отклонить и удалить отзыв?')) return;
       try {
         const resp = await fetch(`/api/price/review/${id}/reject`, {
-          method: 'POST',
-          headers: { 'X-Admin-Token': adminToken },
+          method: 'POST', headers: { 'X-Admin-Token': adminToken },
         });
         if (!resp.ok) throw new Error('HTTP ' + resp.status);
         await loadPendingReviews();
@@ -872,7 +968,12 @@
     async function applyPromo() {
       const code = document.getElementById('cart-promo').value.trim();
       const status = document.getElementById('promo-status');
-      if (!code) { appliedPromo = null; status.classList.add('hidden'); return; }
+      if (!code) {
+        appliedPromo = null;
+        status.classList.add('hidden');
+        renderCartItems();
+        return;
+      }
       status.classList.remove('hidden');
       status.className = 'text-xs text-blue-600 dark:text-blue-400';
       status.textContent = '⏳ Проверяю…';
@@ -886,16 +987,18 @@
         if (data.valid) {
           appliedPromo = data;
           status.className = 'text-xs text-green-600 dark:text-green-400';
-          status.textContent = `✅ Применено: -${data.discount_percent}%`;
+          status.textContent = `✅ Применено: −${data.discount_percent}%`;
         } else {
           appliedPromo = null;
           status.className = 'text-xs text-red-600 dark:text-red-400';
           status.textContent = '❌ ' + (data.reason || 'Недействительный код');
         }
+        renderCartItems();
       } catch (e) {
         appliedPromo = null;
         status.className = 'text-xs text-red-600 dark:text-red-400';
         status.textContent = '❌ Ошибка проверки';
+        renderCartItems();
       }
     }
 
@@ -911,6 +1014,7 @@
     function addToCart(rowIndex, qty) {
       if (!rowIndex) return;
       cart[rowIndex] = (cart[rowIndex] || 0) + qty;
+      if (cart[rowIndex] <= 0) delete cart[rowIndex];
       saveCart();
       updateCartFab();
     }
@@ -932,40 +1036,106 @@
       saveCart();
       updateCartFab();
       renderCartItems();
+      document.getElementById('promo-status').classList.add('hidden');
+      document.getElementById('cart-promo').value = '';
     }
     function openCart() { renderCartItems(); openModal('modal-cart'); }
+
     function renderCartItems() {
       const container = document.getElementById('cart-items');
       const empty = document.getElementById('cart-empty');
       const form = document.getElementById('cart-form');
+      const footer = document.getElementById('cart-footer');
       const rows = Object.entries(cart);
       if (!rows.length) {
         container.innerHTML = '';
         empty.classList.remove('hidden');
         form.classList.add('hidden');
+        if (footer) { footer.classList.add('hidden'); footer.innerHTML = ''; }
         return;
       }
       empty.classList.add('hidden');
       form.classList.remove('hidden');
+      if (footer) footer.classList.remove('hidden');
+
+      let grandTotal = 0;
+      let totalSavings = 0;
+
       container.innerHTML = rows.map(([row, qty]) => {
         const it = allItems.find(x => x.row_index === Number(row));
         if (!it) return '';
-        const price = parseNum(it.retail);
-        const lineTotal = price ? (price * qty) : null;
-        return `<div class="flex items-center justify-between gap-2 bg-gray-50 dark:bg-gray-700 p-2 rounded-lg">
-            <div class="flex-1 min-w-0">
-              <div class="font-medium text-sm truncate">${escapeHtml(it.name)}</div>
-              <div class="text-xs text-gray-500 dark:text-gray-400">${formatPrice(it.retail)} × ${qty}${lineTotal ? ' = ' + formatPrice(lineTotal) : ''}</div>
+        const unit = getUnitPrice(it, qty);
+        const lineTotal = unit.price ? unit.price * qty : 0;
+        grandTotal += lineTotal;
+        const retailPrice = parseNum(it.retail);
+        if (unit.isWholesale && retailPrice && unit.price && retailPrice > unit.price) {
+          totalSavings += (retailPrice - unit.price) * qty;
+        }
+        let hint = '';
+        if (unit.isWholesale) {
+          hint = `<div class="text-xs text-emerald-600 dark:text-emerald-400 font-medium mt-1">🎁 Опт (от ${unit.wholesaleFrom} шт)</div>`;
+        } else if (unit.wholesaleFrom && it.wholesale) {
+          const need = unit.wholesaleFrom - qty;
+          if (need > 0 && need <= 50) {
+            hint = `<div class="text-xs text-gray-500 dark:text-gray-400 mt-1">+${need} шт → опт ${formatPrice(it.wholesale)}</div>`;
+          }
+        }
+        const priceHtml = unit.price !== null
+          ? `<span class="${unit.isWholesale ? 'text-emerald-600 dark:text-emerald-400 font-semibold' : ''}">${formatPrice(unit.price)}</span> × ${qty}${unit.price ? ' = <b>' + formatPrice(lineTotal) + '</b>' : ''}`
+          : 'Цена по запросу';
+        return `
+          <div class="bg-gray-50 dark:bg-gray-700 p-2 rounded-lg">
+            <div class="flex items-center justify-between gap-2">
+              <div class="flex-1 min-w-0">
+                <div class="font-medium text-sm truncate">${escapeHtml(it.name)}</div>
+                <div class="text-xs text-gray-600 dark:text-gray-300">${priceHtml}</div>
+              </div>
+              <div class="flex items-center gap-1 flex-shrink-0">
+                <button onclick="changeCartQty(${row}, -1)" class="w-7 h-7 bg-gray-300 dark:bg-gray-600 rounded">−</button>
+                <span class="text-sm font-semibold w-6 text-center">${qty}</span>
+                <button onclick="changeCartQty(${row}, 1)" class="w-7 h-7 bg-gray-300 dark:bg-gray-600 rounded">+</button>
+                <button onclick="removeFromCart(${row})" class="w-7 h-7 bg-red-500 text-white rounded ml-1">×</button>
+              </div>
             </div>
-            <div class="flex items-center gap-1">
-              <button onclick="addToCart(${row}, -1); if(cart[${row}]<=0) removeFromCart(${row}); else renderCartItems();" class="w-7 h-7 bg-gray-300 dark:bg-gray-600 rounded">−</button>
-              <span class="text-sm font-semibold w-6 text-center">${qty}</span>
-              <button onclick="addToCart(${row}, 1); renderCartItems();" class="w-7 h-7 bg-gray-300 dark:bg-gray-600 rounded">+</button>
-              <button onclick="removeFromCart(${row})" class="w-7 h-7 bg-red-500 text-white rounded ml-1">×</button>
-            </div>
+            ${hint}
           </div>`;
       }).join('');
+
+      const discount = (appliedPromo && grandTotal > 0)
+        ? Math.round(grandTotal * appliedPromo.discount_percent / 100)
+        : 0;
+      const finalTotal = Math.max(0, grandTotal - discount);
+
+      if (footer) {
+        const parts = [];
+        if (totalSavings > 0) {
+          parts.push(`<div class="flex justify-between text-xs text-emerald-600 dark:text-emerald-400 mb-1">
+            <span>Экономия на опте:</span>
+            <span class="font-semibold">−${formatPrice(totalSavings)}</span>
+          </div>`);
+        }
+        if (discount > 0 && appliedPromo) {
+          parts.push(`<div class="flex justify-between text-xs text-purple-600 dark:text-purple-400 mb-1">
+            <span>Промокод ${escapeHtml(appliedPromo.code)} (−${appliedPromo.discount_percent}%):</span>
+            <span class="font-semibold">−${formatPrice(discount)}</span>
+          </div>`);
+        }
+        parts.push(`<div class="flex justify-between text-base font-bold pt-1 border-t border-gray-200 dark:border-gray-600">
+          <span>Итого:</span>
+          <span class="text-emerald-600 dark:text-emerald-400">${formatPrice(finalTotal)}</span>
+        </div>`);
+        footer.innerHTML = parts.join('');
+      }
     }
+
+    function changeCartQty(row, delta) {
+      cart[row] = (cart[row] || 0) + delta;
+      if (cart[row] <= 0) delete cart[row];
+      saveCart();
+      updateCartFab();
+      renderCartItems();
+    }
+
     async function submitCart() {
       const err = document.getElementById('cart-error');
       err.classList.add('hidden');
@@ -973,15 +1143,31 @@
       if (!contact) { err.textContent = 'Укажите контакт'; err.classList.remove('hidden'); return; }
       const items = Object.entries(cart).map(([row, qty]) => {
         const it = allItems.find(x => x.row_index === Number(row));
-        return { name: it ? it.name : ('Товар #' + row), qty };
+        const unit = getUnitPrice(it, qty);
+        return {
+          name: it ? it.name : ('Товар #' + row),
+          qty,
+          unit_price: unit.price || 0,
+          line_total: unit.price ? unit.price * qty : 0,
+          is_wholesale: !!unit.isWholesale,
+        };
       });
       if (!items.length) { err.textContent = 'Корзина пуста'; err.classList.remove('hidden'); return; }
+
+      const grandTotal = items.reduce((s, i) => s + (i.line_total || 0), 0);
+      const discount = appliedPromo
+        ? Math.round(grandTotal * appliedPromo.discount_percent / 100)
+        : 0;
+      const finalTotal = Math.max(0, grandTotal - discount);
+
       const payload = {
         items,
         name: document.getElementById('cart-name').value.trim(),
         contact,
         comment: document.getElementById('cart-comment').value.trim(),
         promo_code: appliedPromo ? appliedPromo.code : '',
+        discount_amount: discount,
+        total_after_discount: finalTotal,
       };
       try {
         const resp = await fetch('/api/price/order_request', {
@@ -1006,7 +1192,8 @@
           msg = `✅ Заявка принята!\n\nСоздано заказов: ${data.orders.length}`;
           if (data.orders.length <= 8) msg += ' (№' + data.orders.join(', №') + ')';
           if (data.deadline) msg += `\nСрок: ${data.deadline}`;
-          if (data.promo_applied) msg += '\n🎁 Промокод применён';
+          if (data.promo_applied && data.discount) msg += `\n🎁 Промокод применён: −${formatPrice(data.discount)}`;
+          if (data.final_total) msg += `\n💰 Итого: ${formatPrice(data.final_total)}`;
           msg += '\n\nМы свяжемся с вами.';
         }
         alert(msg);
@@ -1017,8 +1204,13 @@
     }
 
     function openAdmin() {
-      if (adminToken) { setAdminUI(true); loadItems(); }
-      else {
+      if (adminToken) {
+        setAdminUI(true);
+        loadItems();
+        // Показать FAB-меню сразу
+        const wrap = document.getElementById('admin-fab-wrap');
+        if (wrap) wrap.classList.add('open');
+      } else {
         document.getElementById('admin-password-input').value = '';
         document.getElementById('password-error').classList.add('hidden');
         openModal('modal-password');
@@ -1050,8 +1242,18 @@
       loadItems();
     }
     function setAdminUI(on) {
-      document.getElementById('admin-panel').classList.toggle('hidden', !on);
-      if (!on) updateReviewsBadge(0);
+      const wrap = document.getElementById('admin-fab-wrap');
+      if (!wrap) return;
+      wrap.classList.toggle('hidden', !on);
+      if (!on) {
+        wrap.classList.remove('open');
+        updateReviewsBadge(0);
+      }
+    }
+
+    function closeAdminFab() {
+      const wrap = document.getElementById('admin-fab-wrap');
+      if (wrap) wrap.classList.remove('open');
     }
 
     function renderBulkPanel() {
@@ -1101,6 +1303,7 @@
     }
 
     function exportCsv() {
+      closeAdminFab();
       const rows = [['name', 'description', 'photo', 'retail', 'wholesale', 'wholesale_from', 'category']];
       allItems.forEach(it => rows.push([
         it.name || '', it.description || '', it.photo || '',
@@ -1134,9 +1337,10 @@
     });
 
     async function exportDocx() {
+      closeAdminFab();
       const btn = document.getElementById('export-docx-btn');
-      const origText = btn.textContent;
-      btn.disabled = true; btn.textContent = '⏳';
+      const origText = btn ? btn.textContent : '📄';
+      if (btn) { btn.disabled = true; btn.textContent = '⏳'; }
       try {
         const resp = await fetch('/api/price/export_docx', { headers: { 'X-Admin-Token': adminToken } });
         if (!resp.ok) throw new Error('HTTP ' + resp.status);
@@ -1148,10 +1352,11 @@
         document.body.appendChild(a); a.click(); a.remove();
         URL.revokeObjectURL(url);
       } catch (e) { alert('Ошибка: ' + e.message); }
-      finally { btn.disabled = false; btn.textContent = origText; }
+      finally { if (btn) { btn.disabled = false; btn.textContent = origText; } }
     }
 
     async function openQr() {
+      closeAdminFab();
       const container = document.getElementById('qr-container');
       container.innerHTML = '<span class="text-gray-400 text-sm">Загрузка…</span>';
       openModal('modal-qr');
@@ -1179,6 +1384,7 @@
     }
 
     async function openLogoModal() {
+      closeAdminFab();
       openModal('modal-logo');
       document.getElementById('logo-status').classList.add('hidden');
       await loadLogo();
@@ -1241,6 +1447,7 @@
     }
 
     function openEditor(rowIndex) {
+      closeAdminFab();
       editingRowIndex = rowIndex;
       const isEdit = rowIndex !== null && rowIndex !== undefined;
       document.getElementById('editor-title').textContent = isEdit ? '✏️ Редактирование' : '➕ Новый товар';
@@ -1418,6 +1625,7 @@
       if (e.key === 'Escape') {
         ['modal-product','modal-password','modal-editor','modal-confirm','modal-qr','modal-logo','modal-cart','modal-review','modal-reviews'].forEach(closeModal);
         document.getElementById('typeahead').classList.add('hidden');
+        closeAdminFab();
       }
     });
     ['modal-product','modal-password','modal-editor','modal-confirm','modal-qr','modal-logo','modal-cart','modal-review','modal-reviews'].forEach(id => {
@@ -1425,6 +1633,20 @@
         if (e.target.id === id) closeModal(id);
       });
     });
+
+    // FAB toggle
+    (function () {
+      const wrap = document.getElementById('admin-fab-wrap');
+      const toggle = document.getElementById('adminFabToggle');
+      if (!wrap || !toggle) return;
+      toggle.addEventListener('click', (e) => {
+        e.stopPropagation();
+        wrap.classList.toggle('open');
+      });
+      document.addEventListener('click', (e) => {
+        if (!wrap.contains(e.target)) wrap.classList.remove('open');
+      });
+    })();
 
     (async function init() {
       setView(viewMode);
@@ -1437,6 +1659,7 @@
     })();
   </script>
 
+  <!-- SOCIAL WIDGET -->
   <style>
     .sw-wrap { position: fixed; right: 20px; bottom: 20px; z-index: 45; display: flex; flex-direction: column; align-items: flex-end; gap: 10px; font-family: system-ui, sans-serif; }
     .sw-links { display: flex; flex-direction: column; gap: 10px; opacity: 0; transform: translateY(20px); pointer-events: none; transition: opacity 0.25s ease, transform 0.25s ease; }
