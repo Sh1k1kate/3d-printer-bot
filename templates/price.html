@@ -32,10 +32,12 @@
     @keyframes shimmer { 0% { background-position: 100% 0; } 100% { background-position: -100% 0; } }
     .sel-checkbox { width: 20px; height: 20px; cursor: pointer; }
 
-    /* ============ ADMIN FAB ============ */
+    /* ✅ КРИТИЧНО: .af-wrap всегда display:flex в кастомном CSS — перебивает Tailwind .hidden */
+    .af-wrap { display: none !important; }
+    .af-wrap:not(.hidden) { display: flex !important; }
     .af-wrap {
-      position: fixed; left: 20px; bottom: 90px; z-index: 45;
-      display: flex; flex-direction: column; align-items: flex-start; gap: 10px;
+      position: fixed; left: 90px; bottom: 20px; z-index: 44;
+      flex-direction: column; align-items: flex-start; gap: 10px;
       font-family: system-ui, sans-serif;
     }
     .af-links {
@@ -62,8 +64,8 @@
     .af-reviews { background: #db2777; }
     .af-logout { background: #6b7280; }
     .af-toggle {
-      width: 60px; height: 60px; border-radius: 50%; border: none; cursor: pointer;
-      background: #f59e0b; color: #fff; font-size: 26px;
+      width: 56px; height: 56px; border-radius: 50%; border: none; cursor: pointer;
+      background: #f59e0b; color: #fff; font-size: 24px;
       display: flex; align-items: center; justify-content: center;
       box-shadow: 0 6px 20px rgba(245,158,11,0.5);
       animation: af-pulse 2s infinite; transition: background 0.2s ease;
@@ -77,8 +79,8 @@
       100% { box-shadow: 0 0 0 0 rgba(245,158,11,0); }
     }
     @media (max-width: 480px) {
-      .af-wrap { left: 14px; bottom: 80px; }
-      .af-toggle { width: 54px; height: 54px; font-size: 22px; }
+      .af-wrap { left: 80px; bottom: 14px; }
+      .af-toggle { width: 52px; height: 52px; font-size: 22px; }
       .af-link { width: 42px; height: 42px; font-size: 18px; }
     }
     @media print { .af-wrap { display: none !important; } }
@@ -185,23 +187,23 @@
     </div>
   </section>
 
-  <!-- PRODUCT MODAL -->
+  <!-- PRODUCT MODAL (ещё +40%) -->
   <div id="modal-product" class="hidden fixed inset-0 bg-black/60 z-40 flex items-center justify-center p-4">
-    <div class="relative max-w-3xl md:max-w-[1075px] w-full max-h-[90vh] overflow-hidden rounded-2xl shadow-2xl">
+    <div class="relative max-w-3xl md:max-w-[1505px] w-full max-h-[92vh] overflow-hidden rounded-2xl shadow-2xl">
       <button type="button" onclick="closeModal('modal-product')"
-        class="absolute top-3 right-3 z-20 w-11 h-11 flex items-center justify-center rounded-full bg-white/95 dark:bg-gray-700/95 hover:bg-gray-100 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 text-2xl leading-none shadow-md backdrop-blur-sm transition">×</button>
-      <div class="bg-white dark:bg-gray-800 w-full max-h-[90vh] overflow-y-auto">
+        class="absolute top-4 right-4 z-20 w-12 h-12 flex items-center justify-center rounded-full bg-white/95 dark:bg-gray-700/95 hover:bg-gray-100 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 text-3xl leading-none shadow-md backdrop-blur-sm transition">×</button>
+      <div class="bg-white dark:bg-gray-800 w-full max-h-[92vh] overflow-y-auto">
         <div class="grid md:grid-cols-2 gap-0">
-          <div class="bg-gray-100 dark:bg-gray-900 flex items-center justify-center p-6 min-h-[240px] md:min-h-[340px]">
-            <img id="modal-photo" src="" alt="" class="max-h-[380px] md:max-h-[530px] max-w-full rounded-lg object-contain">
+          <div class="bg-gray-100 dark:bg-gray-900 flex items-center justify-center p-6 md:p-8 min-h-[240px] md:min-h-[480px]">
+            <img id="modal-photo" src="" alt="" class="max-h-[380px] md:max-h-[740px] max-w-full rounded-lg object-contain">
           </div>
-          <div class="p-6 md:p-8 flex flex-col">
-            <h3 id="modal-name" class="text-2xl md:text-3xl font-bold mb-2 break-words pr-12 md:pr-14"></h3>
+          <div class="p-6 md:p-10 flex flex-col">
+            <h3 id="modal-name" class="text-2xl md:text-4xl font-bold mb-2 break-words pr-14 md:pr-16"></h3>
             <div class="flex items-center gap-2 mb-2 flex-wrap">
               <div id="modal-category" class="inline-block text-xs bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300 px-2 py-0.5 rounded-full"></div>
               <div id="modal-rating" class="text-sm text-yellow-500 hidden"></div>
             </div>
-            <p id="modal-description" class="text-sm md:text-base text-gray-600 dark:text-gray-300 mb-4 whitespace-pre-wrap"></p>
+            <p id="modal-description" class="text-sm md:text-lg text-gray-600 dark:text-gray-300 mb-4 whitespace-pre-wrap"></p>
             <div class="space-y-2 border-t border-gray-200 dark:border-gray-700 pt-4 mt-auto">
               <div class="flex justify-between"><span class="text-gray-500 dark:text-gray-400">Розница:</span><span id="modal-retail" class="font-semibold"></span></div>
               <div class="flex justify-between"><span class="text-gray-500 dark:text-gray-400">Опт:</span><span id="modal-wholesale" class="font-semibold"></span></div>
@@ -296,7 +298,6 @@
             <input id="edit-photo" type="text" class="flex-1 px-3 py-2 border rounded-lg bg-white dark:bg-gray-700 dark:border-gray-600" placeholder="URL или загрузить">
             <button type="button" onclick="document.getElementById('edit-photo-file').click()" class="px-3 py-2 rounded-lg bg-blue-500 hover:bg-blue-600 text-white text-sm">📤</button>
           </div>
-          <!-- ✅ accept расширен: jpg, png, webp, gif, heic, heif + любые image -->
           <input type="file" id="edit-photo-file" accept="image/*,image/heic,image/heif,.jpg,.jpeg,.png,.webp,.gif,.heic,.heif" class="hidden">
           <div id="upload-status" class="text-xs mt-1 hidden"></div>
           <div class="mt-2 bg-gray-100 dark:bg-gray-900 rounded-lg p-3 flex items-center justify-center min-h-[120px]">
@@ -323,6 +324,7 @@
     </div>
   </div>
 
+  <!-- ✅ CART MODAL -->
   <div id="modal-cart" class="hidden fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
     <div class="bg-white dark:bg-gray-800 rounded-2xl max-w-lg w-full max-h-[90vh] overflow-y-auto shadow-2xl p-6">
       <div class="flex justify-between items-center mb-4">
@@ -331,8 +333,8 @@
       </div>
       <div id="cart-items" class="space-y-2 mb-3"></div>
       <div id="cart-footer" class="hidden mb-3 px-1"></div>
-      <div id="cart-empty" class="hidden text-center py-8 text-gray-500">Корзина пуста</div>
-      <div id="cart-form" class="space-y-2 border-t border-gray-200 dark:border-gray-700 pt-4">
+      <div id="cart-empty" class="text-center py-8 text-gray-500">Корзина пуста</div>
+      <div id="cart-form" class="hidden space-y-2 border-t border-gray-200 dark:border-gray-700 pt-4">
         <input id="cart-name" type="text" placeholder="Ваше имя" class="w-full px-3 py-2 border rounded-lg bg-white dark:bg-gray-700 dark:border-gray-600">
         <input id="cart-contact" type="text" placeholder="Телефон или @username *" class="w-full px-3 py-2 border rounded-lg bg-white dark:bg-gray-700 dark:border-gray-600">
         <textarea id="cart-comment" rows="2" placeholder="Комментарий" class="w-full px-3 py-2 border rounded-lg bg-white dark:bg-gray-700 dark:border-gray-600"></textarea>
@@ -343,7 +345,7 @@
         <div id="promo-status" class="text-xs hidden"></div>
         <div id="cart-error" class="hidden text-red-600 text-sm"></div>
       </div>
-      <div class="flex gap-2 justify-end mt-4">
+      <div id="cart-actions" class="hidden flex gap-2 justify-end mt-4">
         <button onclick="clearCart()" class="px-4 py-2 rounded-lg bg-red-100 hover:bg-red-200 dark:bg-red-900 dark:hover:bg-red-800 text-red-700 dark:text-red-200 text-sm">🗑 Очистить</button>
         <button onclick="submitCart()" class="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm">📤 Отправить</button>
       </div>
@@ -393,7 +395,13 @@
     </div>
   </div>
 
-  <!-- ADMIN FAB -->
+  <!-- ✅ CART FAB (первой, слева) -->
+  <button id="cart-fab" type="button" onclick="openCart()" class="hidden fixed left-5 bottom-5 z-40 w-14 h-14 rounded-full bg-emerald-600 hover:bg-emerald-700 text-white shadow-xl transition">
+    <span class="text-2xl">🛒</span>
+    <span id="cart-badge" class="absolute -top-1 -right-1 bg-red-500 text-white text-xs font-bold rounded-full w-6 h-6 flex items-center justify-center hidden">0</span>
+  </button>
+
+  <!-- ✅ ADMIN FAB (правее корзины) -->
   <div id="admin-fab-wrap" class="af-wrap hidden">
     <input type="file" id="csv-file" accept=".csv" class="hidden">
     <div class="af-links">
@@ -409,18 +417,14 @@
       </button>
       <button onclick="logoutAdmin()" class="af-link af-logout" title="Выйти">🚪</button>
     </div>
-    <button class="af-toggle" id="adminFabToggle" aria-label="Админ-панель">
+    <button type="button" class="af-toggle" id="adminFabToggle" aria-label="Админ-панель">
       <span>⚙️</span>
       <span id="af-main-badge" class="hidden absolute -top-1 -right-1 bg-red-500 text-white text-xs font-bold rounded-full min-w-[20px] h-[20px] flex items-center justify-center px-1">0</span>
     </button>
   </div>
 
-  <button id="cart-fab" onclick="openCart()" class="hidden fixed left-5 bottom-5 z-40 w-14 h-14 rounded-full bg-emerald-600 hover:bg-emerald-700 text-white shadow-xl transition">
-    <span class="text-2xl">🛒</span>
-    <span id="cart-badge" class="absolute -top-1 -right-1 bg-red-500 text-white text-xs font-bold rounded-full w-6 h-6 flex items-center justify-center hidden">0</span>
-  </button>
-
   <script>
+    // ====== THEME ======
     let darkMode = localStorage.getItem('theme') === 'dark';
     function applyTheme() {
       document.documentElement.classList.toggle('dark', darkMode);
@@ -430,6 +434,7 @@
     function toggleTheme() { darkMode = !darkMode; applyTheme(); }
     applyTheme();
 
+    // ====== STATE ======
     let allItems = [];
     let categories = [];
     let adminToken = localStorage.getItem('priceAdminToken') || '';
@@ -455,8 +460,15 @@
       return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     }
-    function closeModal(id) { document.getElementById(id).classList.add('hidden'); }
-    function openModal(id) { document.getElementById(id).classList.remove('hidden'); }
+    function closeModal(id) {
+      const el = document.getElementById(id);
+      if (el) el.classList.add('hidden');
+    }
+    function openModal(id) {
+      const el = document.getElementById(id);
+      if (!el) { console.error('[modal] not found:', id); return; }
+      el.classList.remove('hidden');
+    }
     function formatPrice(v) {
       if (v === null || v === undefined || v === '') return '—';
       const n = Number(String(v).replace(',', '.'));
@@ -474,17 +486,25 @@
       return (bytes / 1024 / 1024).toFixed(1) + ' МБ';
     }
 
-    // ✅ СЖАТИЕ ИЗОБРАЖЕНИЯ НА КЛИЕНТЕ
+    function getUnitPrice(item, qty) {
+      if (!item) return { price: null, isWholesale: false, wholesaleFrom: null };
+      const retail = parseNum(item.retail);
+      const wholesale = parseNum(item.wholesale);
+      const wholesaleFrom = parseNum(item.wholesale_from);
+      if (
+        wholesale !== null && wholesale > 0 &&
+        wholesaleFrom !== null && wholesaleFrom > 0 &&
+        qty >= wholesaleFrom
+      ) {
+        return { price: wholesale, isWholesale: true, wholesaleFrom };
+      }
+      return { price: retail, isWholesale: false, wholesaleFrom };
+    }
+
     function compressImage(file, maxSize = 1600, quality = 0.85) {
       return new Promise((resolve) => {
-        // Не изображение — вернуть как есть
-        if (!file.type || !file.type.startsWith('image/')) {
-          return resolve(file);
-        }
-        // Маленькие (до 150 КБ) — не трогаем
-        if (file.size < 150 * 1024) {
-          return resolve(file);
-        }
+        if (!file.type || !file.type.startsWith('image/')) return resolve(file);
+        if (file.size < 150 * 1024) return resolve(file);
         const img = new Image();
         const url = URL.createObjectURL(file);
         img.onload = () => {
@@ -504,20 +524,14 @@
           canvas.toBlob((blob) => {
             if (!blob) return resolve(file);
             const baseName = (file.name || 'image').replace(/\.[^.]+$/, '');
-            const newFile = new File([blob], baseName + '.jpg', { type: 'image/jpeg' });
-            resolve(newFile);
+            resolve(new File([blob], baseName + '.jpg', { type: 'image/jpeg' }));
           }, 'image/jpeg', quality);
         };
-        img.onerror = () => {
-          URL.revokeObjectURL(url);
-          // Не смогли открыть (HEIC без поддержки и т.п.) — отправим как есть
-          resolve(file);
-        };
+        img.onerror = () => { URL.revokeObjectURL(url); resolve(file); };
         img.src = url;
       });
     }
 
-    // ✅ ЗАГРУЗКА С ПРОГРЕССОМ
     function uploadWithProgress(file, onProgress) {
       return new Promise((resolve, reject) => {
         const xhr = new XMLHttpRequest();
@@ -525,9 +539,7 @@
         xhr.setRequestHeader('X-Admin-Token', adminToken);
         xhr.timeout = 90000;
         xhr.upload.onprogress = (e) => {
-          if (e.lengthComputable) {
-            onProgress(Math.round(e.loaded / e.total * 100));
-          }
+          if (e.lengthComputable) onProgress(Math.round(e.loaded / e.total * 100));
         };
         xhr.onload = () => {
           if (xhr.status >= 200 && xhr.status < 300) {
@@ -535,16 +547,12 @@
               const data = JSON.parse(xhr.responseText);
               if (data.url) resolve(data.url);
               else reject(new Error('Сервер не вернул URL'));
-            } catch (e) {
-              reject(new Error('Неверный ответ сервера'));
-            }
+            } catch (e) { reject(new Error('Неверный ответ сервера')); }
           } else {
             try {
               const data = JSON.parse(xhr.responseText);
               reject(new Error(data.error || data.detail || `HTTP ${xhr.status}`));
-            } catch (e) {
-              reject(new Error(`HTTP ${xhr.status}`));
-            }
+            } catch (e) { reject(new Error(`HTTP ${xhr.status}`)); }
           }
         };
         xhr.onerror = () => reject(new Error('Ошибка сети'));
@@ -1039,12 +1047,15 @@
       }
     }
 
+    // ====== КОРЗИНА ======
     function saveCart() { localStorage.setItem('priceCart', JSON.stringify(cart)); }
     function cartCount() { return Object.values(cart).reduce((s, q) => s + q, 0); }
     function updateCartFab() {
+      const fab = document.getElementById('cart-fab');
       const badge = document.getElementById('cart-badge');
+      if (!fab || !badge) return;
       const n = cartCount();
-      document.getElementById('cart-fab').classList.toggle('hidden', n === 0);
+      fab.classList.toggle('hidden', n === 0);
       if (n > 0) { badge.textContent = n; badge.classList.remove('hidden'); }
       else { badge.classList.add('hidden'); }
     }
@@ -1073,27 +1084,46 @@
       saveCart();
       updateCartFab();
       renderCartItems();
-      document.getElementById('promo-status').classList.add('hidden');
-      document.getElementById('cart-promo').value = '';
+      const ps = document.getElementById('promo-status');
+      if (ps) ps.classList.add('hidden');
+      const cp = document.getElementById('cart-promo');
+      if (cp) cp.value = '';
     }
-    function openCart() { renderCartItems(); openModal('modal-cart'); }
+
+    // ✅ ФИКС: openCart — всегда открывает модалку, даже если рендер падает
+    function openCart() {
+      console.log('[cart] openCart called, items:', Object.keys(cart).length);
+      try {
+        renderCartItems();
+      } catch (e) {
+        console.error('[cart] renderCartItems failed:', e);
+      }
+      openModal('modal-cart');
+    }
 
     function renderCartItems() {
       const container = document.getElementById('cart-items');
       const empty = document.getElementById('cart-empty');
       const form = document.getElementById('cart-form');
       const footer = document.getElementById('cart-footer');
+      const actions = document.getElementById('cart-actions');
+      if (!container || !empty || !form) {
+        console.error('[cart] required DOM missing:', { container: !!container, empty: !!empty, form: !!form });
+        return;
+      }
       const rows = Object.entries(cart);
       if (!rows.length) {
         container.innerHTML = '';
         empty.classList.remove('hidden');
         form.classList.add('hidden');
         if (footer) { footer.classList.add('hidden'); footer.innerHTML = ''; }
+        if (actions) actions.classList.add('hidden');
         return;
       }
       empty.classList.add('hidden');
       form.classList.remove('hidden');
       if (footer) footer.classList.remove('hidden');
+      if (actions) actions.classList.remove('hidden');
 
       let grandTotal = 0;
       let totalSavings = 0;
@@ -1240,6 +1270,7 @@
       }
     }
 
+    // ====== ADMIN ======
     function openAdmin() {
       if (adminToken) {
         setAdminUI(true);
@@ -1442,8 +1473,6 @@
         }
       } catch (e) {}
     }
-
-    // ✅ ЗАГРУЗКА ЛОГОТИПА — со сжатием и прогрессом
     document.getElementById('logo-file').addEventListener('change', async function () {
       const rawFile = this.files && this.files[0];
       if (!rawFile) return;
@@ -1519,12 +1548,10 @@
     }
     document.getElementById('edit-photo').addEventListener('input', updatePhotoPreview);
 
-    // ✅ ЗАГРУЗКА ФОТО ТОВАРА — сжатие + мгновенное превью + прогресс
     document.getElementById('edit-photo-file').addEventListener('change', async function () {
       const rawFile = this.files && this.files[0];
       if (!rawFile) return;
 
-      // 1. Мгновенное превью из локального файла (до сжатия)
       const localUrl = URL.createObjectURL(rawFile);
       const img = document.getElementById('edit-photo-preview');
       const empty = document.getElementById('edit-photo-empty');
@@ -1538,7 +1565,6 @@
       status.textContent = '⏳ Обработка…';
 
       try {
-        // 2. Сжатие
         const file = await compressImage(rawFile, 1600, 0.85);
         const savedPct = Math.round((1 - file.size / rawFile.size) * 100);
         const sizeInfo = file.size !== rawFile.size
@@ -1546,7 +1572,6 @@
           : formatBytes(file.size);
         status.textContent = `⏳ Загрузка (${sizeInfo})…`;
 
-        // 3. Загрузка с прогрессом
         const url = await uploadWithProgress(file, (pct) => {
           status.textContent = `⏳ Загрузка ${pct}% (${sizeInfo})`;
         });
@@ -1691,7 +1716,6 @@
       });
     });
 
-    // FAB toggle
     (function () {
       const wrap = document.getElementById('admin-fab-wrap');
       const toggle = document.getElementById('adminFabToggle');
