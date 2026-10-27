@@ -32,7 +32,7 @@
     @keyframes shimmer { 0% { background-position: 100% 0; } 100% { background-position: -100% 0; } }
     .sel-checkbox { width: 20px; height: 20px; cursor: pointer; }
 
-    /* ✅ КРИТИЧНО: .af-wrap всегда display:flex в кастомном CSS — перебивает Tailwind .hidden */
+    /* ============ ADMIN FAB ============ */
     .af-wrap { display: none !important; }
     .af-wrap:not(.hidden) { display: flex !important; }
     .af-wrap {
@@ -187,7 +187,7 @@
     </div>
   </section>
 
-  <!-- PRODUCT MODAL (ещё +40%) -->
+  <!-- PRODUCT MODAL -->
   <div id="modal-product" class="hidden fixed inset-0 bg-black/60 z-40 flex items-center justify-center p-4">
     <div class="relative max-w-3xl md:max-w-[1505px] w-full max-h-[92vh] overflow-hidden rounded-2xl shadow-2xl">
       <button type="button" onclick="closeModal('modal-product')"
@@ -324,7 +324,7 @@
     </div>
   </div>
 
-  <!-- ✅ CART MODAL -->
+  <!-- CART MODAL -->
   <div id="modal-cart" class="hidden fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
     <div class="bg-white dark:bg-gray-800 rounded-2xl max-w-lg w-full max-h-[90vh] overflow-y-auto shadow-2xl p-6">
       <div class="flex justify-between items-center mb-4">
@@ -347,7 +347,8 @@
       </div>
       <div id="cart-actions" class="hidden flex gap-2 justify-end mt-4">
         <button onclick="clearCart()" class="px-4 py-2 rounded-lg bg-red-100 hover:bg-red-200 dark:bg-red-900 dark:hover:bg-red-800 text-red-700 dark:text-red-200 text-sm">🗑 Очистить</button>
-        <button onclick="submitCart()" class="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm">📤 Отправить</button>
+        <!-- ✅ Кнопка с id и disabled-стилями для защиты от двойного клика -->
+        <button id="cart-submit-btn" onclick="submitCart()" class="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm disabled:opacity-50 disabled:cursor-not-allowed">📤 Отправить</button>
       </div>
     </div>
   </div>
@@ -395,13 +396,13 @@
     </div>
   </div>
 
-  <!-- ✅ CART FAB (первой, слева) -->
+  <!-- CART FAB -->
   <button id="cart-fab" type="button" onclick="openCart()" class="hidden fixed left-5 bottom-5 z-40 w-14 h-14 rounded-full bg-emerald-600 hover:bg-emerald-700 text-white shadow-xl transition">
     <span class="text-2xl">🛒</span>
     <span id="cart-badge" class="absolute -top-1 -right-1 bg-red-500 text-white text-xs font-bold rounded-full w-6 h-6 flex items-center justify-center hidden">0</span>
   </button>
 
-  <!-- ✅ ADMIN FAB (правее корзины) -->
+  <!-- ADMIN FAB -->
   <div id="admin-fab-wrap" class="af-wrap hidden">
     <input type="file" id="csv-file" accept=".csv" class="hidden">
     <div class="af-links">
@@ -451,6 +452,8 @@
     let appliedPromo = null;
     let reviewRating = 5;
     let cart = JSON.parse(localStorage.getItem('priceCart') || '{}');
+    // ✅ Флаг для защиты от двойной отправки
+    let submittingCart = false;
 
     const urlParams = new URLSearchParams(window.location.search);
     const quickAdminMode = urlParams.get('admin') === '1';
@@ -1090,7 +1093,6 @@
       if (cp) cp.value = '';
     }
 
-    // ✅ ФИКС: openCart — всегда открывает модалку, даже если рендер падает
     function openCart() {
       console.log('[cart] openCart called, items:', Object.keys(cart).length);
       try {
@@ -1203,9 +1205,17 @@
       renderCartItems();
     }
 
+    // ✅ ЗАЩИТА ОТ ДВОЙНОЙ ОТПРАВКИ
     async function submitCart() {
+      if (submittingCart) {
+        console.log('[cart] submit already in flight, ignoring');
+        return;
+      }
+
       const err = document.getElementById('cart-error');
+      const btn = document.getElementById('cart-submit-btn');
       err.classList.add('hidden');
+
       const contact = document.getElementById('cart-contact').value.trim();
       if (!contact) { err.textContent = 'Укажите контакт'; err.classList.remove('hidden'); return; }
       const items = Object.entries(cart).map(([row, qty]) => {
@@ -1236,6 +1246,14 @@
         discount_amount: discount,
         total_after_discount: finalTotal,
       };
+
+      submittingCart = true;
+      const origBtnText = btn ? btn.textContent : '📤 Отправить';
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = '⏳ Отправляю...';
+      }
+
       try {
         const resp = await fetch('/api/price/order_request', {
           method: 'POST',
@@ -1244,6 +1262,7 @@
         });
         const data = await resp.json().catch(() => ({}));
         if (!resp.ok) throw new Error(data.error || data.detail || ('HTTP ' + resp.status));
+
         cart = {};
         appliedPromo = null;
         saveCart();
@@ -1254,6 +1273,7 @@
         document.getElementById('cart-promo').value = '';
         document.getElementById('promo-status').classList.add('hidden');
         closeModal('modal-cart');
+
         let msg = '✅ Заявка отправлена!';
         if (data.orders && data.orders.length) {
           msg = `✅ Заявка принята!\n\nСоздано заказов: ${data.orders.length}`;
@@ -1267,6 +1287,12 @@
       } catch (e) {
         err.textContent = '❌ ' + e.message;
         err.classList.remove('hidden');
+      } finally {
+        submittingCart = false;
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = origBtnText;
+        }
       }
     }
 
