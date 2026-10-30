@@ -17,6 +17,7 @@ def moscow_now():
 PRICE_COLUMNS = ["Название", "Описание", "Фото (URL)", "Розница", "Опт", "Опт от (шт)", "Категория"]
 PROMO_COLUMNS = ["code", "discount_percent", "valid_until", "max_uses", "used_count", "active"]
 REVIEW_COLUMNS = ["id", "product_row", "name", "rating", "text", "created", "status"]
+SHIPMENT_COLUMNS = ["Позиция", "Точка", "Отправлено"]
 
 
 class SheetManager:
@@ -86,6 +87,10 @@ class SheetManager:
         self.sheet_reviews = self._ensure_worksheet(
             "Отзывы", rows=2000, cols=7,
             header=REVIEW_COLUMNS,
+        )
+        self.sheet_shipments = self._ensure_worksheet(
+            "Отправки", rows=1000, cols=3,
+            header=SHIPMENT_COLUMNS,
         )
 
     def _ensure_worksheet(self, title, rows, cols, header):
@@ -964,6 +969,47 @@ class SheetManager:
 
     def delete_review(self, review_id):
         return self.reject_review(review_id)
+
+    # ---------- ОТПРАВКИ (сколько позиции ушло в каждую точку) ----------
+    def _fetch_shipments(self):
+        records = self.sheet_shipments.get_all_values()
+        result = {}
+        for row in records[1:]:
+            if len(row) < 3 or not (row[0] or "").strip():
+                continue
+            try:
+                qty = int(float(row[2]))
+            except (ValueError, TypeError):
+                qty = 0
+            result[(row[0].strip().lower(), (row[1] or "").strip().lower())] = qty
+        return result
+
+    def get_shipments(self):
+        """{(позиция_lower, точка_lower): количество}"""
+        return self._get_cached("shipments", self._fetch_shipments)
+
+    def set_shipment(self, position, location, qty):
+        position = (position or "").strip()
+        location = (location or "").strip()
+        if not position or not location:
+            return False
+        qty = max(0, int(qty))
+        try:
+            records = self.sheet_shipments.get_all_values()
+            for idx, row in enumerate(records[1:], start=2):
+                if (len(row) >= 2
+                        and row[0].strip().lower() == position.lower()
+                        and row[1].strip().lower() == location.lower()):
+                    self.sheet_shipments.update_cell(idx, 3, qty)
+                    break
+            else:
+                self.sheet_shipments.append_row([position, location, qty])
+            self._invalidate_cache("shipments")
+            self.log_action("system", "Отправка", f"{position} → {location}: {qty}")
+            return True
+        except Exception as e:
+            logger.error(f"set_shipment: {e}")
+            return False
 
     # ---------- Заглушки ----------
     def init_tasks_sheet(self): pass
