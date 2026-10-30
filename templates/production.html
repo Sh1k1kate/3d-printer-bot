@@ -61,6 +61,7 @@
         <button data-f="todo" class="f-btn px-3 py-1 rounded-full text-sm">🖨️ Допечатать</button>
         <button data-f="done" class="f-btn px-3 py-1 rounded-full text-sm">✅ Напечатано</button>
       </div>
+      <button id="paste-btn" onclick="openPaste()" class="hidden px-3 py-1.5 rounded-lg text-sm bg-amber-500 hover:bg-amber-600 text-white shadow">📋 Вставить список</button>
       <span id="last-update" class="text-xs text-gray-500 dark:text-gray-400"></span>
     </div>
 
@@ -76,6 +77,56 @@
     <p class="text-xs text-gray-500 dark:text-gray-400 mt-3">
       «Напечатано» берётся из заказов (его меняют в боте). «Отправлено» в точки вводится здесь — нужен вход администратора.
     </p>
+  </div>
+
+  <!-- Вставка списка: текст -> предпросмотр -> запись -->
+  <div id="paste-modal" class="hidden fixed inset-0 z-50 bg-black/50 flex items-start justify-center overflow-y-auto p-3 sm:p-8">
+    <div class="bg-white dark:bg-gray-800 rounded-xl shadow-2xl w-full max-w-4xl p-4 sm:p-6">
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="text-lg font-bold">📋 Вставить список отправки</h2>
+        <button onclick="closePaste()" class="text-2xl leading-none text-gray-500 hover:text-gray-800 dark:hover:text-white" aria-label="Закрыть">×</button>
+      </div>
+
+      <div id="paste-step1">
+        <p class="text-sm text-gray-600 dark:text-gray-300 mb-2">
+          Вставьте текст: строка с названием точки (<b>ВДНХ</b>, <b>Остров</b>, <b>Аэропорт</b>), ниже позиции вида
+          «1. Медведь милашка 2 шт». Без количества считается 1 шт. В тексте может быть несколько точек подряд.
+        </p>
+        <textarea id="paste-text" rows="12" class="w-full px-3 py-2 border rounded-lg font-mono text-sm bg-white dark:bg-gray-700 dark:border-gray-600" placeholder="ВДНХ&#10;&#10;1. Медведь милашка 2 шт&#10;2. Лама 1 шт"></textarea>
+        <div class="flex flex-wrap items-center gap-3 mt-3">
+          <label class="text-sm">Точка, если в тексте её нет:
+            <select id="paste-default-loc" class="ml-1 px-2 py-1 border rounded bg-white dark:bg-gray-700 dark:border-gray-600"></select>
+          </label>
+          <button id="paste-parse-btn" onclick="parsePaste()" class="ml-auto px-4 py-2 rounded-lg bg-blue-500 hover:bg-blue-600 text-white">Разобрать →</button>
+        </div>
+      </div>
+
+      <div id="paste-step2" class="hidden">
+        <p class="text-sm text-gray-600 dark:text-gray-300 mb-2">
+          Проверьте сопоставление. <span class="px-1 rounded bg-amber-100 dark:bg-amber-900 text-amber-800 dark:text-amber-200">≈ жёлтым</span> — название найдено неточно (частичные совпадения не включены — отметьте сами, если верно),
+          <span class="px-1 rounded bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200">красным</span> — позиции нет среди активных заказов (по умолчанию пропускается).
+        </p>
+        <div class="overflow-x-auto border rounded-lg dark:border-gray-600">
+          <table class="min-w-full text-sm">
+            <thead class="bg-gray-50 dark:bg-gray-700 text-xs uppercase"><tr>
+              <th class="px-2 py-2"></th><th class="px-2 py-2 text-left">Из текста</th>
+              <th class="px-2 py-2 text-left">Позиция в заказах</th><th class="px-2 py-2 text-left">Точка</th><th class="px-2 py-2 text-center">Шт</th>
+            </tr></thead>
+            <tbody id="paste-rows" class="divide-y divide-gray-200 dark:divide-gray-700"></tbody>
+          </table>
+        </div>
+        <label class="flex items-start gap-2 mt-3 text-sm">
+          <input type="checkbox" id="paste-add-printed" checked class="mt-1">
+          <span>Добавить эти штуки ещё и к <b>«напечатано»</b> в заказах (сначала закрываются заказы с ближайшим сроком).
+            Уберите галочку, если напечатанное уже внесено и нужно записать только отправку.</span>
+        </label>
+        <div class="flex flex-wrap items-center gap-3 mt-3">
+          <span id="paste-summary" class="text-sm text-gray-600 dark:text-gray-300"></span>
+          <button onclick="backToPaste()" class="ml-auto px-4 py-2 rounded-lg bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600">← Назад</button>
+          <button id="paste-apply-btn" onclick="applyPaste()" class="px-4 py-2 rounded-lg bg-green-600 hover:bg-green-700 text-white font-semibold">Записать</button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <div id="toast" class="fixed bottom-5 left-1/2 -translate-x-1/2 px-4 py-2 rounded-lg shadow-lg text-white text-sm opacity-0 pointer-events-none"></div>
@@ -102,6 +153,7 @@
 
     // ---------- вход администратора (тот же пароль и токен, что на /price) ----------
     function updateAuthBtn() {
+      $('paste-btn').classList.toggle('hidden', !adminToken);
       $('auth-btn').textContent = adminToken ? '🔓 Редактирование включено · выйти' : '🔑 Войти для редактирования';
     }
     async function toggleAuth() {
@@ -318,6 +370,127 @@
       if (saving > 0 || (a && a.classList && a.classList.contains('ship-input'))) return;
       load();
     }, 30000);
+
+    // ---------- вставка списка ----------
+    let pasteEntries = [], pastePositions = [];
+
+    async function adminFetch(url, body) {
+      const r = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Admin-Token': adminToken },
+        body: JSON.stringify(body)
+      });
+      let d = {};
+      try { d = await r.json(); } catch (e) {}
+      if (r.status === 401) { logout(); closePaste(); render(); throw new Error('Пароль не подошёл — войдите заново'); }
+      if (!r.ok) {
+        const extra = Array.isArray(d.details) ? '\n' + d.details.join('\n') : '';
+        throw new Error((d.error || d.detail || ('HTTP ' + r.status)) + extra);
+      }
+      return d;
+    }
+
+    function openPaste() {
+      $('paste-default-loc').innerHTML = locations.map(l => `<option>${esc(l)}</option>`).join('');
+      showStep(1);
+      $('paste-modal').classList.remove('hidden');
+      $('paste-text').focus();
+    }
+    function closePaste() { $('paste-modal').classList.add('hidden'); }
+    function backToPaste() { showStep(1); }
+    function showStep(n) {
+      $('paste-step1').classList.toggle('hidden', n !== 1);
+      $('paste-step2').classList.toggle('hidden', n !== 2);
+    }
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') closePaste(); });
+
+    async function parsePaste() {
+      const text = $('paste-text').value;
+      if (!text.trim()) { toast('Вставьте текст', true); return; }
+      const btn = $('paste-parse-btn'); btn.disabled = true;
+      try {
+        const d = await adminFetch(API + '/parse', { text, default_location: $('paste-default-loc').value });
+        pasteEntries = d.entries; pastePositions = d.positions;
+        renderPreview();
+        showStep(2);
+      } catch (e) { toast(e.message, true); }
+      finally { btn.disabled = false; }
+    }
+
+    function renderPreview() {
+      $('paste-rows').innerHTML = pasteEntries.map((e, i) => {
+        const none = !e.match, fuzzy = e.confidence === 'near' || e.confidence === 'partial';
+        const include = e.confidence === 'exact' || e.confidence === 'near';   // частичные совпадения не включаем сами
+        const cls = none ? 'bg-red-50 dark:bg-red-950' : fuzzy ? 'bg-amber-50 dark:bg-amber-950' : '';
+        const posOpts = '<option value="">— пропустить —</option>' + pastePositions.map(p =>
+          `<option value="${esc(p)}"${p === e.match ? ' selected' : ''}>${esc(p)}</option>`).join('');
+        const locOpts = locations.map(l => `<option${l === e.location ? ' selected' : ''}>${esc(l)}</option>`).join('');
+        return `<tr class="${cls}" data-i="${i}">
+          <td class="px-2 py-1 text-center"><input type="checkbox" class="p-inc" ${include ? 'checked' : ''}></td>
+          <td class="px-2 py-1">${esc(e.name)}${fuzzy ? ` <span class="text-amber-700 dark:text-amber-300" title="${e.confidence === 'near' ? 'Те же слова, другое окончание' : 'Названия совпадают лишь частично — проверьте и включите вручную'}">≈</span>` : ''}</td>
+          <td class="px-2 py-1"><select class="p-pos max-w-[16rem] px-1 py-1 border rounded bg-white dark:bg-gray-700 dark:border-gray-600">${posOpts}</select></td>
+          <td class="px-2 py-1"><select class="p-loc px-1 py-1 border rounded bg-white dark:bg-gray-700 dark:border-gray-600">${locOpts}</select></td>
+          <td class="px-2 py-1 text-center"><input type="number" min="1" class="p-qty w-16 text-center px-1 py-1 border rounded bg-white dark:bg-gray-700 dark:border-gray-600" value="${e.qty}"></td>
+        </tr>`;
+      }).join('');
+      updatePasteSummary();
+    }
+
+    function collectPaste() {
+      const items = [];
+      document.querySelectorAll('#paste-rows tr').forEach(tr => {
+        if (!tr.querySelector('.p-inc').checked) return;
+        const position = tr.querySelector('.p-pos').value;
+        const qty = parseInt(tr.querySelector('.p-qty').value, 10);
+        if (!position || !(qty > 0)) return;
+        items.push({ position, location: tr.querySelector('.p-loc').value, qty });
+      });
+      return items;
+    }
+    function updatePasteSummary() {
+      const items = collectPaste();
+      $('paste-summary').textContent = items.length
+        ? `К записи: ${items.length} поз., ${items.reduce((s, x) => s + x.qty, 0)} шт`
+        : 'Нечего записывать';
+      $('paste-apply-btn').disabled = !items.length;
+      $('paste-apply-btn').classList.toggle('opacity-50', !items.length);
+    }
+    $('paste-rows').addEventListener('input', updatePasteSummary);
+    $('paste-rows').addEventListener('change', e => {
+      // выбрали позицию в строке, где было «пропустить» — сразу включаем её в запись
+      const tr = e.target.closest('tr');
+      if (tr && e.target.classList.contains('p-pos')) {
+        tr.querySelector('.p-inc').checked = !!e.target.value;
+        tr.className = e.target.value ? '' : tr.className;
+      }
+      updatePasteSummary();
+    });
+
+    async function applyPaste() {
+      const items = collectPaste();
+      if (!items.length) return;
+      const btn = $('paste-apply-btn'); btn.disabled = true; btn.textContent = 'Записываю…';
+      saving++;
+      try {
+        const d = await adminFetch(API + '/apply', { items, add_printed: $('paste-add-printed').checked });
+        closePaste();
+        $('paste-text').value = '';
+        let msg = `Записано: отправлено ${d.shipped} шт` + (d.printed_added ? `, напечатано +${d.printed_added}` : '');
+        const left = Object.entries(d.leftover || {});
+        if (left.length) {
+          alert('Записано, но часть штук не поместилась в «напечатано» — напечатано больше, чем заказано:\n\n' +
+                left.map(([n, q]) => `• ${n}: ${q} шт`).join('\n') +
+                '\n\nВ «отправлено» эти штуки учтены.');
+        }
+        toast(msg);
+        await load();
+      } catch (e) {
+        toast(e.message.split('\n')[0], true);
+        if (e.message.includes('\n')) alert(e.message);
+      } finally {
+        saving--; btn.disabled = false; btn.textContent = 'Записать';
+      }
+    }
 
     paintFilters();
     load();
