@@ -4,6 +4,7 @@ from config import SPREADSHEET_ID, CREDENTIALS_FILE
 from datetime import datetime, timezone, timedelta
 import time
 import logging
+from production import normalize_position, distribute_printed
 
 logger = logging.getLogger(__name__)
 
@@ -1010,6 +1011,85 @@ class SheetManager:
         except Exception as e:
             logger.error(f"set_shipment: {e}")
             return False
+
+    def add_shipments_batch(self, items):
+        """Прибавляет количества к отправкам одним пакетом запросов.
+
+        items — [(позиция, точка, количество)]; повторы суммируются.
+        Возвращает {(позиция_lower, точка_lower): новое_значение}.
+        """
+        delta = {}
+        names = {}
+        for position, location, qty in items:
+            key = (position.strip().lower(), location.strip().lower())
+            delta[key] = delta.get(key, 0) + int(qty)
+            names[key] = (position.strip(), location.strip())
+
+        records = self.sheet_shipments.get_all_values()
+        existing = {}
+        for idx, row in enumerate(records[1:], start=2):
+            if len(row) >= 2 and row[0].strip():
+                try:
+                    cur = int(float(row[2])) if len(row) > 2 and row[2] else 0
+                except (ValueError, TypeError):
+                    cur = 0
+                existing[(row[0].strip().lower(), row[1].strip().lower())] = (idx, cur)
+
+        updates, new_rows, result = [], [], {}
+        for key, add in delta.items():
+            if key in existing:
+                idx, cur = existing[key]
+                result[key] = cur + add
+                updates.append({"range": f"C{idx}", "values": [[result[key]]]})
+            else:
+                result[key] = add
+                new_rows.append([names[key][0], names[key][1], add])
+        if updates:
+            self.sheet_shipments.batch_update(updates, value_input_option="USER_ENTERED")
+        if new_rows:
+            self.sheet_shipments.append_rows(new_rows, value_input_option="USER_ENTERED")
+        self._invalidate_cache("shipments")
+        self.log_action("system", "Отправки (вставка текста)", f"{len(delta)} поз., {sum(delta.values())} шт")
+        return result
+
+    def add_printed_batch(self, qty_by_position):
+        """Прибавляет напечатанное к активным заказам позиций (сначала ближайший срок).
+
+        qty_by_position — {название_позиции_lower: сколько_штук}.
+        Возвращает {"added": {название_lower: добавлено}, "leftover": {название_lower: не влезло}}.
+        """
+        records = self.sheet_orders.get_all_values()
+        by_pos = {}
+        for idx, row in enumerate(records[1:], start=2):
+            row = row + [""] * (8 - len(row))
+            if row[6].strip().lower() == "да":
+                continue
+            key = normalize_position(row[1]).lower()
+            if key not in qty_by_position:
+                continue
+            try:
+                ordered, printed = int(float(row[2])), int(float(row[3] or 0))
+            except (ValueError, TypeError):
+                continue
+            by_pos.setdefault(key, []).append(
+                {"id": row[0], "row": idx, "ordered": ordered, "printed": printed, "deadline": row[4].strip()}
+            )
+
+        now_str = moscow_now().strftime("%Y-%m-%d %H:%M:%S")
+        updates, added, leftover = [], {}, {}
+        for key, qty in qty_by_position.items():
+            changes, left = distribute_printed(by_pos.get(key, []), qty)
+            for c in changes:
+                updates.append({"range": f"D{c['row']}", "values": [[c["printed"]]]})
+                updates.append({"range": f"F{c['row']}", "values": [[now_str]]})
+            added[key] = sum(c["added"] for c in changes)
+            if left:
+                leftover[key] = left
+        if updates:
+            self.sheet_orders.batch_update(updates, value_input_option="USER_ENTERED")
+        self._invalidate_cache("orders")
+        self.log_action("system", "Напечатано (вставка текста)", f"{sum(added.values())} шт по {len(added)} поз.")
+        return {"added": added, "leftover": leftover}
 
     # ---------- Заглушки ----------
     def init_tasks_sheet(self): pass

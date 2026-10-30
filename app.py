@@ -9,7 +9,7 @@ import aiohttp
 import requests
 from datetime import datetime, timedelta
 from fastapi import FastAPI, Request, UploadFile, File, Header, HTTPException, Depends
-from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.concurrency import run_in_threadpool
 from fastapi.templating import Jinja2Templates
 from fastapi.exceptions import RequestValidationError
@@ -24,7 +24,7 @@ from handlers.client_bot import create_client_dispatcher, set_commands as set_cl
 from config import BOT_TOKEN, ADMIN_PASSWORD
 from google_sheets import SheetManager, moscow_now
 from bambu_cloud import BambuCloudManager
-from production import build_production_rows, normalize_position
+from production import build_production_rows, normalize_position, parse_shipment_text, match_name
 
 from docx import Document
 from docx.shared import Pt, Cm, RGBColor
@@ -36,10 +36,6 @@ from docx.oxml import OxmlElement
 import qrcode
 from PIL import Image
 
-from handlers_3mf import (
-    extract_colors_from_3mf, hex_to_rgb, rgb_to_hex,
-    group_similar_colors, find_closest_colors, generate_color_palette, BAMBU_COLORS,
-)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -171,6 +167,22 @@ class ShipmentIn(BaseModel):
     position: str
     location: str
     qty: int
+
+
+class ShipmentParseIn(BaseModel):
+    text: str
+    default_location: str = ""
+
+
+class ShipmentApplyItem(BaseModel):
+    position: str
+    location: str
+    qty: int
+
+
+class ShipmentApplyIn(BaseModel):
+    items: list[ShipmentApplyItem]
+    add_printed: bool = True
 
 
 class ReviewIn(BaseModel):
@@ -562,11 +574,6 @@ async def production_page(request: Request):
     return templates.TemplateResponse("production.html", {"request": request})
 
 
-@app.get("/upload_3mf", response_class=HTMLResponse)
-async def upload_3mf_page():
-    return FileResponse("upload_3mf.html")
-
-
 @app.get("/share/{row}", response_class=HTMLResponse)
 async def share_page(request: Request, row: int):
     if not sheet_manager:
@@ -704,6 +711,94 @@ async def set_shipment_api(payload: ShipmentIn, _: bool = Depends(verify_admin))
     return JSONResponse({"status": "ok"})
 
 
+def _production_rows():
+    return build_production_rows(
+        sheet_manager.get_active_orders(),
+        sheet_manager.get_price_items(),
+        sheet_manager.get_shipments(),
+        SHIPMENT_LOCATIONS,
+    )
+
+
+def _canonical_location(value):
+    v = (value or "").strip().lower()
+    return next((loc for loc in SHIPMENT_LOCATIONS if loc.lower() == v), None)
+
+
+@app.post("/api/production/parse")
+async def parse_shipments_api(payload: ShipmentParseIn, _: bool = Depends(verify_admin)):
+    """Разбирает вставленный текст и предлагает, к каким позициям что относится. Ничего не записывает."""
+    if not sheet_manager:
+        return JSONResponse({"error": "SheetManager не инициализирован"}, status_code=500)
+    if not payload.text.strip():
+        return JSONResponse({"error": "Вставьте текст"}, status_code=400)
+    try:
+        rows = await run_in_threadpool(_production_rows)
+    except Exception as e:
+        logger.error(f"parse_shipments rows: {e}", exc_info=e)
+        return JSONResponse({"error": str(e)}, status_code=500)
+    names = [r["name"] for r in rows]
+    default_loc = _canonical_location(payload.default_location)
+    entries = []
+    for e in parse_shipment_text(payload.text, SHIPMENT_LOCATIONS):
+        matched, confidence, candidates = match_name(e["name"], names)
+        entries.append({
+            "line": e["line"], "name": e["name"], "qty": e["qty"],
+            "location": e["location"] or default_loc,
+            "match": matched, "confidence": confidence,
+            "candidates": candidates,
+        })
+    if not entries:
+        return JSONResponse({"error": "Не нашёл ни одной позиции в тексте"}, status_code=400)
+    return JSONResponse({"entries": entries, "positions": names, "locations": SHIPMENT_LOCATIONS})
+
+
+@app.post("/api/production/apply")
+async def apply_shipments_api(payload: ShipmentApplyIn, _: bool = Depends(verify_admin)):
+    """Прибавляет количества к «отправлено» точки и (по галочке) к «напечатано» заказов."""
+    if not sheet_manager:
+        return JSONResponse({"error": "SheetManager не инициализирован"}, status_code=500)
+    try:
+        rows = await run_in_threadpool(_production_rows)
+    except Exception as e:
+        logger.error(f"apply_shipments rows: {e}", exc_info=e)
+        return JSONResponse({"error": str(e)}, status_code=500)
+    known = {r["name"].lower(): r["name"] for r in rows}
+
+    items, errors = [], []
+    for it in payload.items:
+        loc = _canonical_location(it.location)
+        pos = known.get(normalize_position(it.position).lower())
+        if not loc:
+            errors.append(f"«{it.position}»: неизвестная точка «{it.location}»")
+        elif not pos:
+            errors.append(f"«{it.position}»: нет среди активных заказов")
+        elif it.qty <= 0:
+            errors.append(f"«{it.position}»: количество должно быть больше 0")
+        else:
+            items.append((pos, loc, it.qty))
+    if errors:
+        return JSONResponse({"error": "Есть ошибки, ничего не записано", "details": errors}, status_code=400)
+    if not items:
+        return JSONResponse({"error": "Нечего записывать"}, status_code=400)
+
+    result = {"status": "ok", "shipped": sum(q for _, _, q in items), "printed_added": 0, "leftover": {}}
+    try:
+        if payload.add_printed:
+            qty_by_pos = {}
+            for pos, _loc, qty in items:
+                qty_by_pos[pos.lower()] = qty_by_pos.get(pos.lower(), 0) + qty
+            printed = await run_in_threadpool(sheet_manager.add_printed_batch, qty_by_pos)
+            result["printed_added"] = sum(printed["added"].values())
+            result["leftover"] = {known[k]: v for k, v in printed["leftover"].items()}
+        await run_in_threadpool(sheet_manager.add_shipments_batch, items)
+    except Exception as e:
+        logger.error(f"apply_shipments write: {e}", exc_info=e)
+        return JSONResponse({"error": f"Ошибка записи: {e}. Проверьте таблицу перед повтором — часть данных могла записаться."},
+                            status_code=500)
+    return JSONResponse(result)
+
+
 # ---------- API: ЗАДАЧИ ----------
 @app.get("/api/tasks")
 async def get_tasks_api():
@@ -728,51 +823,6 @@ async def get_tasks_api():
 async def get_printers_api():
     printers = await run_in_threadpool(bambu_cloud.get_printers)
     return JSONResponse({"printers": printers})
-
-
-# ---------- API: 3MF ----------
-MAX_3MF_SIZE = 50 * 1024 * 1024
-
-
-def _process_3mf_bytes(content: bytes):
-    raw_colors_hex = extract_colors_from_3mf(content)
-    if not raw_colors_hex:
-        return {"colors": [], "count": 0, "palette": None}
-    raw_colors_rgb = [hex_to_rgb(h) for h in raw_colors_hex]
-    grouped = group_similar_colors(raw_colors_rgb, tolerance=20, max_colors=10)
-    unique_matches = []
-    seen_hex = set()
-    for rgb in grouped:
-        matches = find_closest_colors(rgb_to_hex(rgb), BAMBU_COLORS, top_n=1)
-        if matches and matches[0][1]["hex"] not in seen_hex:
-            seen_hex.add(matches[0][1]["hex"])
-            unique_matches.append(matches[0][1])
-    palette_b64 = None
-    try:
-        palette_bytes = generate_color_palette(grouped)
-        if palette_bytes:
-            palette_b64 = base64.b64encode(palette_bytes).decode("ascii")
-    except Exception as e:
-        logger.warning(f"palette error: {e}")
-    return {"colors": unique_matches, "count": len(unique_matches), "palette": palette_b64}
-
-
-@app.post("/api/analyze_3mf")
-async def analyze_3mf_api(file: UploadFile = File(...)):
-    if not file.filename or not file.filename.lower().endswith(".3mf"):
-        return JSONResponse({"detail": "Нужен файл .3mf"}, status_code=400)
-    try:
-        content = await file.read()
-    except Exception as e:
-        return JSONResponse({"detail": f"Не удалось прочитать файл: {e}"}, status_code=400)
-    if len(content) > MAX_3MF_SIZE:
-        return JSONResponse({"detail": "Файл больше 50 МБ"}, status_code=400)
-    try:
-        result = await run_in_threadpool(_process_3mf_bytes, content)
-        return JSONResponse(result)
-    except Exception as e:
-        logger.error(f"3MF error: {e}", exc_info=e)
-        return JSONResponse({"detail": f"Ошибка анализа: {e}"}, status_code=500)
 
 
 # ---------- API: ПРАЙС ----------
