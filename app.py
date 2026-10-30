@@ -9,7 +9,7 @@ import aiohttp
 import requests
 from datetime import datetime, timedelta
 from fastapi import FastAPI, Request, UploadFile, File, Header, HTTPException, Depends
-from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.concurrency import run_in_threadpool
 from fastapi.templating import Jinja2Templates
 from fastapi.exceptions import RequestValidationError
@@ -35,10 +35,6 @@ from docx.oxml import OxmlElement
 import qrcode
 from PIL import Image
 
-from handlers_3mf import (
-    extract_colors_from_3mf, hex_to_rgb, rgb_to_hex,
-    group_similar_colors, find_closest_colors, generate_color_palette, BAMBU_COLORS,
-)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -544,11 +540,6 @@ async def price_page(request: Request):
     return templates.TemplateResponse("price.html", {"request": request})
 
 
-@app.get("/upload_3mf", response_class=HTMLResponse)
-async def upload_3mf_page():
-    return FileResponse("upload_3mf.html")
-
-
 @app.get("/share/{row}", response_class=HTMLResponse)
 async def share_page(request: Request, row: int):
     if not sheet_manager:
@@ -667,51 +658,6 @@ async def get_tasks_api():
 async def get_printers_api():
     printers = await run_in_threadpool(bambu_cloud.get_printers)
     return JSONResponse({"printers": printers})
-
-
-# ---------- API: 3MF ----------
-MAX_3MF_SIZE = 50 * 1024 * 1024
-
-
-def _process_3mf_bytes(content: bytes):
-    raw_colors_hex = extract_colors_from_3mf(content)
-    if not raw_colors_hex:
-        return {"colors": [], "count": 0, "palette": None}
-    raw_colors_rgb = [hex_to_rgb(h) for h in raw_colors_hex]
-    grouped = group_similar_colors(raw_colors_rgb, tolerance=20, max_colors=10)
-    unique_matches = []
-    seen_hex = set()
-    for rgb in grouped:
-        matches = find_closest_colors(rgb_to_hex(rgb), BAMBU_COLORS, top_n=1)
-        if matches and matches[0][1]["hex"] not in seen_hex:
-            seen_hex.add(matches[0][1]["hex"])
-            unique_matches.append(matches[0][1])
-    palette_b64 = None
-    try:
-        palette_bytes = generate_color_palette(grouped)
-        if palette_bytes:
-            palette_b64 = base64.b64encode(palette_bytes).decode("ascii")
-    except Exception as e:
-        logger.warning(f"palette error: {e}")
-    return {"colors": unique_matches, "count": len(unique_matches), "palette": palette_b64}
-
-
-@app.post("/api/analyze_3mf")
-async def analyze_3mf_api(file: UploadFile = File(...)):
-    if not file.filename or not file.filename.lower().endswith(".3mf"):
-        return JSONResponse({"detail": "Нужен файл .3mf"}, status_code=400)
-    try:
-        content = await file.read()
-    except Exception as e:
-        return JSONResponse({"detail": f"Не удалось прочитать файл: {e}"}, status_code=400)
-    if len(content) > MAX_3MF_SIZE:
-        return JSONResponse({"detail": "Файл больше 50 МБ"}, status_code=400)
-    try:
-        result = await run_in_threadpool(_process_3mf_bytes, content)
-        return JSONResponse(result)
-    except Exception as e:
-        logger.error(f"3MF error: {e}", exc_info=e)
-        return JSONResponse({"detail": f"Ошибка анализа: {e}"}, status_code=500)
 
 
 # ---------- API: ПРАЙС ----------
