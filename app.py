@@ -24,6 +24,7 @@ from handlers.client_bot import create_client_dispatcher, set_commands as set_cl
 from config import BOT_TOKEN, ADMIN_PASSWORD
 from google_sheets import SheetManager, moscow_now
 from bambu_cloud import BambuCloudManager
+from production import build_production_rows, normalize_position
 
 from docx import Document
 from docx.shared import Pt, Cm, RGBColor
@@ -82,6 +83,12 @@ PRICE_LOGO_URL = os.getenv("PRICE_LOGO_URL", "")
 PUBLIC_URL = os.getenv("PUBLIC_URL", "")
 PRICE_ORDER_CHAT_ID = os.getenv("PRICE_ORDER_CHAT_ID", "")
 PRICE_ORDER_DEADLINE_DAYS = int(os.getenv("PRICE_ORDER_DEADLINE_DAYS", "7"))
+
+# Точки, куда отправляем готовую печать (столбцы страницы /production).
+# Можно поменять без правки кода: SHIPMENT_LOCATIONS="ВДНХ,Остров,Аэропорт,Новая точка"
+SHIPMENT_LOCATIONS = [
+    s.strip() for s in os.getenv("SHIPMENT_LOCATIONS", "ВДНХ,Остров,Аэропорт").split(",") if s.strip()
+] or ["ВДНХ", "Остров", "Аэропорт"]
 
 
 # ---------- EXCEPTION HANDLERS ----------
@@ -158,6 +165,12 @@ class OrderRequestIn(BaseModel):
 
 class PromoIn(BaseModel):
     code: str
+
+
+class ShipmentIn(BaseModel):
+    position: str
+    location: str
+    qty: int
 
 
 class ReviewIn(BaseModel):
@@ -544,6 +557,11 @@ async def price_page(request: Request):
     return templates.TemplateResponse("price.html", {"request": request})
 
 
+@app.get("/production", response_class=HTMLResponse)
+async def production_page(request: Request):
+    return templates.TemplateResponse("production.html", {"request": request})
+
+
 @app.get("/upload_3mf", response_class=HTMLResponse)
 async def upload_3mf_page():
     return FileResponse("upload_3mf.html")
@@ -587,6 +605,7 @@ async def robots(request: Request):
         "User-agent: *\n"
         "Allow: /\n"
         "Disallow: /tracker\n"
+        "Disallow: /production\n"
         "Disallow: /api/\n"
         "Disallow: /webhook\n"
         "Disallow: /webhook_client\n"
@@ -641,6 +660,48 @@ async def get_orders_api(customer: str = "", from_date: str = "", to_date: str =
     except Exception as e:
         logger.error(f"API error: {e}")
         return JSONResponse({"error": str(e)}, status_code=500)
+
+
+# ---------- API: ДОПЕЧАТКА И ОТПРАВКИ ----------
+@app.get("/api/production")
+async def get_production_api():
+    if not sheet_manager:
+        return JSONResponse({"error": "SheetManager не инициализирован"}, status_code=500)
+
+    def _build():
+        return build_production_rows(
+            sheet_manager.get_active_orders(),
+            sheet_manager.get_price_items(),
+            sheet_manager.get_shipments(),
+            SHIPMENT_LOCATIONS,
+        )
+
+    try:
+        rows = await run_in_threadpool(_build)
+        return JSONResponse({"locations": SHIPMENT_LOCATIONS, "rows": rows})
+    except Exception as e:
+        logger.error(f"API production error: {e}", exc_info=e)
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.post("/api/production/shipment")
+async def set_shipment_api(payload: ShipmentIn, _: bool = Depends(verify_admin)):
+    if not sheet_manager:
+        return JSONResponse({"error": "SheetManager не инициализирован"}, status_code=500)
+    location = next(
+        (loc for loc in SHIPMENT_LOCATIONS if loc.lower() == payload.location.strip().lower()), None
+    )
+    if not location:
+        return JSONResponse({"error": "Неизвестная точка"}, status_code=400)
+    if payload.qty < 0:
+        return JSONResponse({"error": "Количество не может быть отрицательным"}, status_code=400)
+    position = normalize_position(payload.position)
+    if not position:
+        return JSONResponse({"error": "Пустая позиция"}, status_code=400)
+    ok = await run_in_threadpool(sheet_manager.set_shipment, position, location, payload.qty)
+    if not ok:
+        return JSONResponse({"error": "Не удалось сохранить"}, status_code=500)
+    return JSONResponse({"status": "ok"})
 
 
 # ---------- API: ЗАДАЧИ ----------

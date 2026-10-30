@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>🖨️ Допечатка и отправки</title>
+  <meta name="robots" content="noindex">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>tailwind.config = { darkMode: 'class' };</script>
+  <style>
+    * { transition: background-color .2s, color .2s, border-color .2s; }
+    .todo-row { box-shadow: inset 4px 0 0 #f59e0b; }
+    .ship-input { width: 4rem; text-align: center; }
+    .ship-input:disabled { opacity: .5; }
+    .flash-ok { box-shadow: 0 0 0 2px #22c55e; }
+    th, td { white-space: nowrap; }
+    td.name-cell { white-space: normal; min-width: 11rem; max-width: 18rem; word-break: break-word; }
+    #toast { transition: opacity .3s, transform .3s; }
+  </style>
+</head>
+<body class="bg-gray-100 dark:bg-gray-900 text-gray-800 dark:text-gray-200 font-sans antialiased">
+  <div class="container mx-auto px-4 py-6 max-w-7xl">
+
+    <header class="flex flex-wrap items-center justify-between gap-3 mb-6">
+      <div class="flex items-center gap-3">
+        <span class="text-3xl">🖨️</span>
+        <h1 class="text-2xl md:text-3xl font-bold">Допечатка и отправки</h1>
+      </div>
+      <div class="flex items-center gap-2 flex-wrap">
+        <a href="/tracker" class="text-sm bg-blue-500 hover:bg-blue-600 text-white px-3 py-1.5 rounded-lg shadow">📦 Трекер</a>
+        <a href="/price" class="text-sm bg-purple-500 hover:bg-purple-600 text-white px-3 py-1.5 rounded-lg shadow">💰 Прайс</a>
+        <button id="auth-btn" onclick="toggleAuth()" class="text-sm bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 px-3 py-1.5 rounded-lg"></button>
+        <button onclick="load()" class="text-sm bg-green-500 hover:bg-green-600 text-white px-3 py-1.5 rounded-lg shadow">↻ Обновить</button>
+        <button onclick="toggleTheme()" class="bg-gray-200 dark:bg-gray-700 px-3 py-1.5 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600"><span id="theme-icon">🌙</span></button>
+      </div>
+    </header>
+
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
+      <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-3 text-center">
+        <div class="text-2xl font-bold text-amber-600 dark:text-amber-400" id="s-todo">0</div>
+        <div class="text-xs uppercase text-gray-500 dark:text-gray-400">Позиций к допечатке</div>
+      </div>
+      <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-3 text-center">
+        <div class="text-2xl font-bold text-red-600 dark:text-red-400" id="s-remaining">0</div>
+        <div class="text-xs uppercase text-gray-500 dark:text-gray-400">Штук осталось напечатать</div>
+      </div>
+      <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-3 text-center">
+        <div class="text-2xl font-bold text-blue-600 dark:text-blue-400" id="s-printed">0</div>
+        <div class="text-xs uppercase text-gray-500 dark:text-gray-400">Напечатано</div>
+      </div>
+      <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-3 text-center">
+        <div class="text-2xl font-bold text-green-600 dark:text-green-400" id="s-shipped">0</div>
+        <div class="text-xs uppercase text-gray-500 dark:text-gray-400">Отправлено</div>
+      </div>
+    </div>
+
+    <div class="flex flex-wrap items-center gap-3 mb-4 bg-white dark:bg-gray-800 p-3 rounded-lg shadow">
+      <input id="search" type="text" placeholder="🔍 Поиск по названию" class="flex-1 min-w-[180px] px-3 py-2 border rounded-lg bg-white dark:bg-gray-700 dark:border-gray-600">
+      <div class="flex gap-2 flex-wrap" id="filters">
+        <button data-f="all" class="f-btn px-3 py-1 rounded-full text-sm">Все</button>
+        <button data-f="todo" class="f-btn px-3 py-1 rounded-full text-sm">🖨️ Допечатать</button>
+        <button data-f="done" class="f-btn px-3 py-1 rounded-full text-sm">✅ Напечатано</button>
+      </div>
+      <span id="last-update" class="text-xs text-gray-500 dark:text-gray-400"></span>
+    </div>
+
+    <div class="bg-white dark:bg-gray-800 rounded-lg shadow overflow-x-auto">
+      <table class="min-w-full text-sm">
+        <thead id="thead" class="bg-gray-50 dark:bg-gray-700 text-xs uppercase tracking-wider"></thead>
+        <tbody id="tbody" class="divide-y divide-gray-200 dark:divide-gray-700"></tbody>
+        <tfoot id="tfoot" class="bg-gray-50 dark:bg-gray-700 font-semibold"></tfoot>
+      </table>
+      <div id="empty" class="hidden text-center py-12 text-gray-400 dark:text-gray-500 text-lg">📭 Нет активных заказов</div>
+    </div>
+
+    <p class="text-xs text-gray-500 dark:text-gray-400 mt-3">
+      «Напечатано» берётся из заказов (его меняют в боте). «Отправлено» в точки вводится здесь — нужен вход администратора.
+    </p>
+  </div>
+
+  <div id="toast" class="fixed bottom-5 left-1/2 -translate-x-1/2 px-4 py-2 rounded-lg shadow-lg text-white text-sm opacity-0 pointer-events-none"></div>
+
+  <script>
+    const API = '/api/production';
+    let locations = [], rows = [], filter = 'all', query = '', saving = 0;
+    let adminToken = localStorage.getItem('priceAdminToken') || '';
+    const $ = id => document.getElementById(id);
+
+    function esc(s) {
+      return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    }
+
+    // ---------- тема ----------
+    let darkMode = localStorage.getItem('theme') === 'dark';
+    function applyTheme() {
+      document.documentElement.classList.toggle('dark', darkMode);
+      $('theme-icon').textContent = darkMode ? '☀️' : '🌙';
+      localStorage.setItem('theme', darkMode ? 'dark' : 'light');
+    }
+    function toggleTheme() { darkMode = !darkMode; applyTheme(); }
+    applyTheme();
+
+    // ---------- вход администратора (тот же пароль и токен, что на /price) ----------
+    function updateAuthBtn() {
+      $('auth-btn').textContent = adminToken ? '🔓 Редактирование включено · выйти' : '🔑 Войти для редактирования';
+    }
+    async function toggleAuth() {
+      if (adminToken) { logout(); render(); return; }
+      const pwd = prompt('Пароль администратора:');
+      if (!pwd) return;
+      try {
+        const r = await fetch('/api/price/admin', { headers: { 'X-Admin-Token': pwd } });
+        if (r.ok) {
+          adminToken = pwd;
+          localStorage.setItem('priceAdminToken', pwd);
+          toast('Редактирование включено');
+          render();
+        } else {
+          toast('Неверный пароль', true);
+        }
+      } catch (e) { toast('Ошибка соединения', true); }
+    }
+    function logout() {
+      adminToken = '';
+      localStorage.removeItem('priceAdminToken');
+      updateAuthBtn();
+    }
+
+    // ---------- уведомления ----------
+    let toastTimer;
+    function toast(msg, isError) {
+      const t = $('toast');
+      t.textContent = msg;
+      t.className = 'fixed bottom-5 left-1/2 -translate-x-1/2 px-4 py-2 rounded-lg shadow-lg text-white text-sm pointer-events-none ' +
+        (isError ? 'bg-red-600' : 'bg-green-600');
+      t.style.opacity = 1;
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => { t.style.opacity = 0; }, 2500);
+    }
+
+    // ---------- загрузка ----------
+    async function load() {
+      try {
+        const r = await fetch(API);
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const d = await r.json();
+        if (d.error) throw new Error(d.error);
+        locations = d.locations || [];
+        rows = d.rows || [];
+        $('last-update').textContent = 'Обновлено: ' + new Date().toLocaleTimeString('ru-RU');
+        render();
+      } catch (e) {
+        $('tbody').innerHTML = '';
+        $('tfoot').innerHTML = '';
+        $('empty').textContent = '⚠️ Не удалось загрузить: ' + e.message;
+        $('empty').classList.remove('hidden');
+      }
+    }
+
+    // ---------- отрисовка ----------
+    function visible() {
+      const q = query.trim().toLowerCase();
+      return rows.map((r, i) => ({ r, i })).filter(({ r }) => {
+        if (q && !r.name.toLowerCase().includes(q)) return false;
+        if (filter === 'todo') return r.remaining > 0;
+        if (filter === 'done') return r.remaining === 0;
+        return true;
+      });
+    }
+
+    function photoCell(url) {
+      const ph = '<span class="w-12 h-12 rounded bg-gray-200 dark:bg-gray-600 items-center justify-center text-gray-400 text-lg" style="display:%s">🖼️</span>';
+      if (/^https?:\/\//i.test(url || '')) {
+        return `<img src="${esc(url)}" loading="lazy" referrerpolicy="no-referrer" class="w-12 h-12 object-cover rounded"
+                  onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">` + ph.replace('%s', 'none');
+      }
+      return ph.replace('%s', 'flex');
+    }
+
+    function renderHead() {
+      const n = locations.length;
+      $('thead').innerHTML = `
+        <tr>
+          <th rowspan="2" class="px-3 py-2 text-left">Фото</th>
+          <th rowspan="2" class="px-3 py-2 text-left">Название</th>
+          <th rowspan="2" class="px-3 py-2 text-center">Заказано</th>
+          <th rowspan="2" class="px-3 py-2 text-center">Напечатано</th>
+          <th rowspan="2" class="px-3 py-2 text-center">Отправлено</th>
+          ${n ? `<th colspan="${n}" class="px-3 py-1 text-center border-b border-gray-200 dark:border-gray-600">Куда отправили</th>` : ''}
+          <th rowspan="2" class="px-3 py-2 text-center">Осталось напечатать</th>
+        </tr>
+        <tr>${locations.map(l => `<th class="px-3 py-1 text-center">${esc(l)}</th>`).join('')}</tr>`;
+    }
+
+    function shippedTotalHtml(r) {
+      const over = r.shipped_total > r.printed;
+      return `<span class="${over ? 'text-red-600 dark:text-red-400 font-bold' : ''}"
+                title="${over ? 'Отправлено больше, чем напечатано — проверьте числа' : ''}">${r.shipped_total}</span>`;
+    }
+
+    function remainingHtml(r) {
+      return r.remaining > 0
+        ? `<span class="inline-block min-w-[2.5rem] px-2 py-1 rounded-full bg-amber-100 dark:bg-amber-900 text-amber-800 dark:text-amber-200 font-bold">${r.remaining}</span>`
+        : `<span class="text-green-600 dark:text-green-400 font-bold">✓</span>`;
+    }
+
+    function render() {
+      updateAuthBtn();
+      renderHead();
+      const list = visible();
+      $('empty').textContent = rows.length ? '🔍 Ничего не найдено' : '📭 Нет активных заказов';
+      $('empty').classList.toggle('hidden', list.length > 0);
+
+      $('tbody').innerHTML = list.map(({ r, i }) => {
+        const cells = locations.map(loc => {
+          const v = r.shipped[loc] || 0;
+          return adminToken
+            ? `<td class="px-2 py-2 text-center"><input type="number" min="0" inputmode="numeric" class="ship-input px-1 py-1 border rounded bg-white dark:bg-gray-700 dark:border-gray-600" data-idx="${i}" data-loc="${esc(loc)}" value="${v}"></td>`
+            : `<td class="px-3 py-2 text-center ${v ? '' : 'text-gray-400'}">${v || '—'}</td>`;
+        }).join('');
+        const sub = (r.remaining > 0 && r.deadline) ? `<div class="text-xs text-gray-500 dark:text-gray-400">срок: ${esc(r.deadline)}</div>` : '';
+        const ids = r.order_ids.length ? ` title="Заказы: ${esc(r.order_ids.map(x => '№' + x).join(', '))}"` : '';
+        return `<tr class="hover:bg-gray-50 dark:hover:bg-gray-700 ${r.remaining > 0 ? 'todo-row' : ''}" data-row="${i}">
+          <td class="px-3 py-2"><div class="flex">${photoCell(r.photo)}</div></td>
+          <td class="px-3 py-2 name-cell font-medium"${ids}>${esc(r.name)}${sub}</td>
+          <td class="px-3 py-2 text-center">${r.ordered}</td>
+          <td class="px-3 py-2 text-center">${r.printed}</td>
+          <td class="px-3 py-2 text-center shipped-total">${shippedTotalHtml(r)}</td>
+          ${cells}
+          <td class="px-3 py-2 text-center">${remainingHtml(r)}</td>
+        </tr>`;
+      }).join('');
+
+      renderFooter(list);
+    }
+
+    function renderFooter(list) {
+      list = list || visible();
+      if (!list.length) { $('tfoot').innerHTML = ''; updateSummary(); return; }
+      const sum = f => list.reduce((s, { r }) => s + f(r), 0);
+      $('tfoot').innerHTML = `<tr>
+        <td class="px-3 py-2"></td>
+        <td class="px-3 py-2">Итого</td>
+        <td class="px-3 py-2 text-center">${sum(r => r.ordered)}</td>
+        <td class="px-3 py-2 text-center">${sum(r => r.printed)}</td>
+        <td class="px-3 py-2 text-center">${sum(r => r.shipped_total)}</td>
+        ${locations.map(l => `<td class="px-3 py-2 text-center">${sum(r => r.shipped[l] || 0)}</td>`).join('')}
+        <td class="px-3 py-2 text-center">${sum(r => r.remaining)}</td>
+      </tr>`;
+      updateSummary();
+    }
+
+    function updateSummary() {
+      $('s-todo').textContent = rows.filter(r => r.remaining > 0).length;
+      $('s-remaining').textContent = rows.reduce((s, r) => s + r.remaining, 0);
+      $('s-printed').textContent = rows.reduce((s, r) => s + r.printed, 0);
+      $('s-shipped').textContent = rows.reduce((s, r) => s + r.shipped_total, 0);
+    }
+
+    // ---------- фильтры ----------
+    function paintFilters() {
+      document.querySelectorAll('.f-btn').forEach(b => {
+        const on = b.dataset.f === filter;
+        b.className = 'f-btn px-3 py-1 rounded-full text-sm ' +
+          (on ? 'bg-blue-500 text-white' : 'bg-gray-200 dark:bg-gray-700');
+      });
+    }
+    $('filters').addEventListener('click', e => {
+      const b = e.target.closest('.f-btn');
+      if (!b) return;
+      filter = b.dataset.f;
+      paintFilters();
+      render();
+    });
+    $('search').addEventListener('input', e => { query = e.target.value; render(); });
+
+    // ---------- сохранение отправок ----------
+    $('tbody').addEventListener('change', async e => {
+      const inp = e.target.closest('input.ship-input');
+      if (!inp) return;
+      const idx = +inp.dataset.idx, loc = inp.dataset.loc, row = rows[idx];
+      let qty = parseInt(inp.value, 10);
+      if (isNaN(qty) || qty < 0) qty = 0;
+      const prev = row.shipped[loc] || 0;
+      if (qty === prev) { inp.value = qty; return; }
+
+      inp.disabled = true; saving++;
+      try {
+        const r = await fetch(API + '/shipment', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Admin-Token': adminToken },
+          body: JSON.stringify({ position: row.name, location: loc, qty })
+        });
+        if (r.status === 401) { logout(); render(); toast('Пароль не подошёл — войдите заново', true); return; }
+        if (!r.ok) {
+          const d = await r.json().catch(() => ({}));
+          throw new Error(d.error || d.detail || ('HTTP ' + r.status));
+        }
+        row.shipped[loc] = qty;
+        row.shipped_total = Object.values(row.shipped).reduce((a, b) => a + b, 0);
+        inp.value = qty;
+        const tr = inp.closest('tr');
+        tr.querySelector('.shipped-total').innerHTML = shippedTotalHtml(row);
+        inp.classList.add('flash-ok');
+        setTimeout(() => inp.classList.remove('flash-ok'), 800);
+        renderFooter();
+      } catch (err) {
+        inp.value = prev;
+        toast('Не сохранилось: ' + err.message, true);
+      } finally {
+        saving--; inp.disabled = false;
+      }
+    });
+
+    // автообновление, но не мешаем, пока человек вводит число или идёт сохранение
+    setInterval(() => {
+      const a = document.activeElement;
+      if (saving > 0 || (a && a.classList && a.classList.contains('ship-input'))) return;
+      load();
+    }, 30000);
+
+    paintFilters();
+    load();
+  </script>
+</body>
+</html>
