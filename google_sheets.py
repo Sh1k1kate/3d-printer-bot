@@ -1052,6 +1052,51 @@ class SheetManager:
         self.log_action("system", "Отправки (вставка текста)", f"{len(delta)} поз., {sum(delta.values())} шт")
         return result
 
+    def add_orders_batch(self, items):
+        """Создаёт несколько заказов одним запросом.
+
+        items — [(позиция, заказано, напечатано, срок "YYYY-MM-DD", заказчик)].
+        Возвращает список номеров созданных заказов.
+        """
+        if not items:
+            return []
+        records = self.sheet_orders.get_all_values()
+        last = 0
+        for row in records[1:]:
+            try:
+                last = max(last, int(row[0]))
+            except (ValueError, TypeError, IndexError):
+                continue
+        now_str = moscow_now().strftime("%Y-%m-%d %H:%M:%S")
+        rows, nums = [], []
+        for position, ordered, printed, deadline, customer in items:
+            last += 1
+            nums.append(last)
+            rows.append([last, position, int(ordered), int(printed), deadline, now_str, "Нет", customer])
+        self.sheet_orders.append_rows(rows, value_input_option="USER_ENTERED")
+        self._invalidate_cache("orders")
+        self.log_action("system", "Создание заказов (страница допечатки)",
+                        ", ".join(f"№{n} {r[1]} x{r[2]}" for n, r in zip(nums, rows)))
+        return nums
+
+    def close_position_orders(self, position_lower):
+        """Помечает выполненными все активные заказы позиции. Возвращает, сколько закрыто."""
+        records = self.sheet_orders.get_all_values()
+        now_str = moscow_now().strftime("%Y-%m-%d %H:%M:%S")
+        updates, closed = [], 0
+        for idx, row in enumerate(records[1:], start=2):
+            row = row + [""] * (8 - len(row))
+            if row[6].strip().lower() == "да" or normalize_position(row[1]).lower() != position_lower:
+                continue
+            updates.append({"range": f"G{idx}", "values": [["Да"]]})
+            updates.append({"range": f"F{idx}", "values": [[now_str]]})
+            closed += 1
+        if updates:
+            self.sheet_orders.batch_update(updates, value_input_option="USER_ENTERED")
+            self._invalidate_cache("orders")
+            self.log_action("system", "Закрытие позиции (страница допечатки)", f"{position_lower}: {closed} зак.")
+        return closed
+
     def add_printed_batch(self, qty_by_position):
         """Прибавляет напечатанное к активным заказам позиций (сначала ближайший срок).
 

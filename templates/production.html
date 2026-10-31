@@ -62,6 +62,7 @@
         <button data-f="done" class="f-btn px-3 py-1 rounded-full text-sm">✅ Напечатано</button>
       </div>
       <button id="paste-btn" onclick="openPaste()" class="hidden px-3 py-1.5 rounded-lg text-sm bg-amber-500 hover:bg-amber-600 text-white shadow">📋 Вставить список</button>
+      <button id="add-pos-btn" onclick="openAddPos()" class="hidden px-3 py-1.5 rounded-lg text-sm bg-blue-500 hover:bg-blue-600 text-white shadow">＋ Позиция</button>
       <span id="last-update" class="text-xs text-gray-500 dark:text-gray-400"></span>
     </div>
 
@@ -129,6 +130,36 @@
     </div>
   </div>
 
+  <!-- Добавить позицию вручную -->
+  <div id="addpos-modal" class="hidden fixed inset-0 z-50 bg-black/50 flex items-start justify-center overflow-y-auto p-3 sm:p-8">
+    <div class="bg-white dark:bg-gray-800 rounded-xl shadow-2xl w-full max-w-md p-4 sm:p-6">
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="text-lg font-bold">＋ Добавить позицию</h2>
+        <button onclick="closeAddPos()" class="text-2xl leading-none text-gray-500 hover:text-gray-800 dark:hover:text-white" aria-label="Закрыть">×</button>
+      </div>
+      <p class="text-sm text-gray-600 dark:text-gray-300 mb-3">Создаст заказ с заказчиком «Без заказа». Он появится и в боте.</p>
+      <label class="block text-sm mb-3">Название
+        <input id="addpos-name" list="addpos-names" maxlength="100" autocomplete="off" class="mt-1 w-full px-3 py-2 border rounded-lg bg-white dark:bg-gray-700 dark:border-gray-600" placeholder="Начните вводить — подскажем из прайса">
+        <datalist id="addpos-names"></datalist>
+      </label>
+      <div class="grid grid-cols-2 gap-3 mb-3">
+        <label class="block text-sm">Заказано
+          <input id="addpos-ordered" type="number" min="1" value="1" class="mt-1 w-full px-3 py-2 border rounded-lg bg-white dark:bg-gray-700 dark:border-gray-600">
+        </label>
+        <label class="block text-sm">Уже напечатано
+          <input id="addpos-printed" type="number" min="0" value="0" class="mt-1 w-full px-3 py-2 border rounded-lg bg-white dark:bg-gray-700 dark:border-gray-600">
+        </label>
+      </div>
+      <label class="block text-sm mb-4">Срок <span class="text-gray-500">(необязательно, по умолчанию через неделю)</span>
+        <input id="addpos-deadline" type="date" class="mt-1 w-full px-3 py-2 border rounded-lg bg-white dark:bg-gray-700 dark:border-gray-600">
+      </label>
+      <div class="flex justify-end gap-2">
+        <button onclick="closeAddPos()" class="px-4 py-2 rounded-lg bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600">Отмена</button>
+        <button id="addpos-btn" onclick="submitAddPos()" class="px-4 py-2 rounded-lg bg-green-600 hover:bg-green-700 text-white font-semibold">Добавить</button>
+      </div>
+    </div>
+  </div>
+
   <div id="toast" class="fixed bottom-5 left-1/2 -translate-x-1/2 px-4 py-2 rounded-lg shadow-lg text-white text-sm opacity-0 pointer-events-none"></div>
 
   <script>
@@ -154,6 +185,7 @@
     // ---------- вход администратора (тот же пароль и токен, что на /price) ----------
     function updateAuthBtn() {
       $('paste-btn').classList.toggle('hidden', !adminToken);
+      $('add-pos-btn').classList.toggle('hidden', !adminToken);
       $('auth-btn').textContent = adminToken ? '🔓 Редактирование включено · выйти' : '🔑 Войти для редактирования';
     }
     async function toggleAuth() {
@@ -240,6 +272,7 @@
           <th rowspan="2" class="px-3 py-2 text-center">Отправлено</th>
           ${n ? `<th colspan="${n}" class="px-3 py-1 text-center border-b border-gray-200 dark:border-gray-600">Куда отправили</th>` : ''}
           <th rowspan="2" class="px-3 py-2 text-center">Осталось напечатать</th>
+          ${adminToken ? '<th rowspan="2" class="px-2 py-2"></th>' : ''}
         </tr>
         <tr>${locations.map(l => `<th class="px-3 py-1 text-center">${esc(l)}</th>`).join('')}</tr>`;
     }
@@ -280,6 +313,7 @@
           <td class="px-3 py-2 text-center shipped-total">${shippedTotalHtml(r)}</td>
           ${cells}
           <td class="px-3 py-2 text-center">${remainingHtml(r)}</td>
+          ${adminToken ? `<td class="px-2 py-2 text-center"><button class="close-pos text-gray-400 hover:text-red-600 text-lg leading-none" data-idx="${i}" title="Убрать позицию из списка (закрыть её заказы)" aria-label="Убрать позицию">✕</button></td>` : ''}
         </tr>`;
       }).join('');
 
@@ -298,6 +332,7 @@
         <td class="px-3 py-2 text-center">${sum(r => r.shipped_total)}</td>
         ${locations.map(l => `<td class="px-3 py-2 text-center">${sum(r => r.shipped[l] || 0)}</td>`).join('')}
         <td class="px-3 py-2 text-center">${sum(r => r.remaining)}</td>
+        ${adminToken ? '<td></td>' : ''}
       </tr>`;
       updateSummary();
     }
@@ -373,6 +408,7 @@
 
     // ---------- вставка списка ----------
     let pasteEntries = [], pastePositions = [];
+    const NEW_POS = '__new__';   // значение в списке позиций: создать новую позицию из текста
 
     async function adminFetch(url, body) {
       const r = await fetch(url, {
@@ -420,9 +456,11 @@
     function renderPreview() {
       $('paste-rows').innerHTML = pasteEntries.map((e, i) => {
         const none = !e.match, fuzzy = e.confidence === 'near' || e.confidence === 'partial';
-        const include = e.confidence === 'exact' || e.confidence === 'near';   // частичные совпадения не включаем сами
-        const cls = none ? 'bg-red-50 dark:bg-red-950' : fuzzy ? 'bg-amber-50 dark:bg-amber-950' : '';
-        const posOpts = '<option value="">— пропустить —</option>' + pastePositions.map(p =>
+        // нет в заказах -> по умолчанию создаём новую позицию (можно сменить или пропустить)
+        const include = none || e.confidence === 'exact' || e.confidence === 'near';   // частичные не включаем сами
+        const cls = none ? 'bg-blue-50 dark:bg-blue-950' : fuzzy ? 'bg-amber-50 dark:bg-amber-950' : '';
+        const posOpts = `<option value="${NEW_POS}"${none ? ' selected' : ''}>➕ Новая позиция: ${esc(e.name)}</option>` +
+          '<option value="">— пропустить —</option>' + pastePositions.map(p =>
           `<option value="${esc(p)}"${p === e.match ? ' selected' : ''}>${esc(p)}</option>`).join('');
         const locOpts = locations.map(l => `<option${l === e.location ? ' selected' : ''}>${esc(l)}</option>`).join('');
         return `<tr class="${cls}" data-i="${i}">
@@ -440,10 +478,12 @@
       const items = [];
       document.querySelectorAll('#paste-rows tr').forEach(tr => {
         if (!tr.querySelector('.p-inc').checked) return;
-        const position = tr.querySelector('.p-pos').value;
+        const sel = tr.querySelector('.p-pos').value;
         const qty = parseInt(tr.querySelector('.p-qty').value, 10);
-        if (!position || !(qty > 0)) return;
-        items.push({ position, location: tr.querySelector('.p-loc').value, qty });
+        if (!sel || !(qty > 0)) return;
+        const create = sel === NEW_POS;
+        const position = create ? pasteEntries[+tr.dataset.i].name : sel;
+        items.push({ position, location: tr.querySelector('.p-loc').value, qty, create });
       });
       return items;
     }
@@ -475,7 +515,8 @@
         const d = await adminFetch(API + '/apply', { items, add_printed: $('paste-add-printed').checked });
         closePaste();
         $('paste-text').value = '';
-        let msg = `Записано: отправлено ${d.shipped} шт` + (d.printed_added ? `, напечатано +${d.printed_added}` : '');
+        let msg = `Записано: отправлено ${d.shipped} шт` + (d.printed_added ? `, напечатано +${d.printed_added}` : '') +
+                  ((d.created || []).length ? `, новых позиций: ${d.created.length}` : '');
         const left = Object.entries(d.leftover || {});
         if (left.length) {
           alert('Записано, но часть штук не поместилась в «напечатано» — напечатано больше, чем заказано:\n\n' +
@@ -491,6 +532,57 @@
         saving--; btn.disabled = false; btn.textContent = 'Записать';
       }
     }
+
+    // ---------- добавить позицию вручную ----------
+    async function openAddPos() {
+      $('addpos-name').value = '';
+      $('addpos-ordered').value = 1;
+      $('addpos-printed').value = 0;
+      $('addpos-deadline').value = '';
+      $('addpos-modal').classList.remove('hidden');
+      $('addpos-name').focus();
+      // подсказки: позиции из прайса + уже имеющиеся в таблице
+      const names = new Set(rows.map(r => r.name));
+      try {
+        const r = await fetch('/api/price');
+        if (r.ok) (await r.json()).items.forEach(it => it.name && names.add(it.name));
+      } catch (e) {}
+      $('addpos-names').innerHTML = [...names].sort((a, b) => a.localeCompare(b, 'ru')).map(n => `<option value="${esc(n)}">`).join('');
+    }
+    function closeAddPos() { $('addpos-modal').classList.add('hidden'); }
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') closeAddPos(); });
+
+    async function submitAddPos() {
+      const name = $('addpos-name').value.trim();
+      const ordered = parseInt($('addpos-ordered').value, 10);
+      const printed = parseInt($('addpos-printed').value, 10) || 0;
+      if (!name) { toast('Введите название', true); return; }
+      if (!(ordered > 0)) { toast('Заказано должно быть больше 0', true); return; }
+      if (printed < 0 || printed > ordered) { toast('Напечатано: от 0 до заказанного', true); return; }
+      const btn = $('addpos-btn'); btn.disabled = true; saving++;
+      try {
+        await adminFetch(API + '/position', { name, ordered, printed, deadline: $('addpos-deadline').value });
+        closeAddPos();
+        toast(`Позиция «${name}» добавлена`);
+        await load();
+      } catch (e) { toast(e.message, true); }
+      finally { saving--; btn.disabled = false; }
+    }
+
+    // ---------- убрать позицию из списка ----------
+    $('tbody').addEventListener('click', async e => {
+      const b = e.target.closest('button.close-pos');
+      if (!b) return;
+      const row = rows[+b.dataset.idx];
+      if (!confirm(`Убрать «${row.name}» из списка?\n\nВсе её активные заказы (${row.order_ids.length}) будут помечены выполненными — так же, как кнопкой в боте. Отправки сохранятся.`)) return;
+      b.disabled = true; saving++;
+      try {
+        const d = await adminFetch(API + '/close', { position: row.name });
+        toast(`«${d.name}» убрана (закрыто заказов: ${d.closed})`);
+        await load();
+      } catch (err) { toast(err.message, true); b.disabled = false; }
+      finally { saving--; }
+    });
 
     paintFilters();
     load();
