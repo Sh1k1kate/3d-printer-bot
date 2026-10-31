@@ -80,6 +80,9 @@ PUBLIC_URL = os.getenv("PUBLIC_URL", "")
 PRICE_ORDER_CHAT_ID = os.getenv("PRICE_ORDER_CHAT_ID", "")
 PRICE_ORDER_DEADLINE_DAYS = int(os.getenv("PRICE_ORDER_DEADLINE_DAYS", "7"))
 
+NO_ORDER_CUSTOMER = "Без заказа"   # заказчик у заказов, созданных со страницы /production
+MAX_POSITION_NAME = 100
+
 # Точки, куда отправляем готовую печать (столбцы страницы /production).
 # Можно поменять без правки кода: SHIPMENT_LOCATIONS="ВДНХ,Остров,Аэропорт,Новая точка"
 SHIPMENT_LOCATIONS = [
@@ -178,11 +181,23 @@ class ShipmentApplyItem(BaseModel):
     position: str
     location: str
     qty: int
+    create: bool = False      # позиции нет в заказах — создать для неё заказ
 
 
 class ShipmentApplyIn(BaseModel):
     items: list[ShipmentApplyItem]
     add_printed: bool = True
+
+
+class PositionIn(BaseModel):
+    name: str
+    ordered: int
+    printed: int = 0
+    deadline: str = ""
+
+
+class PositionRef(BaseModel):
+    position: str
 
 
 class ReviewIn(BaseModel):
@@ -766,37 +781,106 @@ async def apply_shipments_api(payload: ShipmentApplyIn, _: bool = Depends(verify
     known = {r["name"].lower(): r["name"] for r in rows}
 
     items, errors = [], []
+    to_create = {}          # название_lower -> {"name", "qty"}: позиции, которых нет в заказах
     for it in payload.items:
         loc = _canonical_location(it.location)
-        pos = known.get(normalize_position(it.position).lower())
+        name = normalize_position(it.position)
+        pos = known.get(name.lower())
         if not loc:
             errors.append(f"«{it.position}»: неизвестная точка «{it.location}»")
-        elif not pos:
-            errors.append(f"«{it.position}»: нет среди активных заказов")
         elif it.qty <= 0:
             errors.append(f"«{it.position}»: количество должно быть больше 0")
-        else:
+        elif pos:
             items.append((pos, loc, it.qty))
+        elif it.create and name and len(name) <= MAX_POSITION_NAME:
+            c = to_create.setdefault(name.lower(), {"name": name, "qty": 0})
+            c["qty"] += it.qty
+            items.append((c["name"], loc, it.qty))
+        else:
+            errors.append(f"«{it.position}»: нет среди активных заказов")
     if errors:
         return JSONResponse({"error": "Есть ошибки, ничего не записано", "details": errors}, status_code=400)
     if not items:
         return JSONResponse({"error": "Нечего записывать"}, status_code=400)
 
-    result = {"status": "ok", "shipped": sum(q for _, _, q in items), "printed_added": 0, "leftover": {}}
+    result = {"status": "ok", "shipped": sum(q for _, _, q in items), "printed_added": 0,
+              "leftover": {}, "created": []}
     try:
+        if to_create:
+            # для позиции без заказа создаём заказ на отправленное количество
+            today = moscow_now().strftime("%Y-%m-%d")
+            await run_in_threadpool(sheet_manager.add_orders_batch, [
+                (c["name"], c["qty"], c["qty"] if payload.add_printed else 0, today, NO_ORDER_CUSTOMER)
+                for c in to_create.values()
+            ])
+            result["created"] = [c["name"] for c in to_create.values()]
+            if payload.add_printed:
+                result["printed_added"] += sum(c["qty"] for c in to_create.values())
         if payload.add_printed:
             qty_by_pos = {}
             for pos, _loc, qty in items:
+                if pos.lower() in to_create:      # у новых заказов напечатанное уже проставлено
+                    continue
                 qty_by_pos[pos.lower()] = qty_by_pos.get(pos.lower(), 0) + qty
-            printed = await run_in_threadpool(sheet_manager.add_printed_batch, qty_by_pos)
-            result["printed_added"] = sum(printed["added"].values())
-            result["leftover"] = {known[k]: v for k, v in printed["leftover"].items()}
+            if qty_by_pos:
+                printed = await run_in_threadpool(sheet_manager.add_printed_batch, qty_by_pos)
+                result["printed_added"] += sum(printed["added"].values())
+                result["leftover"] = {known[k]: v for k, v in printed["leftover"].items()}
         await run_in_threadpool(sheet_manager.add_shipments_batch, items)
     except Exception as e:
         logger.error(f"apply_shipments write: {e}", exc_info=e)
         return JSONResponse({"error": f"Ошибка записи: {e}. Проверьте таблицу перед повтором — часть данных могла записаться."},
                             status_code=500)
     return JSONResponse(result)
+
+
+@app.post("/api/production/position")
+async def add_position_api(payload: PositionIn, _: bool = Depends(verify_admin)):
+    """Добавляет позицию в список вручную: создаёт для неё заказ (заказчик «Без заказа»)."""
+    if not sheet_manager:
+        return JSONResponse({"error": "SheetManager не инициализирован"}, status_code=500)
+    name = normalize_position(payload.name)
+    if not name or len(name) > MAX_POSITION_NAME:
+        return JSONResponse({"error": f"Название: от 1 до {MAX_POSITION_NAME} символов"}, status_code=400)
+    if payload.ordered <= 0:
+        return JSONResponse({"error": "Заказано должно быть больше 0"}, status_code=400)
+    if payload.printed < 0 or payload.printed > payload.ordered:
+        return JSONResponse({"error": "Напечатано: от 0 до заказанного"}, status_code=400)
+    deadline = (payload.deadline or "").strip()
+    if deadline:
+        try:
+            datetime.strptime(deadline, "%Y-%m-%d")
+        except ValueError:
+            return JSONResponse({"error": "Срок в формате ГГГГ-ММ-ДД"}, status_code=400)
+    else:
+        deadline = (moscow_now() + timedelta(days=PRICE_ORDER_DEADLINE_DAYS)).strftime("%Y-%m-%d")
+    try:
+        nums = await run_in_threadpool(
+            sheet_manager.add_orders_batch,
+            [(name, payload.ordered, payload.printed, deadline, NO_ORDER_CUSTOMER)],
+        )
+    except Exception as e:
+        logger.error(f"add_position: {e}", exc_info=e)
+        return JSONResponse({"error": f"Ошибка записи: {e}"}, status_code=500)
+    return JSONResponse({"status": "ok", "order": nums[0] if nums else None, "name": name})
+
+
+@app.post("/api/production/close")
+async def close_position_api(payload: PositionRef, _: bool = Depends(verify_admin)):
+    """Убирает позицию из списка: помечает выполненными все её активные заказы (как кнопка в боте)."""
+    if not sheet_manager:
+        return JSONResponse({"error": "SheetManager не инициализирован"}, status_code=500)
+    try:
+        rows = await run_in_threadpool(_production_rows)
+        known = {r["name"].lower(): r["name"] for r in rows}
+        pos = known.get(normalize_position(payload.position).lower())
+        if not pos:
+            return JSONResponse({"error": "Позиция не найдена среди активных заказов"}, status_code=404)
+        closed = await run_in_threadpool(sheet_manager.close_position_orders, pos.lower())
+    except Exception as e:
+        logger.error(f"close_position: {e}", exc_info=e)
+        return JSONResponse({"error": f"Ошибка записи: {e}"}, status_code=500)
+    return JSONResponse({"status": "ok", "closed": closed, "name": pos})
 
 
 # ---------- API: ЗАДАЧИ ----------
