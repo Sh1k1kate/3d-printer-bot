@@ -186,3 +186,41 @@ def distribute_printed(orders, qty):
             changes.append({"id": o["id"], "row": o["row"], "printed": o["printed"] + add, "added": add})
             left -= add
     return changes, left
+
+
+def plan_set_ordered(orders, new_total):
+    """Меняет суммарное «заказано» по позиции, раскладывая разницу по её заказам.
+
+    orders — [{id, row, ordered, printed, deadline}] активные заказы позиции.
+    Увеличение целиком уходит в заказ с самым поздним сроком. Уменьшение снимается с заказов
+    с конца (самый поздний срок первым), но в заказе не опускается ниже уже напечатанного —
+    как и в боте, где напечатанное не может быть больше заказанного.
+    Возвращает список изменений [{id, row, ordered(новое)[, close]}]; close=True — заказ обнулился и
+    его нужно пометить выполненным. ValueError — если так сделать нельзя.
+    """
+    new_total = int(new_total)
+    if not orders:
+        raise ValueError("У позиции нет активных заказов")
+    if new_total < 1:
+        raise ValueError("Заказано должно быть не меньше 1 (чтобы убрать позицию, закройте её)")
+    printed_sum = sum(max(0, o["printed"]) for o in orders)
+    if new_total < printed_sum:
+        raise ValueError(f"Нельзя поставить меньше, чем уже напечатано ({printed_sum})")
+    ordered = sorted(orders, key=lambda o: (o.get("deadline") or "9999-99-99", _to_int(o["id"])))
+    delta = new_total - sum(o["ordered"] for o in ordered)
+    if delta == 0:
+        return []
+    if delta > 0:
+        last = ordered[-1]
+        return [{"id": last["id"], "row": last["row"], "ordered": last["ordered"] + delta}]
+    left, changes = -delta, []
+    for o in reversed(ordered):
+        if left <= 0:
+            break
+        take = min(left, max(0, o["ordered"] - max(0, o["printed"])))
+        if take:
+            new = o["ordered"] - take
+            # заказ, обнулившийся при уменьшении, закрываем — нулевых активных заказов не оставляем
+            changes.append({"id": o["id"], "row": o["row"], "ordered": new, "close": new == 0})
+            left -= take
+    return changes

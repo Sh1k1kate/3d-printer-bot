@@ -82,6 +82,7 @@ PRICE_ORDER_DEADLINE_DAYS = int(os.getenv("PRICE_ORDER_DEADLINE_DAYS", "7"))
 
 NO_ORDER_CUSTOMER = "Без заказа"   # заказчик у заказов, созданных со страницы /production
 MAX_POSITION_NAME = 100
+MAX_ORDERED_QTY = 10000
 
 # Точки, куда отправляем готовую печать (столбцы страницы /production).
 # Можно поменять без правки кода: SHIPMENT_LOCATIONS="ВДНХ,Остров,Аэропорт,Новая точка"
@@ -198,6 +199,11 @@ class PositionIn(BaseModel):
 
 class PositionRef(BaseModel):
     position: str
+
+
+class OrderedIn(BaseModel):
+    position: str
+    ordered: int
 
 
 class ReviewIn(BaseModel):
@@ -863,6 +869,28 @@ async def add_position_api(payload: PositionIn, _: bool = Depends(verify_admin))
         logger.error(f"add_position: {e}", exc_info=e)
         return JSONResponse({"error": f"Ошибка записи: {e}"}, status_code=500)
     return JSONResponse({"status": "ok", "order": nums[0] if nums else None, "name": name})
+
+
+@app.post("/api/production/ordered")
+async def set_ordered_api(payload: OrderedIn, _: bool = Depends(verify_admin)):
+    """Меняет необходимое количество («заказано») по позиции — в заказах, которые за ней стоят."""
+    if not sheet_manager:
+        return JSONResponse({"error": "SheetManager не инициализирован"}, status_code=500)
+    if payload.ordered < 1 or payload.ordered > MAX_ORDERED_QTY:
+        return JSONResponse({"error": f"Количество: от 1 до {MAX_ORDERED_QTY}"}, status_code=400)
+    try:
+        rows = await run_in_threadpool(_production_rows)
+        known = {r["name"].lower(): r["name"] for r in rows}
+        pos = known.get(normalize_position(payload.position).lower())
+        if not pos:
+            return JSONResponse({"error": "Позиция не найдена среди активных заказов"}, status_code=404)
+        result = await run_in_threadpool(sheet_manager.set_position_ordered, pos.lower(), payload.ordered)
+    except ValueError as e:          # нельзя поставить столько (например, меньше уже напечатанного)
+        return JSONResponse({"error": str(e)}, status_code=400)
+    except Exception as e:
+        logger.error(f"set_ordered: {e}", exc_info=e)
+        return JSONResponse({"error": f"Ошибка записи: {e}"}, status_code=500)
+    return JSONResponse({"status": "ok", "name": pos, **result})
 
 
 @app.post("/api/production/close")

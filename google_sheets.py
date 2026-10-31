@@ -4,7 +4,7 @@ from config import SPREADSHEET_ID, CREDENTIALS_FILE
 from datetime import datetime, timezone, timedelta
 import time
 import logging
-from production import normalize_position, distribute_printed
+from production import normalize_position, distribute_printed, plan_set_ordered
 
 logger = logging.getLogger(__name__)
 
@@ -1096,6 +1096,37 @@ class SheetManager:
             self._invalidate_cache("orders")
             self.log_action("system", "Закрытие позиции (страница допечатки)", f"{position_lower}: {closed} зак.")
         return closed
+
+    def set_position_ordered(self, position_lower, new_total):
+        """Ставит суммарное «заказано» по позиции (см. plan_set_ordered).
+
+        Возвращает {"before": было, "after": стало}. ValueError — если нельзя (текст пригоден для показа).
+        """
+        records = self.sheet_orders.get_all_values()
+        orders = []
+        for idx, row in enumerate(records[1:], start=2):
+            row = row + [""] * (8 - len(row))
+            if row[6].strip().lower() == "да" or normalize_position(row[1]).lower() != position_lower:
+                continue
+            try:
+                ordered, printed = int(float(row[2])), int(float(row[3] or 0))
+            except (ValueError, TypeError):
+                continue
+            orders.append({"id": row[0], "row": idx, "ordered": ordered, "printed": printed, "deadline": row[4].strip()})
+        before = sum(o["ordered"] for o in orders)
+        changes = plan_set_ordered(orders, new_total)
+        if changes:
+            now_str = moscow_now().strftime("%Y-%m-%d %H:%M:%S")
+            updates = []
+            for c in changes:
+                updates.append({"range": f"C{c['row']}", "values": [[c["ordered"]]]})
+                updates.append({"range": f"F{c['row']}", "values": [[now_str]]})
+                if c.get("close"):
+                    updates.append({"range": f"G{c['row']}", "values": [["Да"]]})
+            self.sheet_orders.batch_update(updates, value_input_option="USER_ENTERED")
+            self._invalidate_cache("orders")
+            self.log_action("system", "Изменение «заказано» (страница допечатки)", f"{position_lower}: {before} → {new_total}")
+        return {"before": before, "after": new_total}
 
     def add_printed_batch(self, qty_by_position):
         """Прибавляет напечатанное к активным заказам позиций (сначала ближайший срок).
