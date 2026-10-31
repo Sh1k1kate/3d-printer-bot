@@ -10,8 +10,8 @@
   <style>
     * { transition: background-color .2s, color .2s, border-color .2s; }
     .todo-row { box-shadow: inset 4px 0 0 #f59e0b; }
-    .ship-input { width: 4rem; text-align: center; }
-    .ship-input:disabled { opacity: .5; }
+    .ship-input, .ordered-input { width: 4rem; text-align: center; }
+    .ship-input:disabled, .ordered-input:disabled { opacity: .5; }
     .flash-ok { box-shadow: 0 0 0 2px #22c55e; }
     th, td { white-space: nowrap; }
     td.name-cell { white-space: normal; min-width: 11rem; max-width: 18rem; word-break: break-word; }
@@ -308,7 +308,9 @@
         return `<tr class="hover:bg-gray-50 dark:hover:bg-gray-700 ${r.remaining > 0 ? 'todo-row' : ''}" data-row="${i}">
           <td class="px-3 py-2"><div class="flex">${photoCell(r.photo)}</div></td>
           <td class="px-3 py-2 name-cell font-medium"${ids}>${esc(r.name)}${sub}</td>
-          <td class="px-3 py-2 text-center">${r.ordered}</td>
+          ${adminToken
+            ? `<td class="px-2 py-2 text-center"><input type="number" min="1" inputmode="numeric" class="ordered-input px-1 py-1 border rounded bg-white dark:bg-gray-700 dark:border-gray-600" data-idx="${i}" value="${r.ordered}" title="Сколько нужно (заказано). Можно изменить"></td>`
+            : `<td class="px-3 py-2 text-center">${r.ordered}</td>`}
           <td class="px-3 py-2 text-center">${r.printed}</td>
           <td class="px-3 py-2 text-center shipped-total">${shippedTotalHtml(r)}</td>
           ${cells}
@@ -402,7 +404,7 @@
     // автообновление, но не мешаем, пока человек вводит число или идёт сохранение
     setInterval(() => {
       const a = document.activeElement;
-      if (saving > 0 || (a && a.classList && a.classList.contains('ship-input'))) return;
+      if (saving > 0 || (a && a.classList && (a.classList.contains('ship-input') || a.classList.contains('ordered-input')))) return;
       load();
     }, 30000);
 
@@ -568,6 +570,26 @@
       } catch (e) { toast(e.message, true); }
       finally { saving--; btn.disabled = false; }
     }
+
+    // ---------- изменить необходимое количество («заказано») ----------
+    $('tbody').addEventListener('change', async e => {
+      const inp = e.target.closest('input.ordered-input');
+      if (!inp) return;
+      const row = rows[+inp.dataset.idx];
+      const qty = parseInt(inp.value, 10);
+      const prev = row.ordered;
+      if (!(qty >= 1)) { inp.value = prev; toast('Количество должно быть не меньше 1', true); return; }
+      if (qty === prev) { inp.value = prev; return; }
+      inp.disabled = true; saving++;
+      try {
+        await adminFetch(API + '/ordered', { position: row.name, ordered: qty });
+        await load();                      // пересчёт «осталось», срока и итогов берём с сервера
+        toast(`«${row.name}»: заказано ${prev} → ${qty}`);
+      } catch (err) {
+        inp.value = prev;
+        toast(err.message, true);
+      } finally { saving--; inp.disabled = false; }
+    });
 
     // ---------- убрать позицию из списка ----------
     $('tbody').addEventListener('click', async e => {
