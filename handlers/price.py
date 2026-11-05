@@ -1,6 +1,8 @@
 import os
 import base64
 import logging
+import math
+import re
 import aiohttp
 from aiogram import Router, F
 from aiogram.filters import Command, StateFilter
@@ -8,7 +10,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import (
     Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 )
-from keyboards import cancel_keyboard, main_menu, price_actions_keyboard
+from keyboards import cancel_keyboard, main_menu, price_actions_keyboard, name_key
 from states import AddPrice, EditPrice
 from google_sheets import SheetManager
 from .common import escape_markdown, safe_answer, safe_edit
@@ -21,6 +23,52 @@ DRIVE_UPLOAD_URL = os.getenv("DRIVE_UPLOAD_URL", "")
 DRIVE_UPLOAD_SECRET = os.getenv("DRIVE_UPLOAD_SECRET", "")
 MAX_IMAGE_SIZE = 5 * 1024 * 1024
 PER_PAGE = 8
+MAX_PRICE = 10_000_000
+MAX_WHOLESALE_FROM = 1_000_000
+MAX_NAME_LEN = 100
+MAX_DESC_LEN = 1000
+MAX_CAT_LEN = 60
+
+_PRICE_RE = re.compile(r"^[0-9]{1,8}([.,][0-9]{1,2})?$")
+
+
+def _parse_price_value(raw):
+    """
+    Валидирует цену из пользовательского ввода: неотрицательное конечное число до MAX_PRICE
+    (до 2 знаков после запятой). Возвращает нормализованную строку ('1500', '99.9') или None.
+    Никогда не бросает исключений.
+    """
+    raw = (raw or "").strip().replace(" ", "")
+    if not raw.isascii() or not _PRICE_RE.match(raw):
+        return None
+    try:
+        value = float(raw.replace(",", "."))
+    except (ValueError, OverflowError):
+        return None
+    if not math.isfinite(value) or value < 0 or value > MAX_PRICE:
+        return None
+    return raw.replace(",", ".")
+
+
+def _parse_wholesale_from(raw):
+    """Целое число 1..MAX_WHOLESALE_FROM (только ASCII-цифры) -> str, иначе None."""
+    raw = (raw or "").strip()
+    if not raw or not raw.isascii() or not raw.isdigit():
+        return None
+    value = int(raw)
+    return str(value) if 1 <= value <= MAX_WHOLESALE_FROM else None
+
+
+def _safe_int(text, min_value=0, max_value=10**9):
+    text = (text or "").strip()
+    if not text or not text.isascii() or not text.isdigit():
+        return None
+    value = int(text)
+    return value if min_value <= value <= max_value else None
+
+
+def _is_clear(text):
+    return text.strip().lower() in ("нет", "-", "")
 
 _user_categories = {}
 _user_items_by_cat = {}
@@ -98,10 +146,10 @@ def _format_item_caption(it):
         lines.append("")
         lines.append(escape_markdown(it["description"]))
     if it.get("retail"):
-        lines.append(f"\n💰 Розница: *{it['retail']} ₽*")
+        lines.append(f"\n💰 Розница: *{escape_markdown(it['retail'])} ₽*")
     if it.get("wholesale"):
-        wf = f" (от {it['wholesale_from']} шт)" if it.get("wholesale_from") else ""
-        lines.append(f"📦 Опт: {it['wholesale']} ₽{wf}")
+        wf = f" (от {escape_markdown(it['wholesale_from'])} шт)" if it.get("wholesale_from") else ""
+        lines.append(f"📦 Опт: {escape_markdown(it['wholesale'])} ₽{wf}")
     return "\n".join(lines)
 
 
@@ -109,12 +157,12 @@ def _format_edit_item_text(it):
     lines = [f"✏️ *{escape_markdown(it.get('name') or '—')}*"]
     lines.append(f"🏷 {escape_markdown(it.get('category') or 'Без категории')}")
     if it.get("retail"):
-        lines.append(f"💰 Розница: *{it['retail']} ₽*")
+        lines.append(f"💰 Розница: *{escape_markdown(it['retail'])} ₽*")
     else:
         lines.append("💰 Розница: —")
     if it.get("wholesale"):
-        wf = f" (от {it['wholesale_from']} шт)" if it.get("wholesale_from") else ""
-        lines.append(f"📦 Опт: {it['wholesale']} ₽{wf}")
+        wf = f" (от {escape_markdown(it['wholesale_from'])} шт)" if it.get("wholesale_from") else ""
+        lines.append(f"📦 Опт: {escape_markdown(it['wholesale'])} ₽{wf}")
     else:
         lines.append("📦 Опт: —")
     if it.get("description"):
@@ -190,7 +238,7 @@ def _build_categories_keyboard(uid):
     buttons = []
     for i, c in enumerate(cats):
         count = len(items_by_cat.get(c, []))
-        buttons.append([InlineKeyboardButton(text=f"{c} ({count})", callback_data=f"pr_cat:{i}")])
+        buttons.append([InlineKeyboardButton(text=f"{c[:50]} ({count})", callback_data=f"pr_cat:{i}")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
@@ -260,7 +308,9 @@ async def back_to_cats(callback: CallbackQuery):
 async def show_category(callback: CallbackQuery):
     uid = callback.from_user.id
     try:
-        cat_idx = int(callback.data.split(":")[1])
+        cat_idx = _safe_int(callback.data.split(":")[1], 0, 10_000)
+        if cat_idx is None:
+            raise ValueError
     except Exception:
         await callback.answer("Ошибка")
         return
@@ -280,7 +330,9 @@ async def paginate_category(callback: CallbackQuery):
     uid = callback.from_user.id
     try:
         _, cat_idx, page = callback.data.split(":")
-        cat_idx, page = int(cat_idx), int(page)
+        cat_idx, page = _safe_int(cat_idx, 0, 10_000), _safe_int(page, 0, 10_000)
+        if cat_idx is None or page is None:
+            raise ValueError
     except Exception:
         await callback.answer("Ошибка")
         return
@@ -298,7 +350,9 @@ async def paginate_category(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("pr_item:"))
 async def show_item(callback: CallbackQuery):
     try:
-        row_idx = int(callback.data.split(":")[1])
+        row_idx = _safe_int(callback.data.split(":")[1], 2, 10**7)
+        if row_idx is None:
+            raise ValueError
     except Exception:
         await callback.answer("Ошибка")
         return
@@ -338,59 +392,86 @@ async def add_price_start(message: Message, state: FSMContext):
     await state.set_state(AddPrice.waiting_for_name)
 
 
-@router.message(AddPrice.waiting_for_name, F.text != "❌ Отмена")
+@router.message(AddPrice.waiting_for_name, F.text, F.text != "❌ Отмена")
 async def price_name(message: Message, state: FSMContext):
     name = message.text.strip()
     if not name:
         await message.answer("❌ Название не может быть пустым.")
+        return
+    if len(name) > MAX_NAME_LEN:
+        await message.answer(f"❌ Слишком длинное название (до {MAX_NAME_LEN} символов).")
         return
     await state.update_data(name=name)
     await safe_answer(message, "Введите *описание* (или 'нет'):", parse_mode="Markdown", reply_markup=cancel_keyboard)
     await state.set_state(AddPrice.waiting_for_description)
 
 
-@router.message(AddPrice.waiting_for_description, F.text != "❌ Отмена")
+@router.message(AddPrice.waiting_for_description, F.text, F.text != "❌ Отмена")
 async def price_desc(message: Message, state: FSMContext):
     desc = message.text.strip()
     if desc.lower() == "нет":
         desc = ""
+    if len(desc) > MAX_DESC_LEN:
+        await message.answer(f"❌ Слишком длинное описание (до {MAX_DESC_LEN} символов).")
+        return
     await state.update_data(description=desc)
     await safe_answer(message, "Введите *URL фото* (или 'нет'):", parse_mode="Markdown", reply_markup=cancel_keyboard)
     await state.set_state(AddPrice.waiting_for_photo)
 
 
-@router.message(AddPrice.waiting_for_photo, F.text != "❌ Отмена")
+@router.message(AddPrice.waiting_for_photo, F.text, F.text != "❌ Отмена")
 async def price_photo(message: Message, state: FSMContext):
     photo = message.text.strip()
     if photo.lower() == "нет":
         photo = ""
+    elif not (photo.startswith("http://") or photo.startswith("https://")) or len(photo) > 2000:
+        await message.answer("❌ Введите URL (http:// или https://) или 'нет'.")
+        return
     await state.update_data(photo=photo)
     await safe_answer(message, "Введите *розничную цену* (число или 'нет'):", parse_mode="Markdown", reply_markup=cancel_keyboard)
     await state.set_state(AddPrice.waiting_for_retail)
 
 
-@router.message(AddPrice.waiting_for_retail, F.text != "❌ Отмена")
+@router.message(AddPrice.waiting_for_retail, F.text, F.text != "❌ Отмена")
 async def price_retail(message: Message, state: FSMContext):
     text = message.text.strip()
-    retail = "" if text.lower() in ("нет", "-", "") else text
+    if _is_clear(text):
+        retail = ""
+    else:
+        retail = _parse_price_value(text)
+        if retail is None:
+            await message.answer(f"❌ Введите неотрицательное число (до {MAX_PRICE:,}), например 1500 или 99,90, либо 'нет'.".replace(",", " "))
+            return
     await state.update_data(retail=retail)
     await safe_answer(message, "Введите *оптовую цену* (число или 'нет'):", parse_mode="Markdown", reply_markup=cancel_keyboard)
     await state.set_state(AddPrice.waiting_for_wholesale)
 
 
-@router.message(AddPrice.waiting_for_wholesale, F.text != "❌ Отмена")
+@router.message(AddPrice.waiting_for_wholesale, F.text, F.text != "❌ Отмена")
 async def price_wholesale(message: Message, state: FSMContext):
     text = message.text.strip()
-    wholesale = "" if text.lower() in ("нет", "-", "") else text
+    if _is_clear(text):
+        wholesale = ""
+    else:
+        wholesale = _parse_price_value(text)
+        if wholesale is None:
+            await message.answer(f"❌ Введите неотрицательное число (до {MAX_PRICE:,}), например 1500 или 99,90, либо 'нет'.".replace(",", " "))
+            return
     await state.update_data(wholesale=wholesale)
     await safe_answer(message, "Введите *минимальное количество для опта* (число или 'нет'):", parse_mode="Markdown", reply_markup=cancel_keyboard)
     await state.set_state(AddPrice.waiting_for_wholesale_from)
 
 
-@router.message(AddPrice.waiting_for_wholesale_from, F.text != "❌ Отмена")
+@router.message(AddPrice.waiting_for_wholesale_from, F.text, F.text != "❌ Отмена")
 async def price_wholesale_from(message: Message, state: FSMContext):
     text = message.text.strip()
-    wholesale_from = "" if text.lower() in ("нет", "-", "") else text
+    if _is_clear(text):
+        wholesale_from = ""
+    else:
+        wholesale_from = _parse_wholesale_from(text)
+        if wholesale_from is None:
+            await message.answer(f"❌ Введите целое число от 1 до {MAX_WHOLESALE_FROM} или 'нет'.")
+            return
     await state.update_data(wholesale_from=wholesale_from)
     cats = sheet.get_price_categories()
     if cats:
@@ -406,12 +487,19 @@ async def price_wholesale_from(message: Message, state: FSMContext):
     await state.set_state(AddPrice.waiting_for_category)
 
 
-@router.message(AddPrice.waiting_for_category, F.text != "❌ Отмена")
+@router.message(AddPrice.waiting_for_category, F.text, F.text != "❌ Отмена")
 async def price_category(message: Message, state: FSMContext):
     cat = message.text.strip()
-    if cat.lower() == "нет":
+    if cat.lower() == "нет" or not cat:
         cat = "Без категории"
+    if len(cat) > MAX_CAT_LEN:
+        await message.answer(f"❌ Слишком длинная категория (до {MAX_CAT_LEN} символов).")
+        return
     data = await state.get_data()
+    if not data.get("name"):
+        await message.answer("❌ Данные потеряны. Начните заново: /add_price", reply_markup=main_menu)
+        await state.clear()
+        return
     ok = sheet.add_price_item(
         data["name"], data.get("description", ""), data.get("photo", ""),
         data.get("retail", ""), data.get("wholesale", ""),
@@ -465,7 +553,7 @@ def _build_edit_categories_keyboard(uid):
     buttons = []
     for i, c in enumerate(cats):
         count = len(items_by_cat.get(c, []))
-        buttons.append([InlineKeyboardButton(text=f"{c} ({count})", callback_data=f"ep_cat:{i}")])
+        buttons.append([InlineKeyboardButton(text=f"{c[:50]} ({count})", callback_data=f"ep_cat:{i}")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
@@ -591,7 +679,9 @@ async def ep_back_cats(callback: CallbackQuery, state: FSMContext):
 async def ep_show_category(callback: CallbackQuery):
     uid = callback.from_user.id
     try:
-        cat_idx = int(callback.data.split(":")[1])
+        cat_idx = _safe_int(callback.data.split(":")[1], 0, 10_000)
+        if cat_idx is None:
+            raise ValueError
     except Exception:
         await callback.answer("Ошибка")
         return
@@ -611,7 +701,9 @@ async def ep_paginate(callback: CallbackQuery):
     uid = callback.from_user.id
     try:
         _, cat_idx, page = callback.data.split(":")
-        cat_idx, page = int(cat_idx), int(page)
+        cat_idx, page = _safe_int(cat_idx, 0, 10_000), _safe_int(page, 0, 10_000)
+        if cat_idx is None or page is None:
+            raise ValueError
     except Exception:
         await callback.answer("Ошибка")
         return
@@ -630,7 +722,9 @@ async def ep_paginate(callback: CallbackQuery):
 async def ep_show_item(callback: CallbackQuery, state: FSMContext):
     await state.clear()
     try:
-        row_idx = int(callback.data.split(":")[1])
+        row_idx = _safe_int(callback.data.split(":")[1], 2, 10**7)
+        if row_idx is None:
+            raise ValueError
     except Exception:
         await callback.answer("Ошибка")
         return
@@ -644,7 +738,9 @@ async def ep_edit_field(callback: CallbackQuery, state: FSMContext):
         parts = callback.data.split(":")
         if len(parts) != 3:
             raise ValueError
-        row_idx = int(parts[1])
+        row_idx = _safe_int(parts[1], 2, 10**7)
+        if row_idx is None:
+            raise ValueError
         field = parts[2]
     except Exception:
         await callback.answer("Ошибка")
@@ -659,13 +755,13 @@ async def ep_edit_field(callback: CallbackQuery, state: FSMContext):
         await callback.answer("Товар не найден", show_alert=True)
         return
 
-    await state.update_data(edit_row_idx=row_idx, edit_field=field)
+    await state.update_data(edit_row_idx=row_idx, edit_field=field, edit_name_key=name_key(it.get("name") or ""))
     await state.set_state(EditPrice.waiting_for_value)
 
     prompt = EDIT_PROMPTS[field]
     await safe_answer(
         callback.message,
-        f"{prompt}\n\nТекущее значение:\n`{escape_markdown(str(it.get(field) or '—'))}`",
+        f"{prompt}\n\nТекущее значение:\n`{str(it.get(field) or '—').replace('`', chr(39))[:300]}`",
         parse_mode="Markdown",
         reply_markup=cancel_keyboard,
     )
@@ -688,8 +784,14 @@ async def ep_edit_photo_upload(message: Message, state: FSMContext):
     data = await state.get_data()
     field = data.get("edit_field")
     row_idx = data.get("edit_row_idx")
-    if field != "photo":
+    if field != "photo" or row_idx is None:
         await message.answer("Сейчас ожидается текстовое значение. Отправьте текст или нажмите ❌ Отмена.")
+        return
+    expected_key = data.get("edit_name_key")
+    current_item = sheet.get_price_item_by_row(row_idx)
+    if not current_item or (expected_key and name_key(current_item.get("name") or "") != expected_key):
+        await message.answer("⚠️ Прайс изменился. Откройте товар заново через /edit_price.", reply_markup=main_menu)
+        await state.clear()
         return
     if not DRIVE_UPLOAD_URL or not DRIVE_UPLOAD_SECRET:
         await message.answer("❌ Загрузка фото в Drive не настроена (нет DRIVE_UPLOAD_URL/SECRET).")
@@ -701,7 +803,8 @@ async def ep_edit_photo_upload(message: Message, state: FSMContext):
         file_bytes = await message.bot.download_file(file.file_path)
         content = file_bytes.read()
     except Exception as e:
-        await message.answer(f"❌ Не удалось скачать фото: {e}")
+        logger.warning(f"Не удалось скачать фото: {e}")
+        await message.answer("❌ Не удалось скачать фото.")
         return
 
     wait_msg = await message.answer("⏳ Загружаю фото в Google Drive…")
@@ -721,7 +824,7 @@ async def ep_edit_photo_upload(message: Message, state: FSMContext):
     await _show_item_card(message, row_idx, is_callback=False)
 
 
-@router.message(EditPrice.waiting_for_value, F.text != "❌ Отмена")
+@router.message(EditPrice.waiting_for_value, F.text, F.text != "❌ Отмена")
 async def ep_edit_value(message: Message, state: FSMContext):
     data = await state.get_data()
     field = data.get("edit_field")
@@ -731,16 +834,30 @@ async def ep_edit_value(message: Message, state: FSMContext):
         await state.clear()
         return
 
+    # Строка могла сместиться/удалиться: убеждаемся, что под этим номером всё ещё тот же товар
+    expected_key = data.get("edit_name_key")
+    current_item = sheet.get_price_item_by_row(row_idx)
+    if not current_item or (expected_key and name_key(current_item.get("name") or "") != expected_key):
+        await message.answer("⚠️ Прайс изменился. Откройте товар заново через /edit_price.", reply_markup=main_menu)
+        await state.clear()
+        return
+
     raw = message.text.strip()
-    clear = raw.lower() in ("нет", "-", "")
+    clear = _is_clear(raw)
 
     new_value = ""
     if field == "name":
         if clear:
             await message.answer("❌ Название не может быть пустым.")
             return
+        if len(raw) > MAX_NAME_LEN:
+            await message.answer(f"❌ Слишком длинное название (до {MAX_NAME_LEN} символов).")
+            return
         new_value = raw
     elif field == "description":
+        if len(raw) > MAX_DESC_LEN:
+            await message.answer(f"❌ Слишком длинное описание (до {MAX_DESC_LEN} символов).")
+            return
         new_value = "" if clear else raw
     elif field == "photo":
         if not clear and not (raw.startswith("http://") or raw.startswith("https://")):
@@ -750,16 +867,25 @@ async def ep_edit_value(message: Message, state: FSMContext):
             return
         new_value = "" if clear else raw
     elif field in ("retail", "wholesale"):
-        new_value = "" if clear else raw
+        if clear:
+            new_value = ""
+        else:
+            new_value = _parse_price_value(raw)
+            if new_value is None:
+                await message.answer("❌ Введите неотрицательное число (например 1500 или 99,90) или 'нет'.")
+                return
     elif field == "wholesale_from":
         if clear:
             new_value = ""
         else:
-            if not raw.isdigit():
-                await message.answer("❌ Введите целое число или 'нет'.")
+            new_value = _parse_wholesale_from(raw)
+            if new_value is None:
+                await message.answer(f"❌ Введите целое число от 1 до {MAX_WHOLESALE_FROM} или 'нет'.")
                 return
-            new_value = raw
     elif field == "category":
+        if len(raw) > MAX_CAT_LEN:
+            await message.answer(f"❌ Слишком длинная категория (до {MAX_CAT_LEN} символов).")
+            return
         new_value = "Без категории" if clear else raw
     else:
         await message.answer("❌ Неизвестное поле.")
@@ -780,7 +906,9 @@ async def ep_edit_value(message: Message, state: FSMContext):
 @router.callback_query(F.data.startswith("ep_del:"))
 async def ep_delete_confirm(callback: CallbackQuery):
     try:
-        row_idx = int(callback.data.split(":")[1])
+        row_idx = _safe_int(callback.data.split(":")[1], 2, 10**7)
+        if row_idx is None:
+            raise ValueError
     except Exception:
         await callback.answer("Ошибка")
         return
@@ -795,7 +923,7 @@ async def ep_delete_confirm(callback: CallbackQuery):
         f"Это действие нельзя отменить."
     )
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🗑 Да, удалить", callback_data=f"ep_del_confirm:{row_idx}")],
+        [InlineKeyboardButton(text="🗑 Да, удалить", callback_data=f"ep_del_confirm:{row_idx}:{name_key(it.get('name') or '')}")],
         [InlineKeyboardButton(text="❌ Отмена", callback_data=f"ep_item:{row_idx}")],
     ])
     try:
@@ -809,9 +937,18 @@ async def ep_delete_confirm(callback: CallbackQuery):
 async def ep_delete_do(callback: CallbackQuery, state: FSMContext):
     await state.clear()
     try:
-        row_idx = int(callback.data.split(":")[1])
+        parts = callback.data.split(":")
+        row_idx = _safe_int(parts[1], 2, 10**7)
+        if row_idx is None:
+            raise ValueError
+        expected_key = parts[2] if len(parts) > 2 else None
     except Exception:
         await callback.answer("Ошибка")
+        return
+    # Номер строки мог устареть: удаляем только если там всё ещё тот же товар
+    current_item = sheet.get_price_item_by_row(row_idx)
+    if not current_item or (expected_key and name_key(current_item.get("name") or "") != expected_key):
+        await callback.answer("Прайс изменился, откройте список заново", show_alert=True)
         return
     ok = sheet.delete_price_item(row_idx)
     if not ok:

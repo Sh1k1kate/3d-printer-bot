@@ -3,7 +3,8 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery
 from typing import Callable, Dict, Any, Awaitable
 from config import ALLOWED_USERS
-from keyboards import main_menu
+from keyboards import main_menu, MAIN_MENU_TEXTS
+from aiogram.filters import StateFilter
 import logging
 import re
 
@@ -14,8 +15,9 @@ router = Router()
 
 # ---------- Проверка доступа ----------
 def is_allowed(user_id: int) -> bool:
+    """Пустой/отсутствующий белый список = доступ закрыт для всех (fail closed)."""
     if not ALLOWED_USERS:
-        return True
+        return False
     return user_id in ALLOWED_USERS
 
 
@@ -26,13 +28,53 @@ class AccessMiddleware(BaseMiddleware):
         event: Message,
         data: Dict[str, Any]
     ) -> Any:
-        user_id = getattr(event.from_user, "id", None) if hasattr(event, "from_user") else None
-        if user_id and not is_allowed(user_id):
-            if isinstance(event, CallbackQuery):
-                await event.answer("⛔ Доступ запрещён.", show_alert=True)
-            else:
-                await event.answer("⛔ Доступ запрещён. Вы не авторизованы для использования этого бота.")
-            return
+        from_user = getattr(event, "from_user", None)
+        user_id = getattr(from_user, "id", None)
+        if user_id is None:
+            # События без отправителя (анонимные админы, каналы и т.п.) не пропускаем
+            logger.warning("Событие без from_user отклонено")
+            return None
+        if not is_allowed(user_id):
+            try:
+                if isinstance(event, CallbackQuery):
+                    await event.answer("⛔ Доступ запрещён.", show_alert=True)
+                else:
+                    await event.answer("⛔ Доступ запрещён. Вы не авторизованы для использования этого бота.")
+            except Exception as e:
+                logger.warning(f"Не удалось сообщить об отказе в доступе: {e}")
+            return None
+        return await handler(event, data)
+
+
+class ResetStateOnMenuMiddleware(BaseMiddleware):
+    """
+    Outer-middleware для dp.message: если пользователь прислал команду (текст на «/»)
+    или нажал кнопку главного меню, сбрасывает его FSM-состояние ДО выбора хендлера,
+    чтобы этот текст не попал в хендлер состояния как «ответ» (описание, название и т.п.).
+    Кнопку «❌ Отмена» не трогает: её обрабатывают свои хендлеры.
+
+    Подключение в app.py:  dp.message.outer_middleware(ResetStateOnMenuMiddleware())
+    """
+
+    async def __call__(
+        self,
+        handler: Callable[[Message, Dict[str, Any]], Awaitable[Any]],
+        event: Message,
+        data: Dict[str, Any]
+    ) -> Any:
+        text = getattr(event, "text", None)
+        if isinstance(text, str):
+            t = text.strip()
+            if t.startswith("/") or t in MAIN_MENU_TEXTS:
+                state = data.get("state")
+                if state is not None:
+                    try:
+                        if await state.get_state() is not None:
+                            await state.clear()
+                            # StateFilter читает «raw_state» из data, а не из хранилища
+                            data["raw_state"] = None
+                    except Exception as e:
+                        logger.warning(f"Не удалось сбросить состояние: {e}")
         return await handler(event, data)
 
 
@@ -44,46 +86,120 @@ def escape_markdown(text) -> str:
     return re.sub(r"([_*`\[\]()~])", r"\\\1", str(text))
 
 
+# Лимит Telegram на длину сообщения — 4096 символов; берём запас
+MAX_MESSAGE_LEN = 4000
+
+
+def split_message(text: str, limit: int = MAX_MESSAGE_LEN) -> list:
+    """Режет длинный текст на части <= limit символов по границам строк."""
+    text = "" if text is None else str(text)
+    if len(text) <= limit:
+        return [text]
+    chunks = []
+    current = ""
+    for line in text.split("\n"):
+        # одну слишком длинную строку режем жёстко
+        while len(line) > limit:
+            if current:
+                chunks.append(current)
+                current = ""
+            chunks.append(line[:limit])
+            line = line[limit:]
+        candidate = line if not current else current + "\n" + line
+        if len(candidate) > limit:
+            chunks.append(current)
+            current = line
+        else:
+            current = candidate
+    if current or not chunks:
+        chunks.append(current)
+    return chunks
+
+
+def _is_parse_error(e) -> bool:
+    return "can't parse entities" in str(e)
+
+
 async def safe_send(bot, chat_id: int, text: str, **kwargs):
-    """Безопасная отправка сообщения: при ошибке Markdown шлёт как plain-text."""
-    try:
-        return await bot.send_message(chat_id, text, **kwargs)
-    except Exception as e:
-        if "can't parse entities" in str(e):
-            logger.warning(f"Markdown parse error (send), fallback to plain: {e}")
-            kwargs.pop("parse_mode", None)
-            return await bot.send_message(chat_id, text, **kwargs)
-        raise
+    """Безопасная отправка: длинный текст — частями; при ошибке Markdown — plain-text."""
+    chunks = split_message(text)
+    markup = kwargs.pop("reply_markup", None)
+    result = None
+    for i, chunk in enumerate(chunks):
+        kw = dict(kwargs)
+        if markup is not None and i == len(chunks) - 1:
+            kw["reply_markup"] = markup
+        try:
+            result = await bot.send_message(chat_id, chunk, **kw)
+        except Exception as e:
+            if _is_parse_error(e):
+                logger.warning(f"Markdown parse error (send), fallback to plain: {e}")
+                kw.pop("parse_mode", None)
+                result = await bot.send_message(chat_id, chunk, **kw)
+            else:
+                raise
+    return result
 
 
 async def safe_edit(message, text: str, **kwargs):
-    """Безопасное редактирование: при ошибке Markdown редактирует как plain-text."""
+    """
+    Безопасное редактирование: при ошибке Markdown редактирует как plain-text.
+    Если текст длиннее лимита — первая часть редактирует сообщение, остальные
+    отправляются новыми сообщениями (клавиатура — на последней части).
+    """
+    chunks = split_message(text)
+    markup = kwargs.pop("reply_markup", None)
+    first_kwargs = dict(kwargs)
+    if markup is not None and len(chunks) == 1:
+        first_kwargs["reply_markup"] = markup
     try:
-        return await message.edit_text(text, **kwargs)
+        result = await message.edit_text(chunks[0], **first_kwargs)
     except Exception as e:
-        err_str = str(e)
-        if "can't parse entities" in err_str:
+        if _is_parse_error(e):
             logger.warning(f"Markdown parse error (edit), fallback to plain: {e}")
-            kwargs.pop("parse_mode", None)
+            first_kwargs.pop("parse_mode", None)
             try:
-                return await message.edit_text(text, **kwargs)
+                result = await message.edit_text(chunks[0], **first_kwargs)
             except Exception as e2:
                 logger.warning(f"Edit fallback error: {e2}")
                 return None
-        logger.warning(f"Edit error: {e}")
-        return None
+        else:
+            logger.warning(f"Edit error: {e}")
+            return None
+    for i, chunk in enumerate(chunks[1:], start=1):
+        kw = dict(kwargs)
+        if markup is not None and i == len(chunks) - 1:
+            kw["reply_markup"] = markup
+        try:
+            result = await message.answer(chunk, **kw)
+        except Exception as e:
+            if _is_parse_error(e):
+                kw.pop("parse_mode", None)
+                result = await message.answer(chunk, **kw)
+            else:
+                raise
+    return result
 
 
 async def safe_answer(message, text: str, **kwargs):
-    """Безопасный ответ на сообщение: при ошибке Markdown — plain-text."""
-    try:
-        return await message.answer(text, **kwargs)
-    except Exception as e:
-        if "can't parse entities" in str(e):
-            logger.warning(f"Markdown parse error (answer), fallback to plain: {e}")
-            kwargs.pop("parse_mode", None)
-            return await message.answer(text, **kwargs)
-        raise
+    """Безопасный ответ: длинный текст — частями (клавиатура на последней); ошибка Markdown — plain-text."""
+    chunks = split_message(text)
+    markup = kwargs.pop("reply_markup", None)
+    result = None
+    for i, chunk in enumerate(chunks):
+        kw = dict(kwargs)
+        if markup is not None and i == len(chunks) - 1:
+            kw["reply_markup"] = markup
+        try:
+            result = await message.answer(chunk, **kw)
+        except Exception as e:
+            if _is_parse_error(e):
+                logger.warning(f"Markdown parse error (answer), fallback to plain: {e}")
+                kw.pop("parse_mode", None)
+                result = await message.answer(chunk, **kw)
+            else:
+                raise
+    return result
 
 
 # ---------- Игнор пустых callback (календарь, заголовки) ----------
@@ -106,6 +222,12 @@ async def cancel_handler(message: Message, state: FSMContext):
         return
     await state.clear()
     await message.answer("Операция отменена.", reply_markup=main_menu)
+
+
+# ---------- Нетекстовое сообщение (фото, стикер...) внутри диалога ----------
+@router.message(~StateFilter(None), ~F.text)
+async def non_text_in_state(message: Message):
+    await message.answer("Ожидается текстовое сообщение. Введите значение или нажмите «❌ Отмена».")
 
 
 # ---------- Fallback для необработанных callback ----------

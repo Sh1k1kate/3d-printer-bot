@@ -51,10 +51,10 @@ async def settings(message: Message, state: FSMContext):
     await state.set_state("waiting_morning_time")
 
 
-@router.message(StateFilter("waiting_morning_time"), F.text != "❌ Отмена")
+@router.message(StateFilter("waiting_morning_time"), F.text, F.text != "❌ Отмена")
 async def set_morning_time(message: Message, state: FSMContext):
     time_str = message.text.strip()
-    if not re.match(r'^\d{2}:\d{2}$', time_str):
+    if not re.fullmatch(r'[0-9]{2}:[0-9]{2}', time_str):
         await message.answer("❌ Неверный формат. Введите ЧЧ:ММ")
         return
     hours, minutes = time_str.split(':')

@@ -1,4 +1,6 @@
 import os
+import html
+import time
 import logging
 from aiogram import Router, Bot, Dispatcher, F
 from aiogram.filters import Command
@@ -81,8 +83,37 @@ def _parse_order_number(text: str):
         arg = arg.split("@", 1)[0].strip()
 
     # Оставляем только цифры (убирает пробелы, NBSP, ZWSP и т.п.)
-    digits = "".join(c for c in arg if c.isdigit())
-    return digits if digits else None
+    digits = "".join(c for c in arg if c.isascii() and c.isdigit())
+    return digits[:9] if digits else None
+
+
+# ============================================================
+# RATE LIMIT для /status (в памяти, на пользователя)
+# ============================================================
+STATUS_RATE_LIMIT = 5        # запросов
+STATUS_RATE_WINDOW = 60.0    # за столько секунд
+_status_hits: dict = {}
+
+
+def _status_rate_limited(user_id: int) -> bool:
+    """True, если пользователь превысил лимит; иначе регистрирует обращение."""
+    now = time.monotonic()
+    hits = [t for t in _status_hits.get(user_id, []) if now - t < STATUS_RATE_WINDOW]
+    if len(hits) >= STATUS_RATE_LIMIT:
+        _status_hits[user_id] = hits
+        return True
+    hits.append(now)
+    _status_hits[user_id] = hits
+    # не даём словарю расти бесконечно
+    if len(_status_hits) > 5000:
+        for uid in [u for u, v in _status_hits.items() if not v or now - v[-1] >= STATUS_RATE_WINDOW]:
+            _status_hits.pop(uid, None)
+    return False
+
+
+def _esc(value) -> str:
+    """Экранирование пользовательских/табличных данных для parse_mode=HTML."""
+    return html.escape("" if value is None else str(value), quote=False)
 
 
 # ============================================================
@@ -141,8 +172,12 @@ async def cmd_price(message: Message):
 @router.message(Command("status"))
 async def cmd_status(message: Message):
     text = message.text or ""
+    user_id = message.from_user.id if message.from_user else 0
+    if _status_rate_limited(user_id):
+        await message.answer("⏳ Слишком много запросов. Попробуйте через минуту.")
+        return
     order_num = _parse_order_number(text)
-    logger.info(f"[status] user={message.from_user.id} raw={text!r} parsed={order_num!r}")
+    logger.info(f"[status] user={user_id} parsed={order_num!r}")
 
     if not order_num:
         await message.answer(
@@ -153,6 +188,10 @@ async def cmd_status(message: Message):
         )
         return
 
+    # TODO(security/IDOR): номер заказа — единственный «секрет», любой пользователь может
+    # перебирать номера. Нужна привязка заказа к клиенту (tracking-код / telegram id) — вне
+    # рамок текущей правки. Поэтому здесь отдаём только позицию, прогресс, срок и статус
+    # и НЕ показываем имя заказчика.
     try:
         order = sheet.get_order_by_number(order_num)
     except Exception as e:
@@ -162,7 +201,7 @@ async def cmd_status(message: Message):
 
     if not order:
         await message.answer(
-            f"❌ Заказ <b>№{order_num}</b> не найден.\n\n"
+            f"❌ Заказ <b>№{_esc(order_num)}</b> не найден.\n\n"
             f"Проверьте номер или напишите @master3Dpech",
             parse_mode="HTML",
         )
@@ -176,46 +215,21 @@ async def cmd_status(message: Message):
         return
 
     try:
-        qty_i = int(qty)
-        printed_i = int(printed)
+        qty_i = int(float(qty))
+        printed_i = int(float(printed))
         progress_pct = round(printed_i / qty_i * 100) if qty_i else 0
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, OverflowError):
         qty_i = printed_i = progress_pct = 0
 
     done = str(status).lower().strip() == "да"
     lines = [
-        f"📦 <b>Заказ №{num}</b>",
-        f"Позиция: {position}",
+        f"📦 <b>Заказ №{_esc(num)}</b>",
+        f"Позиция: {_esc(position)}",
         f"Напечатано: {printed_i} / {qty_i} ({progress_pct}%)",
-        f"Срок: {deadline}",
+        f"Срок: {_esc(deadline)}",
         f"Статус: {'✅ Готов' if done else '⏳ В работе'}",
     ]
     await message.answer("\n".join(lines), parse_mode="HTML")
-
-
-@router.message(Command("status_dbg"))
-async def cmd_status_dbg(message: Message):
-    """
-    Диагностика парсинга: показывает, что бот реально получил.
-    Использование: /status_dbg 12
-    """
-    text = message.text or ""
-    parts = text.split(maxsplit=1)
-    arg = parts[1] if len(parts) > 1 else ""
-    digits = "".join(c for c in arg if c.isdigit())
-
-    # Показываем символы с их Unicode-кодами (для выявления NBSP/ZWSP)
-    chars_info = " ".join(f"U+{ord(c):04X}" for c in arg) if arg else "(пусто)"
-
-    info = (
-        f"🔍 <b>Диагностика /status</b>\n\n"
-        f"raw text:\n<code>{text!r}</code>\n\n"
-        f"arg:\n<code>{arg!r}</code>\n\n"
-        f"arg.isdigit():\n<code>{arg.isdigit()}</code>\n\n"
-        f"digits после очистки:\n<code>{digits!r}</code>\n\n"
-        f"коды символов arg:\n<code>{chars_info}</code>"
-    )
-    await message.answer(info, parse_mode="HTML")
 
 
 # ============================================================
@@ -224,7 +238,7 @@ async def cmd_status_dbg(message: Message):
 @router.message()
 async def fallback(message: Message):
     text = message.text or ""
-    logger.info(f"[fallback] user={message.from_user.id} text={text!r}")
+    logger.info(f"[fallback] user={message.from_user.id if message.from_user else 0} len={len(text)}")
     await message.answer(
         "Я понимаю команды:\n\n"
         "/price — каталог товаров\n"
