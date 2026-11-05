@@ -425,24 +425,31 @@
   </div>
 
   <script>
+    // ====== SAFE STORAGE ======
+    function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+    function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+    function lsRemove(k) { try { localStorage.removeItem(k); } catch (e) {} }
+    lsRemove('priceAdminToken'); // старый ключ: раньше тут хранился сам пароль
+
     // ====== THEME ======
-    let darkMode = localStorage.getItem('theme') === 'dark';
+    let darkMode = lsGet('theme') === 'dark';
     function applyTheme() {
       document.documentElement.classList.toggle('dark', darkMode);
       document.getElementById('theme-icon').textContent = darkMode ? '☀️' : '🌙';
-      localStorage.setItem('theme', darkMode ? 'dark' : 'light');
+      lsSet('theme', darkMode ? 'dark' : 'light');
     }
     function toggleTheme() { darkMode = !darkMode; applyTheme(); }
     applyTheme();
 
     // ====== STATE ======
+    const MAX_QTY = 9999;
     let allItems = [];
     let categories = [];
-    let adminToken = localStorage.getItem('priceAdminToken') || '';
+    let adminToken = lsGet('adminToken') || '';
     let searchQuery = '';
     let categoryFilter = '';
     let sortMode = 'default';
-    let viewMode = localStorage.getItem('priceView') || 'grid';
+    let viewMode = lsGet('priceView') === 'list' ? 'list' : 'grid';
     let editingRowIndex = null;
     let deleteRowIndex = null;
     let qrBlobUrl = null;
@@ -451,7 +458,7 @@
     let ratingsCache = {};
     let appliedPromo = null;
     let reviewRating = 5;
-    let cart = JSON.parse(localStorage.getItem('priceCart') || '{}');
+    let cart = loadCart();
     // ✅ Флаг для защиты от двойной отправки
     let submittingCart = false;
 
@@ -463,21 +470,84 @@
       return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     }
+    function loadCart() {
+      const out = {};
+      try {
+        const raw = JSON.parse(lsGet('priceCart') || '{}');
+        if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+          for (const [k, v] of Object.entries(raw)) {
+            const row = Number(k), qty = Number(v);
+            if (Number.isInteger(row) && row > 0 && Number.isInteger(qty) && qty > 0) out[row] = Math.min(qty, MAX_QTY);
+          }
+        }
+      } catch (e) {}
+      return out;
+    }
+    function stars(n) {
+      const r = Math.max(0, Math.min(5, Math.round(Number(n)) || 0));
+      return '★'.repeat(r) + '☆'.repeat(5 - r);
+    }
+    function errText(e) { return escapeHtml(e && e.message ? e.message : e); }
+    // Видимое сообщение об ошибке над списком товаров
+    function showError(msg) {
+      let box = document.getElementById('load-error');
+      if (!box) {
+        box = document.createElement('div');
+        box.id = 'load-error';
+        box.setAttribute('role', 'alert');
+        box.className = 'mb-4 px-4 py-3 rounded-lg bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200 text-sm';
+        const grid = document.getElementById('products-grid');
+        grid.parentNode.insertBefore(box, grid);
+      }
+      box.textContent = msg || '';
+      box.classList.toggle('hidden', !msg);
+    }
+    async function readJson(resp) {
+      let data = null;
+      try { data = await resp.json(); } catch (e) {}
+      if (!resp.ok) {
+        const m = data && (data.error || data.detail);
+        throw new Error(typeof m === 'string' ? m : 'HTTP ' + resp.status);
+      }
+      return data;
+    }
+    // Любой запрос с X-Admin-Token, получивший 401, сбрасывает токен и возвращает к входу
+    const _origFetch = window.fetch.bind(window);
+    window.fetch = async function (input, init) {
+      const resp = await _origFetch(input, init);
+      const h = init && init.headers;
+      if (resp.status === 401 && adminToken && h && typeof h === 'object' && h['X-Admin-Token']) handleAuthLost();
+      return resp;
+    };
+    function handleAuthLost() {
+      adminToken = '';
+      lsRemove('adminToken');
+      selectedRows.clear();
+      setAdminUI(false);
+      if (typeof renderProducts === 'function') { try { render(); } catch (e) {} }
+      const el = document.getElementById('password-error');
+      if (el) { el.textContent = 'Сессия истекла. Войдите снова.'; el.classList.remove('hidden'); }
+      openModal('modal-password');
+    }
     function closeModal(id) {
       const el = document.getElementById(id);
       if (el) el.classList.add('hidden');
+      if (id === 'modal-product' && /^#item=/.test(window.location.hash)) {
+        try { history.replaceState(null, '', window.location.pathname + window.location.search); } catch (e) {}
+      }
     }
     function openModal(id) {
       const el = document.getElementById(id);
       if (!el) { console.error('[modal] not found:', id); return; }
       el.classList.remove('hidden');
     }
-    function formatPrice(v) {
+    function formatPricePlain(v) {
       if (v === null || v === undefined || v === '') return '—';
       const n = Number(String(v).replace(',', '.'));
-      if (!isFinite(n)) return escapeHtml(v);
+      if (!isFinite(n)) return String(v);
       return n.toLocaleString('ru-RU') + ' ₽';
     }
+    function formatPrice(v) { return escapeHtml(formatPricePlain(v)); }
     function parseNum(v) {
       if (v === null || v === undefined || v === '') return null;
       const n = Number(String(v).replace(',', '.'));
@@ -545,6 +615,7 @@
           if (e.lengthComputable) onProgress(Math.round(e.loaded / e.total * 100));
         };
         xhr.onload = () => {
+          if (xhr.status === 401) handleAuthLost();
           if (xhr.status >= 200 && xhr.status < 300) {
             try {
               const data = JSON.parse(xhr.responseText);
@@ -576,29 +647,38 @@
 
     async function loadItems() {
       renderSkeleton();
+      showError('');
       if (adminToken) refreshReviewsBadge();
       try {
         const url = adminToken ? '/api/price/admin' : '/api/price';
         const headers = adminToken ? { 'X-Admin-Token': adminToken } : {};
         const resp = await fetch(url, { headers });
-        if (resp.status === 401) {
-          localStorage.removeItem('priceAdminToken');
-          adminToken = '';
-          setAdminUI(false);
+        if (resp.status === 401 && adminToken) {
+          handleAuthLost();
           return loadItems();
         }
-        const data = await resp.json();
-        allItems = data.items || [];
-        categories = data.categories || [];
+        const data = await readJson(resp);
+        if (!data || typeof data !== 'object') throw new Error('Некорректный ответ сервера');
+        allItems = Array.isArray(data.items) ? data.items : [];
+        categories = Array.isArray(data.categories)
+          ? data.categories
+          : [...new Set(allItems.map(it => it.category).filter(Boolean))];
         render();
-        checkHash();
-      } catch (e) { console.error(e); }
+        if (!hashHandled) { hashHandled = true; checkHash(); }
+      } catch (e) {
+        console.error(e);
+        document.getElementById('products-grid').innerHTML = '';
+        showError('Не удалось загрузить каталог: ' + (e.message || e));
+        return;
+      }
       try {
         const resp = await fetch('/api/price/reviews_summary');
-        ratingsCache = await resp.json();
+        const data = await readJson(resp);
+        ratingsCache = (data && typeof data === 'object') ? data : {};
         render();
       } catch (e) { console.error(e); }
     }
+    let hashHandled = false;
 
     function renderSkeleton() {
       const grid = document.getElementById('products-grid');
@@ -748,7 +828,7 @@
     function renderRatingBadge(row) {
       const r = ratingsCache[String(row)];
       if (!r || !r.count) return '';
-      return `<div class="text-xs text-yellow-500 flex items-center gap-1">★ ${r.avg} <span class="text-gray-400">(${r.count})</span></div>`;
+      return `<div class="text-xs text-yellow-500 flex items-center gap-1">★ ${escapeHtml(r.avg)} <span class="text-gray-400">(${escapeHtml(r.count)})</span></div>`;
     }
 
     function renderCard(it, idx) {
@@ -807,22 +887,24 @@
     }
 
     function openProduct(idx) {
-      const it = getFilteredSorted()[idx];
+      showProduct(getFilteredSorted()[idx]);
+    }
+    function showProduct(it) {
       if (!it) return;
       currentModalItem = it;
       document.getElementById('modal-name').textContent = it.name || '—';
       document.getElementById('modal-description').textContent = it.description || 'Без описания';
       document.getElementById('modal-category').textContent = it.category || 'Без категории';
-      document.getElementById('modal-retail').textContent = it.retail ? formatPrice(it.retail) : '—';
-      document.getElementById('modal-wholesale').textContent = it.wholesale ? formatPrice(it.wholesale) : '—';
-      document.getElementById('modal-wholesale-from').textContent = it.wholesale_from ? escapeHtml(it.wholesale_from) + ' шт' : '—';
+      document.getElementById('modal-retail').textContent = it.retail ? formatPricePlain(it.retail) : '—';
+      document.getElementById('modal-wholesale').textContent = it.wholesale ? formatPricePlain(it.wholesale) : '—';
+      document.getElementById('modal-wholesale-from').textContent = it.wholesale_from ? String(it.wholesale_from) + ' шт' : '—';
       const img = document.getElementById('modal-photo');
       if (it.photo) { img.src = it.photo; img.classList.remove('hidden'); img.onerror = () => { img.src = ''; img.alt = '📦'; }; }
       else { img.removeAttribute('src'); img.alt = '📦'; }
       const ratingEl = document.getElementById('modal-rating');
       const r = ratingsCache[String(it.row_index)];
       if (r && r.count) {
-        ratingEl.textContent = '★'.repeat(Math.round(r.avg)) + '☆'.repeat(5 - Math.round(r.avg)) + ` ${r.avg} (${r.count})`;
+        ratingEl.textContent = stars(r.avg) + ` ${r.avg} (${r.count})`;
         ratingEl.classList.remove('hidden');
       } else { ratingEl.classList.add('hidden'); }
       openModal('modal-product');
@@ -835,9 +917,9 @@
       const countEl = document.getElementById('modal-reviews-count');
       listEl.innerHTML = '';
       try {
-        const resp = await fetch('/api/price/reviews/' + row);
-        const data = await resp.json();
-        const items = data.items || [];
+        const resp = await fetch('/api/price/reviews/' + encodeURIComponent(row));
+        const data = await readJson(resp);
+        const items = Array.isArray(data && data.items) ? data.items : [];
         countEl.textContent = items.length ? `(${items.length})` : '';
         if (!items.length) {
           emptyEl.classList.remove('hidden');
@@ -850,13 +932,17 @@
           <div class="bg-gray-50 dark:bg-gray-700 rounded p-2 text-sm">
             <div class="flex justify-between mb-1">
               <span class="font-medium">${escapeHtml(r.name || 'Аноним')}</span>
-              <span class="text-yellow-500">${'★'.repeat(r.rating)}${'☆'.repeat(5 - r.rating)}</span>
+              <span class="text-yellow-500">${stars(r.rating)}</span>
             </div>
             <div class="text-gray-600 dark:text-gray-300 break-words">${escapeHtml(r.text)}</div>
             <div class="text-xs text-gray-400 mt-1">${escapeHtml(r.created)}</div>
           </div>
         `).join('');
-      } catch (e) { console.error(e); }
+      } catch (e) {
+        console.error(e);
+        listEl.classList.remove('hidden');
+        listEl.innerHTML = `<div class="text-sm text-red-500">Не удалось загрузить отзывы: ${errText(e)}</div>`;
+      }
     }
 
     function openReviewForm() {
@@ -915,9 +1001,8 @@
         const resp = await fetch('/api/price/reviews/pending', {
           headers: { 'X-Admin-Token': adminToken },
         });
-        if (!resp.ok) throw new Error('HTTP ' + resp.status);
-        const data = await resp.json();
-        const items = data.items || [];
+        const data = await readJson(resp);
+        const items = Array.isArray(data && data.items) ? data.items : [];
         updateReviewsBadge(items.length);
         if (!items.length) { listEl.innerHTML = ''; emptyEl.classList.remove('hidden'); return; }
         emptyEl.classList.add('hidden');
@@ -928,17 +1013,23 @@
                 <div class="font-semibold text-sm truncate">${escapeHtml(r.product_name || '—')}</div>
                 <div class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">${escapeHtml(r.name || 'Аноним')} · ${escapeHtml(r.created || '')}</div>
               </div>
-              <div class="text-yellow-500 text-sm whitespace-nowrap">${'★'.repeat(r.rating)}${'☆'.repeat(5 - r.rating)}</div>
+              <div class="text-yellow-500 text-sm whitespace-nowrap">${stars(r.rating)}</div>
             </div>
             <div class="text-sm text-gray-700 dark:text-gray-200 mb-3 break-words whitespace-pre-wrap">${escapeHtml(r.text)}</div>
             <div class="flex gap-2">
-              <button onclick="approveReview(${r.id})" class="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white text-sm px-3 py-1.5 rounded-lg">✅ Опубликовать</button>
-              <button onclick="rejectReview(${r.id})" class="flex-1 bg-red-500 hover:bg-red-600 text-white text-sm px-3 py-1.5 rounded-lg">🗑 Отклонить</button>
+              <button data-review-action="approve" data-id="${escapeHtml(r.id)}" class="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white text-sm px-3 py-1.5 rounded-lg">✅ Опубликовать</button>
+              <button data-review-action="reject" data-id="${escapeHtml(r.id)}" class="flex-1 bg-red-500 hover:bg-red-600 text-white text-sm px-3 py-1.5 rounded-lg">🗑 Отклонить</button>
             </div>
           </div>
         `).join('');
+        listEl.querySelectorAll('[data-review-action]').forEach(btn => {
+          btn.addEventListener('click', () => {
+            const id = Number(btn.dataset.id);
+            if (btn.dataset.reviewAction === 'approve') approveReview(id); else rejectReview(id);
+          });
+        });
       } catch (e) {
-        listEl.innerHTML = `<div class="text-center py-6 text-red-500">Ошибка: ${e.message}</div>`;
+        listEl.innerHTML = `<div class="text-center py-6 text-red-500">Ошибка: ${errText(e)}</div>`;
       }
     }
     function updateReviewsBadge(count) {
@@ -962,7 +1053,7 @@
         await loadPendingReviews();
         try {
           const rs = await fetch('/api/price/reviews_summary');
-          ratingsCache = await rs.json();
+          ratingsCache = await readJson(rs) || {};
           renderProducts();
         } catch (e) {}
       } catch (e) { alert('Ошибка: ' + e.message); }
@@ -985,18 +1076,18 @@
         });
         if (!resp.ok) return;
         const data = await resp.json();
-        updateReviewsBadge((data.items || []).length);
+        updateReviewsBadge(Array.isArray(data.items) ? data.items.length : 0);
       } catch (e) {}
     }
 
     function checkHash() {
-      const m = window.location.hash.match(/^#item=(\d+)$/);
-      if (m) {
-        const rowIdx = parseInt(m[1], 10);
-        const items = getFilteredSorted();
-        const idx = items.findIndex(it => it.row_index === rowIdx);
-        if (idx >= 0) openProduct(idx);
-      }
+      const m = window.location.hash.match(/^#item=(\d+)\/?$/);
+      if (!m || !allItems.length) return;
+      const rowIdx = parseInt(m[1], 10);
+      const modal = document.getElementById('modal-product');
+      if (currentModalItem && currentModalItem.row_index === rowIdx && modal && !modal.classList.contains('hidden')) return;
+      const it = allItems.find(x => Number(x.row_index) === rowIdx);
+      if (it) showProduct(it);
     }
     window.addEventListener('hashchange', checkHash);
 
@@ -1031,27 +1122,27 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ code }),
         });
-        const data = await resp.json();
-        if (data.valid) {
+        const data = await readJson(resp);
+        if (data && data.valid && isFinite(Number(data.discount_percent))) {
           appliedPromo = data;
           status.className = 'text-xs text-green-600 dark:text-green-400';
-          status.textContent = `✅ Применено: −${data.discount_percent}%`;
+          status.textContent = `✅ Применено: −${Number(data.discount_percent)}%`;
         } else {
           appliedPromo = null;
           status.className = 'text-xs text-red-600 dark:text-red-400';
-          status.textContent = '❌ ' + (data.reason || 'Недействительный код');
+          status.textContent = '❌ ' + ((data && data.reason) || 'Недействительный код');
         }
         renderCartItems();
       } catch (e) {
         appliedPromo = null;
         status.className = 'text-xs text-red-600 dark:text-red-400';
-        status.textContent = '❌ Ошибка проверки';
+        status.textContent = '❌ Ошибка проверки: ' + (e.message || e);
         renderCartItems();
       }
     }
 
     // ====== КОРЗИНА ======
-    function saveCart() { localStorage.setItem('priceCart', JSON.stringify(cart)); }
+    function saveCart() { lsSet('priceCart', JSON.stringify(cart)); }
     function cartCount() { return Object.values(cart).reduce((s, q) => s + q, 0); }
     function updateCartFab() {
       const fab = document.getElementById('cart-fab');
@@ -1063,8 +1154,9 @@
       else { badge.classList.add('hidden'); }
     }
     function addToCart(rowIndex, qty) {
-      if (!rowIndex) return;
-      cart[rowIndex] = (cart[rowIndex] || 0) + qty;
+      rowIndex = Number(rowIndex);
+      if (!Number.isInteger(rowIndex) || rowIndex <= 0) return;
+      cart[rowIndex] = Math.min(MAX_QTY, (cart[rowIndex] || 0) + qty);
       if (cart[rowIndex] <= 0) delete cart[rowIndex];
       saveCart();
       updateCartFab();
@@ -1133,6 +1225,7 @@
       container.innerHTML = rows.map(([row, qty]) => {
         const it = allItems.find(x => x.row_index === Number(row));
         if (!it) return '';
+        qty = Number(qty);
         const unit = getUnitPrice(it, qty);
         const lineTotal = unit.price ? unit.price * qty : 0;
         grandTotal += lineTotal;
@@ -1142,7 +1235,7 @@
         }
         let hint = '';
         if (unit.isWholesale) {
-          hint = `<div class="text-xs text-emerald-600 dark:text-emerald-400 font-medium mt-1">🎁 Опт (от ${unit.wholesaleFrom} шт)</div>`;
+          hint = `<div class="text-xs text-emerald-600 dark:text-emerald-400 font-medium mt-1">🎁 Опт (от ${escapeHtml(unit.wholesaleFrom)} шт)</div>`;
         } else if (unit.wholesaleFrom && it.wholesale) {
           const need = unit.wholesaleFrom - qty;
           if (need > 0 && need <= 50) {
@@ -1160,18 +1253,26 @@
                 <div class="text-xs text-gray-600 dark:text-gray-300">${priceHtml}</div>
               </div>
               <div class="flex items-center gap-1 flex-shrink-0">
-                <button onclick="changeCartQty(${row}, -1)" class="w-7 h-7 bg-gray-300 dark:bg-gray-600 rounded">−</button>
+                <button data-cart-row="${Number(row)}" data-cart-act="dec" class="w-7 h-7 bg-gray-300 dark:bg-gray-600 rounded">−</button>
                 <span class="text-sm font-semibold w-6 text-center">${qty}</span>
-                <button onclick="changeCartQty(${row}, 1)" class="w-7 h-7 bg-gray-300 dark:bg-gray-600 rounded">+</button>
-                <button onclick="removeFromCart(${row})" class="w-7 h-7 bg-red-500 text-white rounded ml-1">×</button>
+                <button data-cart-row="${Number(row)}" data-cart-act="inc" class="w-7 h-7 bg-gray-300 dark:bg-gray-600 rounded">+</button>
+                <button data-cart-row="${Number(row)}" data-cart-act="del" class="w-7 h-7 bg-red-500 text-white rounded ml-1">×</button>
               </div>
             </div>
             ${hint}
           </div>`;
       }).join('');
+      container.querySelectorAll('[data-cart-act]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const row = Number(btn.dataset.cartRow), act = btn.dataset.cartAct;
+          if (act === 'dec') changeCartQty(row, -1);
+          else if (act === 'inc') changeCartQty(row, 1);
+          else removeFromCart(row);
+        });
+      });
 
       const discount = (appliedPromo && grandTotal > 0)
-        ? Math.round(grandTotal * appliedPromo.discount_percent / 100)
+        ? Math.round(grandTotal * Number(appliedPromo.discount_percent) / 100)
         : 0;
       const finalTotal = Math.max(0, grandTotal - discount);
 
@@ -1185,7 +1286,7 @@
         }
         if (discount > 0 && appliedPromo) {
           parts.push(`<div class="flex justify-between text-xs text-purple-600 dark:text-purple-400 mb-1">
-            <span>Промокод ${escapeHtml(appliedPromo.code)} (−${appliedPromo.discount_percent}%):</span>
+            <span>Промокод ${escapeHtml(appliedPromo.code)} (−${escapeHtml(Number(appliedPromo.discount_percent))}%):</span>
             <span class="font-semibold">−${formatPrice(discount)}</span>
           </div>`);
         }
@@ -1198,7 +1299,7 @@
     }
 
     function changeCartQty(row, delta) {
-      cart[row] = (cart[row] || 0) + delta;
+      cart[row] = Math.min(MAX_QTY, (cart[row] || 0) + delta);
       if (cart[row] <= 0) delete cart[row];
       saveCart();
       updateCartFab();
@@ -1218,7 +1319,7 @@
 
       const contact = document.getElementById('cart-contact').value.trim();
       if (!contact) { err.textContent = 'Укажите контакт'; err.classList.remove('hidden'); return; }
-      const items = Object.entries(cart).map(([row, qty]) => {
+      const items = Object.entries(cart).filter(([row, qty]) => allItems.some(x => x.row_index === Number(row)) && Number.isInteger(qty) && qty > 0).map(([row, qty]) => {
         const it = allItems.find(x => x.row_index === Number(row));
         const unit = getUnitPrice(it, qty);
         return {
@@ -1233,7 +1334,7 @@
 
       const grandTotal = items.reduce((s, i) => s + (i.line_total || 0), 0);
       const discount = appliedPromo
-        ? Math.round(grandTotal * appliedPromo.discount_percent / 100)
+        ? Math.round(grandTotal * Number(appliedPromo.discount_percent) / 100)
         : 0;
       const finalTotal = Math.max(0, grandTotal - discount);
 
@@ -1279,8 +1380,8 @@
           msg = `✅ Заявка принята!\n\nСоздано заказов: ${data.orders.length}`;
           if (data.orders.length <= 8) msg += ' (№' + data.orders.join(', №') + ')';
           if (data.deadline) msg += `\nСрок: ${data.deadline}`;
-          if (data.promo_applied && data.discount) msg += `\n🎁 Промокод применён: −${formatPrice(data.discount)}`;
-          if (data.final_total) msg += `\n💰 Итого: ${formatPrice(data.final_total)}`;
+          if (data.promo_applied && data.discount) msg += `\n🎁 Промокод применён: −${formatPricePlain(data.discount)}`;
+          if (data.final_total) msg += `\n💰 Итого: ${formatPricePlain(data.final_total)}`;
           msg += '\n\nМы свяжемся с вами.';
         }
         alert(msg);
@@ -1310,26 +1411,43 @@
         setTimeout(() => document.getElementById('admin-password-input').focus(), 100);
       }
     }
+    let loginInFlight = false;
     async function submitPassword() {
-      const pwd = document.getElementById('admin-password-input').value.trim();
+      if (loginInFlight) return;
+      const input = document.getElementById('admin-password-input');
+      const el = document.getElementById('password-error');
+      const pwd = input.value.trim();
       if (!pwd) return;
-      const resp = await fetch('/api/price/admin', { headers: { 'X-Admin-Token': pwd } });
-      if (resp.ok) {
-        adminToken = pwd;
-        localStorage.setItem('priceAdminToken', pwd);
+      const fail = (m) => { el.textContent = m; el.classList.remove('hidden'); };
+      loginInFlight = true;
+      try {
+        const resp = await fetch('/api/admin/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password: pwd }),
+        });
+        let data = null;
+        try { data = await resp.json(); } catch (e) {}
+        if (resp.status === 429) { fail('Слишком много попыток. Подождите и повторите.'); return; }
+        if (resp.status === 401) { fail('Неверный пароль'); return; }
+        if (!resp.ok || !data || !data.token) { fail('Ошибка входа (HTTP ' + resp.status + ')'); return; }
+        adminToken = String(data.token);
+        lsSet('adminToken', adminToken);
+        input.value = '';
+        el.classList.add('hidden');
         closeModal('modal-password');
         setAdminUI(true);
         await loadItems();
-        if (quickAdminMode) setTimeout(() => openEditor(null), 200);
-      } else {
-        const el = document.getElementById('password-error');
-        el.textContent = resp.status === 401 ? 'Неверный пароль' : 'Ошибка';
-        el.classList.remove('hidden');
+        if (quickAdminMode && adminToken) setTimeout(() => openEditor(null), 200);
+      } catch (e) {
+        fail('Сеть недоступна. Попробуйте ещё раз.');
+      } finally {
+        loginInFlight = false;
       }
     }
     function logoutAdmin() {
       adminToken = '';
-      localStorage.removeItem('priceAdminToken');
+      lsRemove('adminToken');
       selectedRows.clear();
       setAdminUI(false);
       loadItems();
@@ -1402,7 +1520,8 @@
         it.name || '', it.description || '', it.photo || '',
         it.retail || '', it.wholesale || '', it.wholesale_from || '', it.category || '',
       ]));
-      const csv = rows.map(r => r.map(v => '"' + String(v).replace(/"/g, '""') + '"').join(',')).join('\n');
+      const cell = (v) => { let t = String(v); if (/^[=+\-@\t\r]/.test(t)) t = "'" + t; return '"' + t.replace(/"/g, '""') + '"'; };
+      const csv = rows.map(r => r.map(cell).join(',')).join('\n');
       const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -1465,7 +1584,7 @@
         img.className = 'max-w-[260px] w-full rounded';
         container.appendChild(img);
       } catch (e) {
-        container.innerHTML = `<span class="text-red-500 text-sm">Ошибка: ${e.message}</span>`;
+        container.innerHTML = `<span class="text-red-500 text-sm">Ошибка: ${errText(e)}</span>`;
       }
     }
     function downloadQr() {
@@ -1485,8 +1604,8 @@
     async function loadLogo() {
       try {
         const resp = await fetch('/api/price/logo', { headers: { 'X-Admin-Token': adminToken } });
-        const data = await resp.json();
-        const url = data.url || '';
+        const data = await readJson(resp);
+        const url = (data && data.url) || '';
         const img = document.getElementById('logo-preview');
         const empty = document.getElementById('logo-empty');
         const delBtn = document.getElementById('logo-delete-btn');
@@ -1497,7 +1616,11 @@
           img.classList.add('hidden'); img.removeAttribute('src');
           empty.classList.remove('hidden'); delBtn.classList.add('hidden');
         }
-      } catch (e) {}
+      } catch (e) {
+        const st = document.getElementById('logo-status');
+        st.className = 'text-xs mb-3 text-red-600 dark:text-red-400';
+        st.textContent = '❌ Не удалось загрузить логотип: ' + (e.message || e);
+      }
     }
     document.getElementById('logo-file').addEventListener('change', async function () {
       const rawFile = this.files && this.files[0];
@@ -1517,7 +1640,7 @@
           headers: { 'Content-Type': 'application/json', 'X-Admin-Token': adminToken },
           body: JSON.stringify({ url }),
         });
-        if (!saveResp.ok) throw new Error('Не удалось сохранить');
+        if (!saveResp.ok) throw new Error('Не удалось сохранить (HTTP ' + saveResp.status + ')');
         status.className = 'text-xs mb-3 text-green-600 dark:text-green-400';
         status.textContent = `✅ Обновлён (${formatBytes(file.size)})`;
         await loadLogo();
@@ -1661,7 +1784,7 @@
         const resp = await fetch(`/api/price/${deleteRowIndex}`, {
           method: 'DELETE', headers: { 'X-Admin-Token': adminToken },
         });
-        if (!resp.ok) { alert('Ошибка'); return; }
+        if (!resp.ok) { alert('Ошибка удаления (HTTP ' + resp.status + ')'); return; }
         closeModal('modal-confirm');
         deleteRowIndex = null;
         await loadItems();
@@ -1679,7 +1802,7 @@
       ).slice(0, 5);
       if (!matches.length) { container.classList.add('hidden'); return; }
       container.innerHTML = matches.map(it => `
-        <div onclick="openTypeaheadItem(${it.row_index})" class="flex items-center gap-2 p-2 hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer">
+        <div data-ta-row="${Number(it.row_index)}" class="flex items-center gap-2 p-2 hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer">
           <div class="w-10 h-10 rounded bg-gray-100 dark:bg-gray-900 flex items-center justify-center overflow-hidden flex-shrink-0">
             ${it.photo ? `<img src="${escapeHtml(it.photo)}" class="w-full h-full object-contain" onerror="this.parentElement.textContent='📦'">` : '📦'}
           </div>
@@ -1689,6 +1812,9 @@
           </div>
         </div>
       `).join('');
+      container.querySelectorAll('[data-ta-row]').forEach(el => {
+        el.addEventListener('click', () => openTypeaheadItem(Number(el.dataset.taRow)));
+      });
       container.classList.remove('hidden');
     }
     function openTypeaheadItem(row) {
@@ -1715,7 +1841,7 @@
     document.getElementById('sort-select').addEventListener('change', function() { sortMode = this.value; renderProducts(); });
     function setView(mode) {
       viewMode = mode;
-      localStorage.setItem('priceView', mode);
+      lsSet('priceView', mode);
       document.getElementById('view-grid-btn').classList.toggle('bg-white', mode === 'grid');
       document.getElementById('view-grid-btn').classList.toggle('dark:bg-gray-800', mode === 'grid');
       document.getElementById('view-grid-btn').classList.toggle('shadow-sm', mode === 'grid');
