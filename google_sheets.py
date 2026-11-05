@@ -3,6 +3,11 @@ from oauth2client.service_account import ServiceAccountCredentials
 from config import SPREADSHEET_ID, CREDENTIALS_FILE
 from datetime import datetime, timezone, timedelta
 import time
+import re
+import os
+import json
+import threading
+import functools
 import logging
 from production import normalize_position, distribute_printed, plan_set_ordered
 
@@ -15,7 +20,20 @@ def moscow_now():
     return datetime.now(MOSCOW_TZ)
 
 
-PRICE_COLUMNS = ["Название", "Описание", "Фото (URL)", "Розница", "Опт", "Опт от (шт)", "Категория"]
+PRICE_COLUMNS = ["Название", "Описание", "Фото (URL)", "Розница", "Опт", "Опт от (шт)", "Категория", "ID"]
+PRICE_ID_COL = 8   # столбец H: постоянный ID товара (не зависит от номера строки)
+
+# Запись в таблицу идёт «прочитал → изменил → записал», поэтому параллельные запросы
+# (потоки FastAPI + бот) сериализуем одним блокирующим замком.
+_WRITE_LOCK = threading.RLock()
+
+
+def _locked(fn):
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        with _WRITE_LOCK:
+            return fn(*args, **kwargs)
+    return wrapper
 PROMO_COLUMNS = ["code", "discount_percent", "valid_until", "max_uses", "used_count", "active"]
 REVIEW_COLUMNS = ["id", "product_row", "name", "rating", "text", "created", "status"]
 SHIPMENT_COLUMNS = ["Позиция", "Точка", "Отправлено"]
@@ -36,7 +54,11 @@ class SheetManager:
             return
         self._initialized = True
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-        creds = ServiceAccountCredentials.from_json_keyfile_name(CREDENTIALS_FILE, scope)
+        creds_json = os.getenv("GOOGLE_CREDENTIALS_JSON", "").strip()
+        if creds_json:
+            creds = ServiceAccountCredentials.from_json_keyfile_dict(json.loads(creds_json), scope)
+        else:
+            creds = ServiceAccountCredentials.from_json_keyfile_name(CREDENTIALS_FILE, scope)
         self.client = gspread.authorize(creds)
         self.sheet = self.client.open_by_key(SPREADSHEET_ID)
 
@@ -74,9 +96,13 @@ class SheetManager:
             header=["user_id", "name"],
         )
         self.sheet_price = self._ensure_worksheet(
-            "Прайс", rows=1000, cols=7,
+            "Прайс", rows=1000, cols=8,
             header=PRICE_COLUMNS,
         )
+        try:
+            self._migrate_price_ids()
+        except Exception as e:
+            logger.error(f"Миграция ID прайса не удалась: {e}")
         self.sheet_system = self._ensure_worksheet(
             "Настройки системы", rows=100, cols=2,
             header=["key", "value"],
@@ -309,13 +335,23 @@ class SheetManager:
             row[5] = grams_pp
             rows_to_add.append(row)
         end_row = start_row + len(rows_to_add) - 1
-        self.sheet_models.update(f"A{start_row}:F{end_row}", rows_to_add, value_input_option="USER_ENTERED")
+        self.sheet_models.update(f"A{start_row}:F{end_row}", rows_to_add, value_input_option="RAW")
         self._invalidate_cache()
         self.log_action("system", "Добавление модели", model_name)
 
+    @_locked
     def delete_part(self, model_name, det_name):
+        records = self.sheet_models.get_all_values()
         for row_idx, row in self._normalize_rows_with_index():
             if row[0] == model_name and row[1] == det_name:
+                raw = records[row_idx - 1]
+                owns_name = bool(raw and raw[0] and raw[0].strip())
+                if owns_name and row_idx < len(records):
+                    nxt = records[row_idx]
+                    # у следующей детали пустое имя модели — оно «наследуется» от удаляемой строки,
+                    # поэтому переносим название модели вниз, иначе остальные детали осиротеют
+                    if not (nxt and nxt[0] and nxt[0].strip()) and any((c or "").strip() for c in nxt[1:]):
+                        self.sheet_models.update_cell(row_idx + 1, 1, model_name)
                 self.sheet_models.delete_rows(row_idx)
                 self._invalidate_cache()
                 return True
@@ -373,8 +409,9 @@ class SheetManager:
             part = part.strip()
             if not part:
                 continue
-            if 'x' in part:
-                name, qty_str = part.split('x')
+            m = re.match(r"^(.*?)\s*[xXхХ×]\s*(\d+)$", part)
+            if m:
+                name, qty_str = m.group(1), m.group(2)
             else:
                 space_idx = part.rfind(' ')
                 if space_idx == -1:
@@ -403,6 +440,7 @@ class SheetManager:
                 continue
         return max_num + 1
 
+    @_locked
     def add_order(self, position, quantity, deadline_str, customer=""):
         order_num = self.get_next_order_number()
         now_str = moscow_now().strftime("%Y-%m-%d %H:%M:%S")
@@ -428,6 +466,7 @@ class SheetManager:
     def get_active_orders(self):
         return [o for o in self.get_user_orders() if len(o) >= 7 and o[6].strip().lower() != 'да']
 
+    @_locked
     def update_order_printed(self, order_num, printed_qty):
         cell = self.sheet_orders.find(str(order_num), in_column=1)
         if cell:
@@ -438,6 +477,7 @@ class SheetManager:
             return True
         return False
 
+    @_locked
     def mark_order_completed(self, order_num):
         cell = self.sheet_orders.find(str(order_num), in_column=1)
         if cell:
@@ -469,6 +509,7 @@ class SheetManager:
                 continue
         return max_id + 1
 
+    @_locked
     def add_task(self, title, deadline, time_str, assignee_user_id=None):
         task_id = self.get_next_task_id()
         now_str = moscow_now().strftime("%Y-%m-%d %H:%M:%S")
@@ -553,6 +594,7 @@ class SheetManager:
             })
         return tasks
 
+    @_locked
     def update_task_notification(self, task_id, field, value):
         col_map = {'notified_60': 8, 'notified_30': 9, 'notified_15': 10,
                    'notified_0': 11, 'notified_morning': 12, 'notified_day': 13}
@@ -566,6 +608,7 @@ class SheetManager:
         self._invalidate_cache("tasks")
         return True
 
+    @_locked
     def update_task_field(self, task_id, field, value):
         col_map = {'assignee': 5, 'status': 6}
         col = col_map.get(field)
@@ -629,52 +672,106 @@ class SheetManager:
         return False
 
     # ---------- ПРАЙС ----------
+    # У каждого товара есть постоянный ID (столбец H). Наружу (сайт, боты, отзывы, ссылки /share/N)
+    # он отдаётся как `row_index` — так что при удалении строк выше ссылки и отзывы не «съезжают».
+    # При первой миграции ID = текущий номер строки, поэтому старые ссылки остаются рабочими.
+    def _migrate_price_ids(self):
+        with _WRITE_LOCK:
+            records = self.sheet_price.get_all_values()
+            if not records:
+                self.sheet_price.append_row(PRICE_COLUMNS)
+                return
+            header = records[0]
+            if len(header) < PRICE_ID_COL or (header[PRICE_ID_COL - 1] or "").strip() != "ID":
+                self.sheet_price.update_cell(1, PRICE_ID_COL, "ID")
+            used, missing = set(), []
+            for idx, row in enumerate(records[1:], start=2):
+                if not any((c or "").strip() for c in row[:7]):
+                    continue
+                raw = str(row[PRICE_ID_COL - 1]).strip() if len(row) >= PRICE_ID_COL else ""
+                if raw.isdigit() and int(raw) not in used:
+                    used.add(int(raw))
+                else:
+                    missing.append(idx)
+            if not missing:
+                return
+            updates = []
+            for idx in missing:
+                new_id = idx if idx not in used else max(used | {len(records)}) + 1
+                used.add(new_id)
+                updates.append({"range": f"H{idx}", "values": [[new_id]]})
+            self.sheet_price.batch_update(updates, value_input_option="RAW")
+            self._invalidate_cache("price")
+            logger.info(f"Прайс: проставлено ID у {len(updates)} товаров")
+
+    def _next_price_id(self, used_ids, count=1):
+        """Следующий ID: не меньше счётчика в настройках, чтобы ID удалённых товаров не переиспользовались."""
+        try:
+            counter = int(self.get_setting("price_next_id", "0") or 0)
+        except ValueError:
+            counter = 0
+        nxt = max(counter, (max(used_ids) if used_ids else 0) + 1)
+        self.set_setting("price_next_id", nxt + count)
+        return nxt
+
+    def _price_row_map(self):
+        """{id: номер строки} по свежим данным листа (одна читающая операция)."""
+        col = self.sheet_price.col_values(PRICE_ID_COL)
+        return {int(v): i for i, v in enumerate(col, start=1) if i > 1 and str(v).strip().isdigit()}
+
+    @staticmethod
+    def _price_dict(row, price_id, sheet_row):
+        row = list(row) + [""] * (7 - len(row))
+        return {
+            "row_index": price_id,
+            "sheet_row": sheet_row,
+            "name": row[0], "description": row[1], "photo": row[2],
+            "retail": row[3], "wholesale": row[4], "wholesale_from": row[5],
+            "category": row[6] or "Без категории",
+        }
+
     def _fetch_price_items(self):
         records = self.sheet_price.get_all_values()
         if len(records) <= 1:
             return []
         items = []
         for idx, row in enumerate(records[1:], start=2):
-            if not any((cell or "").strip() for cell in row):
+            if not any((cell or "").strip() for cell in row[:7]):
                 continue
-            while len(row) < 7:
-                row.append("")
-            items.append({
-                "row_index": idx,
-                "name": row[0], "description": row[1], "photo": row[2],
-                "retail": row[3], "wholesale": row[4], "wholesale_from": row[5],
-                "category": row[6] or "Без категории",
-            })
+            raw_id = str(row[PRICE_ID_COL - 1]).strip() if len(row) >= PRICE_ID_COL else ""
+            if not raw_id.isdigit():
+                continue   # ещё не прошёл миграцию — появится после следующего запуска
+            items.append(self._price_dict(row, int(raw_id), idx))
         return items
 
     def get_price_items(self):
         return self._get_cached("price", self._fetch_price_items)
 
     def get_price_item_by_row(self, row_index):
+        """row_index здесь — постоянный ID товара."""
         try:
-            row = self.sheet_price.row_values(row_index)
-            if not row or not any((c or "").strip() for c in row):
+            sheet_row = self._price_row_map().get(int(row_index))
+            if not sheet_row:
                 return None
-            while len(row) < 7:
-                row.append("")
-            return {
-                "row_index": row_index,
-                "name": row[0], "description": row[1], "photo": row[2],
-                "retail": row[3], "wholesale": row[4], "wholesale_from": row[5],
-                "category": row[6] or "Без категории",
-            }
+            row = self.sheet_price.row_values(sheet_row)
+            if not row or not any((c or "").strip() for c in row[:7]):
+                return None
+            return self._price_dict(row, int(row_index), sheet_row)
         except Exception:
             return None
 
+    @_locked
     def add_price_item(self, name, description="", photo="", retail="", wholesale="", wholesale_from="", category=""):
         if not name:
             return False
         try:
+            used = set(self._price_row_map())
+            new_id = self._next_price_id(used)
             self.sheet_price.append_row([
                 name, description, photo,
                 str(retail), str(wholesale), str(wholesale_from),
-                category or "Без категории",
-            ])
+                category or "Без категории", new_id,
+            ], value_input_option="RAW")
             self._invalidate_cache("price")
             self.log_action("system", "Добавление товара в прайс", name)
             return True
@@ -682,6 +779,7 @@ class SheetManager:
             logger.error(f"add_price_item: {e}")
             return False
 
+    @_locked
     def update_price_item(self, row_index, field, value):
         col_map = {'name': 1, 'description': 2, 'photo': 3,
                    'retail': 4, 'wholesale': 5, 'wholesale_from': 6, 'category': 7}
@@ -689,55 +787,99 @@ class SheetManager:
         if not col:
             return False
         try:
-            self.sheet_price.update_cell(row_index, col, str(value))
+            sheet_row = self._price_row_map().get(int(row_index))
+            if not sheet_row:
+                return False
+            self.sheet_price.update_cell(sheet_row, col, str(value))
             self._invalidate_cache("price")
             return True
         except Exception as e:
             logger.error(f"update_price_item: {e}")
             return False
 
+    @_locked
+    def update_price_item_fields(self, row_index, fields):
+        """Меняет сразу несколько полей одной строкой (один запрос вместо N)."""
+        order = ['name', 'description', 'photo', 'retail', 'wholesale', 'wholesale_from', 'category']
+        try:
+            sheet_row = self._price_row_map().get(int(row_index))
+            if not sheet_row:
+                return False
+            current = self.sheet_price.row_values(sheet_row)
+            current = list(current) + [""] * (7 - len(current))
+            for i, f in enumerate(order):
+                if f in fields:
+                    current[i] = str(fields[f])
+            self.sheet_price.update(f"A{sheet_row}:G{sheet_row}", [current[:7]], value_input_option="RAW")
+            self._invalidate_cache("price")
+            return True
+        except Exception as e:
+            logger.error(f"update_price_item_fields: {e}")
+            return False
+
+    def _delete_sheet_rows(self, sheet_rows):
+        """Удаляет строки листа «Прайс» одним запросом (с конца, чтобы номера не съезжали)."""
+        requests = [{"deleteDimension": {"range": {
+            "sheetId": self.sheet_price.id, "dimension": "ROWS",
+            "startIndex": r - 1, "endIndex": r}}} for r in sorted(set(sheet_rows), reverse=True)]
+        if requests:
+            self.sheet.batch_update({"requests": requests})
+
+    @_locked
     def delete_price_item(self, row_index):
         try:
-            self.sheet_price.delete_rows(row_index)
+            sheet_row = self._price_row_map().get(int(row_index))
+            if not sheet_row:
+                return False
+            self._delete_sheet_rows([sheet_row])
             self._invalidate_cache("price")
-            self.log_action("system", "Удаление товара из прайса", f"строка {row_index}")
+            self.log_action("system", "Удаление товара из прайса", f"ID {row_index}")
             return True
         except Exception as e:
             logger.error(f"delete_price_item: {e}")
             return False
 
+    @_locked
     def delete_price_items(self, rows):
-        sorted_rows = sorted(set(rows), reverse=True)
-        count = 0
-        for r in sorted_rows:
-            try:
-                self.sheet_price.delete_rows(r)
-                count += 1
-            except Exception as e:
-                logger.error(f"delete_price_items row {r}: {e}")
+        try:
+            rmap = self._price_row_map()
+            targets = [rmap[int(r)] for r in set(rows) if int(r) in rmap]
+            self._delete_sheet_rows(targets)
+        except Exception as e:
+            logger.error(f"delete_price_items: {e}")
+            return 0
         self._invalidate_cache("price")
-        self.log_action("system", "Массовое удаление товаров", f"удалено {count}")
-        return count
+        self.log_action("system", "Массовое удаление товаров", f"удалено {len(targets)}")
+        return len(targets)
 
+    @_locked
     def set_category_for_rows(self, rows, category):
-        count = 0
-        for r in set(rows):
-            try:
-                self.sheet_price.update_cell(r, 7, category)
-                count += 1
-            except Exception as e:
-                logger.error(f"set_category row {r}: {e}")
+        try:
+            rmap = self._price_row_map()
+            targets = [rmap[int(r)] for r in set(rows) if int(r) in rmap]
+            if targets:
+                self.sheet_price.batch_update(
+                    [{"range": f"G{r}", "values": [[category]]} for r in targets],
+                    value_input_option="RAW")
+        except Exception as e:
+            logger.error(f"set_category_for_rows: {e}")
+            return 0
         self._invalidate_cache("price")
-        self.log_action("system", "Массовая смена категории", f"{count} товаров → {category}")
-        return count
+        self.log_action("system", "Массовая смена категории", f"{len(targets)} товаров → {category}")
+        return len(targets)
 
+    @_locked
     def import_price_items(self, items):
         if not items:
             return 0
         all_rows = self.sheet_price.get_all_values()
+        used = set(self._price_row_map())
+        # следующая свободная строка — по столбцу названий, а не по длине всех значений
         start_row = len(all_rows) + 1
         rows_to_add = []
-        for it in items:
+        first_id = self._next_price_id(used, count=len(items))
+        for n, it in enumerate(items):
+            new_id = first_id + n
             rows_to_add.append([
                 it.get("name", "") or "",
                 it.get("description", "") or "",
@@ -746,10 +888,11 @@ class SheetManager:
                 str(it.get("wholesale", "") or ""),
                 str(it.get("wholesale_from", "") or ""),
                 it.get("category", "") or "Без категории",
+                new_id,
             ])
         end_row = start_row + len(rows_to_add) - 1
         try:
-            self.sheet_price.update(f"A{start_row}:G{end_row}", rows_to_add, value_input_option="USER_ENTERED")
+            self.sheet_price.update(f"A{start_row}:H{end_row}", rows_to_add, value_input_option="RAW")
             self._invalidate_cache("price")
             self.log_action("system", "Импорт товаров из CSV", f"добавлено {len(rows_to_add)}")
             return len(rows_to_add)
@@ -911,6 +1054,7 @@ class SheetManager:
             }
         return result
 
+    @_locked
     def add_review(self, product_row, name, rating, text):
         rating = max(1, min(5, int(rating)))
         text = (text or "").strip()[:1000]
@@ -989,6 +1133,7 @@ class SheetManager:
         """{(позиция_lower, точка_lower): количество}"""
         return self._get_cached("shipments", self._fetch_shipments)
 
+    @_locked
     def set_shipment(self, position, location, qty):
         position = (position or "").strip()
         location = (location or "").strip()
@@ -1012,6 +1157,7 @@ class SheetManager:
             logger.error(f"set_shipment: {e}")
             return False
 
+    @_locked
     def add_shipments_batch(self, items):
         """Прибавляет количества к отправкам одним пакетом запросов.
 
@@ -1045,13 +1191,14 @@ class SheetManager:
                 result[key] = add
                 new_rows.append([names[key][0], names[key][1], add])
         if updates:
-            self.sheet_shipments.batch_update(updates, value_input_option="USER_ENTERED")
+            self.sheet_shipments.batch_update(updates, value_input_option="RAW")
         if new_rows:
-            self.sheet_shipments.append_rows(new_rows, value_input_option="USER_ENTERED")
+            self.sheet_shipments.append_rows(new_rows, value_input_option="RAW")
         self._invalidate_cache("shipments")
         self.log_action("system", "Отправки (вставка текста)", f"{len(delta)} поз., {sum(delta.values())} шт")
         return result
 
+    @_locked
     def add_orders_batch(self, items):
         """Создаёт несколько заказов одним запросом.
 
@@ -1073,12 +1220,13 @@ class SheetManager:
             last += 1
             nums.append(last)
             rows.append([last, position, int(ordered), int(printed), deadline, now_str, "Нет", customer])
-        self.sheet_orders.append_rows(rows, value_input_option="USER_ENTERED")
+        self.sheet_orders.append_rows(rows, value_input_option="RAW")
         self._invalidate_cache("orders")
         self.log_action("system", "Создание заказов (страница допечатки)",
                         ", ".join(f"№{n} {r[1]} x{r[2]}" for n, r in zip(nums, rows)))
         return nums
 
+    @_locked
     def close_position_orders(self, position_lower):
         """Помечает выполненными все активные заказы позиции. Возвращает, сколько закрыто."""
         records = self.sheet_orders.get_all_values()
@@ -1092,11 +1240,12 @@ class SheetManager:
             updates.append({"range": f"F{idx}", "values": [[now_str]]})
             closed += 1
         if updates:
-            self.sheet_orders.batch_update(updates, value_input_option="USER_ENTERED")
+            self.sheet_orders.batch_update(updates, value_input_option="RAW")
             self._invalidate_cache("orders")
             self.log_action("system", "Закрытие позиции (страница допечатки)", f"{position_lower}: {closed} зак.")
         return closed
 
+    @_locked
     def set_position_ordered(self, position_lower, new_total):
         """Ставит суммарное «заказано» по позиции (см. plan_set_ordered).
 
@@ -1123,11 +1272,12 @@ class SheetManager:
                 updates.append({"range": f"F{c['row']}", "values": [[now_str]]})
                 if c.get("close"):
                     updates.append({"range": f"G{c['row']}", "values": [["Да"]]})
-            self.sheet_orders.batch_update(updates, value_input_option="USER_ENTERED")
+            self.sheet_orders.batch_update(updates, value_input_option="RAW")
             self._invalidate_cache("orders")
             self.log_action("system", "Изменение «заказано» (страница допечатки)", f"{position_lower}: {before} → {new_total}")
         return {"before": before, "after": new_total}
 
+    @_locked
     def add_printed_batch(self, qty_by_position):
         """Прибавляет напечатанное к активным заказам позиций (сначала ближайший срок).
 
@@ -1162,7 +1312,7 @@ class SheetManager:
             if left:
                 leftover[key] = left
         if updates:
-            self.sheet_orders.batch_update(updates, value_input_option="USER_ENTERED")
+            self.sheet_orders.batch_update(updates, value_input_option="RAW")
         self._invalidate_cache("orders")
         self.log_action("system", "Напечатано (вставка текста)", f"{sum(added.values())} шт по {len(added)} поз.")
         return {"added": added, "leftover": leftover}
