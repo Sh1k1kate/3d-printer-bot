@@ -4,16 +4,63 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery
 from keyboards import (
     main_menu, cancel_keyboard, kit_action_keyboard, kit_parameters_keyboard,
-    select_model_keyboard, show_current_items_keyboard
+    select_model_keyboard, show_current_items_keyboard, resolve_name
 )
 from states import AddKit, EditKit, CreateOrder
 from google_sheets import SheetManager
 from .common import format_kit_info, escape_markdown, safe_answer, safe_edit
 import logging
+import math
+import re
 
 logger = logging.getLogger(__name__)
 router = Router()
 sheet = SheetManager()
+
+STALE_MSG = "Устарело, откройте список заново"
+MAX_NAME_LEN = 100
+MAX_QTY = 1_000_000
+MAX_PRICE = 10_000_000
+_PAGE_RE = re.compile(r"^page_(\d{1,4})$")
+
+
+def _parse_int(text, min_value=1, max_value=MAX_QTY):
+    text = (text or "").strip()
+    if not text or not text.isascii() or not text.isdigit():
+        return None
+    value = int(text)
+    return value if min_value <= value <= max_value else None
+
+
+def _parse_price(text):
+    """Цена: конечное неотрицательное число до MAX_PRICE, иначе None."""
+    try:
+        value = float((text or "").strip().replace(",", "."))
+    except (ValueError, OverflowError):
+        return None
+    if not math.isfinite(value) or value < 0 or value > MAX_PRICE:
+        return None
+    return value
+
+
+def _resolve_model(raw):
+    try:
+        return resolve_name(raw, sheet.get_all_models())
+    except Exception as e:
+        logger.warning(f"Не удалось получить список моделей: {e}")
+        return None
+
+
+def _resolve_kit(raw):
+    try:
+        return resolve_name(raw, sheet.get_all_kits())
+    except Exception as e:
+        logger.warning(f"Не удалось получить список наборов: {e}")
+        return None
+
+
+async def _stale(callback: CallbackQuery):
+    await callback.answer(STALE_MSG, show_alert=True)
 
 
 @router.message(F.text == "➕ Добавить набор")
@@ -23,15 +70,18 @@ async def add_kit_start(message: Message, state: FSMContext):
     if not models:
         await message.answer("❌ Сначала добавьте хотя бы одну модель.")
         return
-    await message.answer("Введите *название набора*:", reply_markup=cancel_keyboard)
+    await message.answer("Введите *название набора*:", parse_mode="Markdown", reply_markup=cancel_keyboard)
     await state.set_state(AddKit.waiting_for_kit_name)
 
 
-@router.message(AddKit.waiting_for_kit_name, F.text != "❌ Отмена")
+@router.message(AddKit.waiting_for_kit_name, F.text, F.text != "❌ Отмена")
 async def process_kit_name(message: Message, state: FSMContext):
     kit_name = message.text.strip()
+    if not kit_name or len(kit_name) > MAX_NAME_LEN:
+        await message.answer(f"❌ Название обязательно (до {MAX_NAME_LEN} символов).")
+        return
     existing = sheet.get_all_kits()
-    if kit_name in existing:
+    if kit_name.lower() in {k.lower() for k in existing}:
         await message.answer("❌ Набор с таким названием уже существует.")
         return
     await state.update_data(kit_name=kit_name, kit_items=[])
@@ -47,16 +97,19 @@ async def process_kit_name(message: Message, state: FSMContext):
 
 @router.callback_query(AddKit.waiting_for_item, F.data.startswith("add_kit_model_"))
 async def add_kit_select_model(callback: CallbackQuery, state: FSMContext):
-    data = callback.data[14:]
-    if data.startswith("page_"):
-        page = int(data.split('_')[1])
+    data = callback.data[len("add_kit_model_"):]
+    m = _PAGE_RE.match(data)
+    if m:
         models = sheet.get_all_models()
         await callback.message.edit_reply_markup(
-            reply_markup=select_model_keyboard(models, page=page, prefix="add_kit_model")
+            reply_markup=select_model_keyboard(models, page=int(m.group(1)), prefix="add_kit_model")
         )
         await callback.answer()
         return
-    model_name = data
+    model_name = _resolve_model(data)
+    if model_name is None:
+        await _stale(callback)
+        return
     await state.update_data(selected_model=model_name)
     await safe_answer(
         callback.message,
@@ -68,14 +121,11 @@ async def add_kit_select_model(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-@router.message(AddKit.waiting_for_quantity_for_item, F.text != "❌ Отмена")
+@router.message(AddKit.waiting_for_quantity_for_item, F.text, F.text != "❌ Отмена")
 async def add_kit_process_quantity(message: Message, state: FSMContext):
-    if not message.text.isdigit():
-        await message.answer("Введите целое положительное число.")
-        return
-    qty = int(message.text)
-    if qty <= 0:
-        await message.answer("Количество должно быть больше 0.")
+    qty = _parse_int(message.text)
+    if qty is None:
+        await message.answer("Введите целое положительное число (до 1 000 000).")
         return
     data = await state.get_data()
     model_name = data.get("selected_model")
@@ -91,7 +141,7 @@ async def add_kit_process_quantity(message: Message, state: FSMContext):
     else:
         items.append((model_name, qty))
     await state.update_data(kit_items=items)
-    await message.answer(f"✅ Добавлено: {escape_markdown(model_name)} x{qty}.")
+    await message.answer(f"✅ Добавлено: {model_name} x{qty}.")
     models = sheet.get_all_models()
     await message.answer("Выберите следующую модель:", reply_markup=select_model_keyboard(models, prefix="add_kit_model"))
     await state.set_state(AddKit.waiting_for_item)
@@ -111,27 +161,34 @@ async def add_kit_done(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-@router.message(AddKit.waiting_for_price, F.text != "❌ Отмена")
+@router.message(AddKit.waiting_for_price, F.text, F.text != "❌ Отмена")
 async def process_kit_price(message: Message, state: FSMContext):
-    try:
-        price = float(message.text.replace(',', '.'))
-    except:
-        await message.answer("❌ Введите число (цену).")
+    price = _parse_price(message.text)
+    if price is None:
+        await message.answer("❌ Введите неотрицательное число (цену), например 1500 или 99,90.")
         return
     await state.update_data(kit_price=price)
     await message.answer("Введите *описание набора* (или 'нет'):", parse_mode="Markdown")
     await state.set_state(AddKit.waiting_for_description)
 
 
-@router.message(AddKit.waiting_for_description, F.text != "❌ Отмена")
+@router.message(AddKit.waiting_for_description, F.text, F.text != "❌ Отмена")
 async def process_kit_description(message: Message, state: FSMContext):
     desc = message.text.strip()
     if desc.lower() == "нет":
         desc = ""
     data = await state.get_data()
-    kit_name = data["kit_name"]
-    items_text = data["kit_items_text"]
-    price = data["kit_price"]
+    kit_name = data.get("kit_name")
+    items_text = data.get("kit_items_text")
+    price = data.get("kit_price")
+    if not kit_name or items_text is None or price is None:
+        await message.answer("Ошибка: данные потеряны. Начните заново.", reply_markup=main_menu)
+        await state.clear()
+        return
+    if kit_name.lower() in {k.lower() for k in sheet.get_all_kits()}:
+        await message.answer("❌ Набор с таким названием уже существует.", reply_markup=main_menu)
+        await state.clear()
+        return
     sheet.add_kit(kit_name, items_text, price, desc)
     await safe_answer(
         message,
@@ -149,34 +206,22 @@ async def cancel_add_kit(message: Message, state: FSMContext):
 
 
 # ---------- Редактирование ----------
-@router.callback_query(F.data.startswith("edit_kit_"))
-async def edit_kit_start(callback: CallbackQuery):
-    kit_name = callback.data[9:]
-    kit_data = sheet.get_kit_details(kit_name)
-    if not kit_data:
-        await callback.answer("Набор не найден", show_alert=True)
-        return
-    await safe_edit(
-        callback.message,
-        f"✏️ Редактирование набора *{escape_markdown(kit_name)}*",
-        parse_mode="Markdown",
-        reply_markup=kit_parameters_keyboard(kit_name)
-    )
-    await callback.answer()
-
-
+# Порядок регистрации важен: сначала специфичные префиксы (edit_kit_param_, edit_kit_add,
+# edit_kit_model_), затем общий edit_kit_<key>, который их исключает по regexp.
 @router.callback_query(F.data.startswith("edit_kit_param_"))
 async def edit_kit_param_start(callback: CallbackQuery, state: FSMContext):
-    data = callback.data[15:]
-    parts = data.split('_')
-    if len(parts) < 2:
+    data = callback.data[len("edit_kit_param_"):]
+    raw_kit, sep, param = data.rpartition('_')
+    if not sep or not raw_kit:
         await callback.answer("Ошибка формата")
         return
-    param = parts[-1]
-    kit_name = '_'.join(parts[:-1])
+    kit_name = _resolve_kit(raw_kit)
+    if kit_name is None:
+        await _stale(callback)
+        return
     kit_data = sheet.get_kit_details(kit_name)
     if not kit_data:
-        await callback.answer("Набор не найден", show_alert=True)
+        await _stale(callback)
         return
     if param == "name":
         current = kit_data[0]
@@ -205,6 +250,25 @@ async def edit_kit_param_start(callback: CallbackQuery, state: FSMContext):
         await ask_edit_kit_value(callback, state, kit_name, param, current, prompt)
     else:
         await callback.answer("Неизвестный параметр")
+
+
+@router.callback_query(F.data.regexp(r"^edit_kit_(?!param_|add$|model_)"))
+async def edit_kit_start(callback: CallbackQuery):
+    kit_name = _resolve_kit(callback.data[len("edit_kit_"):])
+    if kit_name is None:
+        await _stale(callback)
+        return
+    kit_data = sheet.get_kit_details(kit_name)
+    if not kit_data:
+        await _stale(callback)
+        return
+    await safe_edit(
+        callback.message,
+        f"✏️ Редактирование набора *{escape_markdown(kit_name)}*",
+        parse_mode="Markdown",
+        reply_markup=kit_parameters_keyboard(kit_name)
+    )
+    await callback.answer()
 
 
 async def ask_edit_kit_value(callback, state, kit_name, param, current, prompt):
@@ -240,14 +304,17 @@ async def edit_kit_add_model(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(EditKit.waiting_for_item_edit, F.data.startswith("edit_kit_model_"))
 async def edit_kit_select_model(callback: CallbackQuery, state: FSMContext):
-    data = callback.data[15:]
-    if data.startswith("page_"):
-        page = int(data.split('_')[1])
+    data = callback.data[len("edit_kit_model_"):]
+    m = _PAGE_RE.match(data)
+    if m:
         models = sheet.get_all_models()
-        await callback.message.edit_reply_markup(reply_markup=select_model_keyboard(models, page=page, prefix="edit_kit_model"))
+        await callback.message.edit_reply_markup(reply_markup=select_model_keyboard(models, page=int(m.group(1)), prefix="edit_kit_model"))
         await callback.answer()
         return
-    model_name = data
+    model_name = _resolve_model(data)
+    if model_name is None:
+        await _stale(callback)
+        return
     await state.update_data(edit_selected_model=model_name)
     await safe_answer(
         callback.message,
@@ -259,14 +326,11 @@ async def edit_kit_select_model(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-@router.message(EditKit.waiting_for_quantity_edit, F.text != "❌ Отмена")
+@router.message(EditKit.waiting_for_quantity_edit, F.text, F.text != "❌ Отмена")
 async def edit_kit_process_quantity(message: Message, state: FSMContext):
-    if not message.text.isdigit():
-        await message.answer("Введите целое положительное число.")
-        return
-    qty = int(message.text)
-    if qty <= 0:
-        await message.answer("Количество должно быть больше 0.")
+    qty = _parse_int(message.text)
+    if qty is None:
+        await message.answer("Введите целое положительное число (до 1 000 000).")
         return
     data = await state.get_data()
     model_name = data.get("edit_selected_model")
@@ -285,7 +349,7 @@ async def edit_kit_process_quantity(message: Message, state: FSMContext):
     await state.update_data(edit_kit_items=items)
     items_text = ", ".join([f"{m} x{q}" for m, q in items])
     sheet.update_kit_field(kit_name, 'items', items_text)
-    await message.answer(f"✅ Добавлено: {escape_markdown(model_name)} x{qty}.")
+    await message.answer(f"✅ Добавлено: {model_name} x{qty}.")
     items_display = "\n".join([f"• {escape_markdown(m)} x{q}" for m, q in items])
     await safe_answer(
         message,
@@ -298,11 +362,11 @@ async def edit_kit_process_quantity(message: Message, state: FSMContext):
 
 @router.callback_query(EditKit.waiting_for_item_edit, F.data.startswith("remove_kit_item_"))
 async def edit_kit_remove_item(callback: CallbackQuery, state: FSMContext):
-    index = int(callback.data.split('_')[-1])
+    index = _parse_int(callback.data.rsplit('_', 1)[-1], 0, 10_000)
     data = await state.get_data()
     items = data.get("edit_kit_items", [])
     kit_name = data.get("edit_kit_name")
-    if not items or index >= len(items):
+    if index is None or not kit_name or not items or index >= len(items):
         await callback.answer("Ошибка: позиция не найдена")
         return
     removed = items.pop(index)
@@ -334,7 +398,7 @@ async def edit_kit_back_to_kit(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-@router.message(EditKit.waiting_for_new_value, F.text != "❌ Отмена")
+@router.message(EditKit.waiting_for_new_value, F.text, F.text != "❌ Отмена")
 async def process_edit_kit_param(message: Message, state: FSMContext):
     data = await state.get_data()
     kit_name = data.get("edit_kit_name")
@@ -345,17 +409,19 @@ async def process_edit_kit_param(message: Message, state: FSMContext):
         return
     new_value = message.text.strip()
     if param == "name":
-        if new_value != kit_name and new_value in sheet.get_all_kits():
+        if not new_value or len(new_value) > MAX_NAME_LEN:
+            await message.answer(f"❌ Название обязательно (до {MAX_NAME_LEN} символов).")
+            return
+        if new_value != kit_name and new_value.lower() in {k.lower() for k in sheet.get_all_kits()}:
             await message.answer("❌ Набор с таким именем уже существует.")
             return
         sheet.update_kit_field(kit_name, 'name', new_value)
         await safe_answer(message, f"✅ Название изменено на *{escape_markdown(new_value)}*", parse_mode="Markdown")
         kit_name = new_value
     elif param == "price":
-        try:
-            price = float(new_value.replace(',', '.'))
-        except:
-            await message.answer("❌ Введите число.")
+        price = _parse_price(new_value)
+        if price is None:
+            await message.answer("❌ Введите неотрицательное число.")
             return
         sheet.update_kit_field(kit_name, 'price', price)
         await message.answer(f"✅ Цена обновлена: {price}")
@@ -384,10 +450,13 @@ async def cancel_edit_kit(message: Message, state: FSMContext):
 
 @router.callback_query(F.data.startswith("kit_"))
 async def show_kit_details(callback: CallbackQuery):
-    kit_name = callback.data[4:]
+    kit_name = _resolve_kit(callback.data[4:])
+    if kit_name is None:
+        await _stale(callback)
+        return
     kit_data = sheet.get_kit_details(kit_name)
     if not kit_data:
-        await callback.answer("Набор не найден", show_alert=True)
+        await _stale(callback)
         return
     text = format_kit_info(kit_name, kit_data)
     await safe_edit(callback.message, text, parse_mode="Markdown", reply_markup=kit_action_keyboard(kit_name))
@@ -398,10 +467,9 @@ async def show_kit_details(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("order_kit_"))
 async def order_kit_from_card(callback: CallbackQuery, state: FSMContext):
     """Кнопка «🛒 Заказать этот набор» в карточке набора."""
-    kit_name = callback.data[len("order_kit_"):]
-    kits = sheet.get_all_kits()
-    if kit_name not in kits:
-        await callback.answer("Набор не найден", show_alert=True)
+    kit_name = _resolve_kit(callback.data[len("order_kit_"):])
+    if kit_name is None:
+        await _stale(callback)
         return
     await state.clear()
     await state.update_data(order_item=kit_name, order_type="kit")

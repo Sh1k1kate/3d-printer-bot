@@ -160,12 +160,24 @@
     </div>
   </div>
 
+  <div id="login-overlay" class="hidden fixed inset-0 z-[60] bg-gray-100 dark:bg-gray-900 flex items-center justify-center p-4">
+    <div class="bg-white dark:bg-gray-800 rounded-xl shadow-2xl w-full max-w-sm p-6">
+      <h2 class="text-lg font-bold mb-3">🔑 Вход администратора</h2>
+      <input id="login-pwd" type="password" autocomplete="current-password" placeholder="Пароль"
+             class="w-full px-3 py-2 border rounded-lg bg-white dark:bg-gray-700 dark:border-gray-600"
+             onkeydown="if(event.key==='Enter')doLogin()">
+      <p id="login-msg" class="text-sm text-red-600 mt-2 min-h-[1.25rem]"></p>
+      <button id="login-btn" onclick="doLogin()" class="w-full mt-2 px-4 py-2 rounded-lg bg-blue-500 hover:bg-blue-600 text-white">Войти</button>
+    </div>
+  </div>
+
   <div id="toast" class="fixed bottom-5 left-1/2 -translate-x-1/2 px-4 py-2 rounded-lg shadow-lg text-white text-sm opacity-0 pointer-events-none"></div>
 
   <script>
     const API = '/api/production';
     let locations = [], rows = [], filter = 'all', query = '', saving = 0;
-    let adminToken = localStorage.getItem('priceAdminToken') || '';
+    let adminToken = '';
+    try { adminToken = localStorage.getItem('adminToken') || ''; localStorage.removeItem('priceAdminToken'); } catch (e) {}
     const $ = id => document.getElementById(id);
 
     function esc(s) {
@@ -188,26 +200,45 @@
       $('add-pos-btn').classList.toggle('hidden', !adminToken);
       $('auth-btn').textContent = adminToken ? '🔓 Редактирование включено · выйти' : '🔑 Войти для редактирования';
     }
-    async function toggleAuth() {
-      if (adminToken) { logout(); render(); return; }
-      const pwd = prompt('Пароль администратора:');
-      if (!pwd) return;
-      try {
-        const r = await fetch('/api/price/admin', { headers: { 'X-Admin-Token': pwd } });
-        if (r.ok) {
-          adminToken = pwd;
-          localStorage.setItem('priceAdminToken', pwd);
-          toast('Редактирование включено');
-          render();
-        } else {
-          toast('Неверный пароль', true);
-        }
-      } catch (e) { toast('Ошибка соединения', true); }
+    function showLogin(msg) {
+      $('login-msg').textContent = msg || '';
+      $('login-overlay').classList.remove('hidden');
+      setTimeout(() => $('login-pwd').focus(), 50);
     }
-    function logout() {
+    function hideLogin() { $('login-overlay').classList.add('hidden'); }
+    function toggleAuth() {
+      if (adminToken) { logout(); render(); return; }
+      showLogin('');
+    }
+    async function doLogin() {
+      const pwd = $('login-pwd').value;
+      if (!pwd) return;
+      $('login-btn').disabled = true;
+      try {
+        const r = await fetch('/api/admin/login', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password: pwd })
+        });
+        if (r.status === 401) { $('login-msg').textContent = 'Неверный пароль'; return; }
+        if (r.status === 429) { $('login-msg').textContent = 'Слишком много попыток, подождите'; return; }
+        if (!r.ok) { $('login-msg').textContent = 'Ошибка сервера (' + r.status + ')'; return; }
+        const d = await r.json();
+        adminToken = d.token;
+        try { localStorage.setItem('adminToken', adminToken); } catch (e) {}
+        $('login-pwd').value = '';
+        hideLogin();
+        updateAuthBtn();
+        load();
+      } catch (e) {
+        $('login-msg').textContent = 'Ошибка соединения';
+      } finally { $('login-btn').disabled = false; }
+    }
+    function logout(msg) {
       adminToken = '';
-      localStorage.removeItem('priceAdminToken');
+      try { localStorage.removeItem('adminToken'); } catch (e) {}
+      rows = [];
       updateAuthBtn();
+      showLogin(msg || '');
     }
 
     // ---------- уведомления ----------
@@ -225,7 +256,9 @@
     // ---------- загрузка ----------
     async function load() {
       try {
-        const r = await fetch(API);
+        if (!adminToken) { showLogin(''); return; }
+        const r = await fetch(API, { headers: { 'X-Admin-Token': adminToken } });
+        if (r.status === 401) { logout('Сессия истекла — войдите снова'); return; }
         if (!r.ok) throw new Error('HTTP ' + r.status);
         const d = await r.json();
         if (d.error) throw new Error(d.error);
@@ -380,7 +413,7 @@
           headers: { 'Content-Type': 'application/json', 'X-Admin-Token': adminToken },
           body: JSON.stringify({ position: row.name, location: loc, qty })
         });
-        if (r.status === 401) { logout(); render(); toast('Пароль не подошёл — войдите заново', true); return; }
+        if (r.status === 401) { logout('Сессия истекла — войдите снова'); render(); return; }
         if (!r.ok) {
           const d = await r.json().catch(() => ({}));
           throw new Error(d.error || d.detail || ('HTTP ' + r.status));
@@ -420,7 +453,7 @@
       });
       let d = {};
       try { d = await r.json(); } catch (e) {}
-      if (r.status === 401) { logout(); closePaste(); render(); throw new Error('Пароль не подошёл — войдите заново'); }
+      if (r.status === 401) { logout('Сессия истекла — войдите снова'); closePaste(); render(); throw new Error('Сессия истекла — войдите снова'); }
       if (!r.ok) {
         const extra = Array.isArray(d.details) ? '\n' + d.details.join('\n') : '';
         throw new Error((d.error || d.detail || ('HTTP ' + r.status)) + extra);

@@ -9,7 +9,7 @@
   <script>
     tailwind.config = { darkMode: 'class' };
   </script>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
   <style>
     * { transition: background-color 0.3s, color 0.3s, border-color 0.3s; }
     .progress-bar { transition: width 1s ease-in-out; }
@@ -39,9 +39,18 @@
       margin-right: 4px;
     }
     .dark .temp-badge { background: rgba(255,255,255,0.1); }
+    [hidden] { display: none !important; }
   </style>
 </head>
 <body class="bg-gray-100 dark:bg-gray-900 text-gray-800 dark:text-gray-200 font-sans antialiased">
+  <div id="login-overlay" class="fixed inset-0 z-50 bg-gray-100 dark:bg-gray-900 flex items-center justify-center p-4">
+    <form id="login-form" class="bg-white dark:bg-gray-800 rounded-lg shadow p-6 w-full max-w-sm space-y-4">
+      <h2 class="text-xl font-bold">🔒 Вход в трекер</h2>
+      <input type="password" id="login-password" autocomplete="current-password" placeholder="Пароль администратора" class="w-full px-3 py-2 border rounded-lg bg-white dark:bg-gray-700">
+      <div id="login-error" hidden role="alert" class="text-sm text-red-600 dark:text-red-400"></div>
+      <button type="submit" id="login-submit" class="w-full bg-blue-500 hover:bg-blue-600 disabled:opacity-50 text-white px-4 py-2 rounded-lg">Войти</button>
+    </form>
+  </div>
   <div class="container mx-auto px-4 py-6 max-w-7xl">
     <header class="flex flex-wrap items-center justify-between gap-4 mb-8">
       <div class="flex items-center gap-3">
@@ -63,8 +72,11 @@
           <span class="text-xs hidden sm:inline" id="theme-label">Тёмная</span>
         </button>
         <button onclick="exportCSV()" class="bg-green-500 hover:bg-green-600 text-white text-sm px-3 py-1.5 rounded-lg transition">📥 CSV</button>
+        <button onclick="logout()" class="bg-gray-500 hover:bg-gray-600 text-white text-sm px-3 py-1.5 rounded-lg transition">Выйти</button>
       </div>
     </header>
+
+    <div id="load-error" hidden role="alert" class="mb-4 px-4 py-3 rounded-lg bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200 text-sm"></div>
 
     <div class="flex border-b border-gray-200 dark:border-gray-700 mb-6 overflow-x-auto">
       <button class="tab-btn px-4 py-2 text-sm font-medium border-b-2 border-blue-500 text-blue-600 dark:text-blue-400 whitespace-nowrap" data-tab="printers">🖨️ Принтеры</button>
@@ -234,12 +246,115 @@
   </div>
 
   <script>
-    let darkMode = localStorage.getItem('theme') === 'dark';
+    try { localStorage.removeItem('priceAdminToken'); } catch (e) {}
+
+    function escapeHtml(s) {
+      if (s === null || s === undefined) return '';
+      return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+    function num(v) { const n = Number(v); return isFinite(n) ? n : 0; }
+    function isDone(o) { return String(o.status || '').toLowerCase() === 'да'; }
+
+    // ---- токен ----
+    const TOKEN_KEY = 'adminToken';
+    function getToken() { try { return localStorage.getItem(TOKEN_KEY) || ''; } catch (e) { return ''; } }
+    function setToken(t) { try { localStorage.setItem(TOKEN_KEY, t); } catch (e) {} }
+    function clearToken() { try { localStorage.removeItem(TOKEN_KEY); } catch (e) {} }
+
+    class AuthError extends Error {}
+
+    function showLogin(msg) {
+      allOrders = []; allTasks = []; allPrinters = [];
+      renderPrintersGrid(); applyOrderFilters(); applyTaskFilters();
+      document.getElementById('login-overlay').hidden = false;
+      const err = document.getElementById('login-error');
+      err.textContent = msg || '';
+      err.hidden = !msg;
+      setTimeout(() => document.getElementById('login-password').focus(), 0);
+    }
+    function hideLogin() { document.getElementById('login-overlay').hidden = true; }
+
+    function handleAuthLost() {
+      clearToken();
+      showLogin('Сессия истекла или токен неверен. Войдите снова.');
+    }
+
+    async function apiGet(url) {
+      const token = getToken();
+      if (!token) { showLogin(''); throw new AuthError('no token'); }
+      const resp = await fetch(url, { headers: { 'X-Admin-Token': token } });
+      if (resp.status === 401) { handleAuthLost(); throw new AuthError('401'); }
+      let data = null;
+      try { data = await resp.json(); } catch (e) {}
+      if (!resp.ok) {
+        const m = data && (data.error || data.detail);
+        throw new Error(typeof m === 'string' ? m : 'HTTP ' + resp.status);
+      }
+      if (!data || typeof data !== 'object') throw new Error('Некорректный ответ сервера');
+      return data;
+    }
+
+    document.getElementById('login-form').addEventListener('submit', async function(ev) {
+      ev.preventDefault();
+      const pwInput = document.getElementById('login-password');
+      const btn = document.getElementById('login-submit');
+      const errEl = document.getElementById('login-error');
+      const password = pwInput.value;
+      if (!password) return;
+      const fail = (m) => { errEl.textContent = m; errEl.hidden = false; };
+      btn.disabled = true;
+      try {
+        const resp = await fetch('/api/admin/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password })
+        });
+        let data = null;
+        try { data = await resp.json(); } catch (e) {}
+        if (resp.status === 429) { fail('Слишком много попыток. Подождите и повторите.'); return; }
+        if (resp.status === 401) { fail('Неверный пароль'); return; }
+        if (!resp.ok || !data || !data.token) {
+          fail((data && data.error) ? String(data.error) : 'Ошибка входа (HTTP ' + resp.status + ')');
+          return;
+        }
+        setToken(data.token);
+        pwInput.value = '';
+        errEl.hidden = true;
+        hideLogin();
+        startApp();
+      } catch (e) {
+        fail('Сеть недоступна. Попробуйте ещё раз.');
+      } finally {
+        btn.disabled = false;
+      }
+    });
+
+    function logout() {
+      clearToken();
+      showLogin('');
+    }
+
+    // ---- ошибки загрузки ----
+    const loadErrors = {};
+    function setLoadError(key, msg) {
+      if (msg) loadErrors[key] = msg; else delete loadErrors[key];
+      const box = document.getElementById('load-error');
+      const items = Object.entries(loadErrors).map(([k, v]) => `${k}: ${v}`);
+      box.textContent = items.length ? 'Ошибка загрузки — ' + items.join('; ') : '';
+      box.hidden = !items.length;
+    }
+    function markUpdated() {
+      document.getElementById('last-update').textContent = 'Обновлено: ' + new Date().toLocaleTimeString();
+    }
+
+    // ---- тема ----
+    let darkMode = false; try { darkMode = localStorage.getItem('theme') === 'dark'; } catch (e) {}
     function applyTheme() {
       document.documentElement.classList.toggle('dark', darkMode);
       document.getElementById('theme-icon').textContent = darkMode ? '☀️' : '🌙';
       document.getElementById('theme-label').textContent = darkMode ? 'Светлая' : 'Тёмная';
-      localStorage.setItem('theme', darkMode ? 'dark' : 'light');
+      try { localStorage.setItem('theme', darkMode ? 'dark' : 'light'); } catch (e) {}
     }
     function toggleTheme() { darkMode = !darkMode; applyTheme(); }
     applyTheme();
@@ -255,10 +370,7 @@
         const tabId = this.dataset.tab;
         document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
         document.getElementById('tab-'+tabId).classList.add('active');
-        if (tabId === 'printers') loadPrinters();
-        else if (tabId === 'orders') loadOrders();
-        else if (tabId === 'tasks') loadTasks();
-        else if (tabId === 'infographics') loadInfographics();
+        loadActiveTab();
       });
     });
 
@@ -266,34 +378,48 @@
     let currentOrderFilter = 'all', orderSearchQuery = '', customerFilter = '', dateFrom = '', dateTo = '';
     let currentTaskFilter = 'all', taskSearchQuery = '';
 
+    // Каждый загрузчик возвращает true при успехе, false при ошибке (ошибка показана в интерфейсе)
     async function loadOrders() {
       const params = new URLSearchParams();
       if (customerFilter) params.append('customer', customerFilter);
       if (dateFrom) params.append('from_date', dateFrom);
       if (dateTo) params.append('to_date', dateTo);
-      const resp = await fetch('/api/orders?' + params.toString());
-      const data = await resp.json();
-      allOrders = data.orders || [];
-      applyOrderFilters();
-      populateCustomerFilter();
+      try {
+        const data = await apiGet('/api/orders?' + params.toString());
+        allOrders = Array.isArray(data.orders) ? data.orders : [];
+        setLoadError('Заказы', '');
+        applyOrderFilters();
+        populateCustomerFilter();
+        return true;
+      } catch (e) {
+        if (!(e instanceof AuthError)) setLoadError('Заказы', e.message);
+        return false;
+      }
     }
 
     async function loadTasks() {
-      const resp = await fetch('/api/tasks');
-      const data = await resp.json();
-      allTasks = data.tasks || [];
-      applyTaskFilters();
+      try {
+        const data = await apiGet('/api/tasks');
+        allTasks = Array.isArray(data.tasks) ? data.tasks : [];
+        setLoadError('Задачи', '');
+        applyTaskFilters();
+        return true;
+      } catch (e) {
+        if (!(e instanceof AuthError)) setLoadError('Задачи', e.message);
+        return false;
+      }
     }
 
     async function loadPrinters() {
       try {
-        const resp = await fetch('/api/printers');
-        const data = await resp.json();
-        allPrinters = data.printers || [];
+        const data = await apiGet('/api/printers');
+        allPrinters = Array.isArray(data.printers) ? data.printers : [];
+        setLoadError('Принтеры', '');
         renderPrintersGrid();
+        return true;
       } catch (e) {
-        console.error('Ошибка загрузки принтеров:', e);
-        document.getElementById('printers-grid').innerHTML = `<p class="text-red-500">Ошибка загрузки: ${e.message}</p>`;
+        if (!(e instanceof AuthError)) setLoadError('Принтеры', e.message);
+        return false;
       }
     }
 
@@ -307,12 +433,12 @@
     }
 
     function getStatusLabel(status) {
-      const s = (status || '').toUpperCase();
+      const s = String(status || '').toUpperCase();
       if (s === 'RUNNING') return '🖨️ Печатает';
       if (s === 'ACTIVE' || s === 'IDLE') return '⏸️ Ожидает';
       if (s === 'SUCCESS' || s === 'FINISH') return '✅ Готово';
       if (s === 'FAIL' || s === 'FAILED') return '❌ Ошибка';
-      return s || '—';
+      return escapeHtml(s) || '—';
     }
 
     function renderPrintersGrid() {
@@ -330,46 +456,46 @@
       });
 
       grid.innerHTML = sorted.map(p => {
-        const trays = p.ams?.trays || [];
+        const trays = (p.ams && Array.isArray(p.ams.trays)) ? p.ams.trays : [];
         const squares = trays.map(tray => {
           let color = '#cccccc';
-          if (tray.color && tray.color.length >= 6) {
+          if (typeof tray.color === 'string' && /^[0-9a-fA-F]{6}/.test(tray.color)) {
             color = '#' + tray.color.substring(0, 6);
           }
           const remain = tray.remaining ? `${tray.remaining}мм` : '';
           const type = tray.type || '—';
           const isExternal = tray.tray_id === 254;
           const label = isExternal ? 'Внешняя' : type;
-          return `<span class="filament-dot" style="background:${color};" title="${label} • ${remain}"></span>`;
+          return `<span class="filament-dot" style="background:${color};" title="${escapeHtml(label)} • ${escapeHtml(remain)}"></span>`;
         }).join('');
 
-        const progress = p.progress || 0;
+        const progress = Math.max(0, Math.min(100, num(p.progress)));
         const isRunning = (p.status || '').toUpperCase() === 'RUNNING';
         const progressBar = isRunning && progress > 0
           ? `<div class="w-full bg-gray-200 dark:bg-gray-600 rounded-full h-1.5 mt-2"><div class="bg-green-500 h-1.5 rounded-full progress-bar" style="width:${progress}%"></div></div><span class="text-xs text-gray-500">${progress}%</span>`
           : '';
 
         let remaining = '';
-        if (p.remaining_time && p.remaining_time > 0) {
-          const mins = p.remaining_time;
+        if (p.remaining_time && num(p.remaining_time) > 0) {
+          const mins = Math.round(num(p.remaining_time));
           const hours = Math.floor(mins / 60);
           const m = mins % 60;
           remaining = `<span class="text-xs text-gray-500 dark:text-gray-400">⏱ ${hours > 0 ? hours + 'ч ' : ''}${m}мин</span>`;
         }
 
         const taskName = p.subtask_name
-          ? `<div class="text-xs text-gray-500 dark:text-gray-400 truncate mt-1" title="${p.subtask_name}">${p.subtask_name}</div>`
+          ? `<div class="text-xs text-gray-500 dark:text-gray-400 truncate mt-1" title="${escapeHtml(p.subtask_name)}">${escapeHtml(p.subtask_name)}</div>`
           : '';
 
         let temps = '';
         if (p.nozzle_temper !== null && p.nozzle_temper !== undefined) {
-          const nt = Math.round(p.nozzle_temper);
-          const ntt = p.nozzle_target_temper ? Math.round(p.nozzle_target_temper) : null;
+          const nt = Math.round(num(p.nozzle_temper));
+          const ntt = p.nozzle_target_temper ? Math.round(num(p.nozzle_target_temper)) : null;
           temps += `<span class="temp-badge">🌡 ${nt}°${ntt ? '/' + ntt + '°' : ''}</span>`;
         }
         if (p.bed_temper !== null && p.bed_temper !== undefined) {
-          const bt = Math.round(p.bed_temper);
-          const btt = p.bed_target_temper ? Math.round(p.bed_target_temper) : null;
+          const bt = Math.round(num(p.bed_temper));
+          const btt = p.bed_target_temper ? Math.round(num(p.bed_target_temper)) : null;
           temps += `<span class="temp-badge">🔥 ${bt}°${btt ? '/' + btt + '°' : ''}</span>`;
         }
 
@@ -377,8 +503,8 @@
           <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-4 card-hover transition border-l-4 ${getStatusColor(p.status)}">
             <div class="flex items-start justify-between gap-2">
               <div class="flex-1 min-w-0">
-                <div class="font-bold text-base truncate" title="${p.name}">${p.name}</div>
-                <div class="text-xs text-gray-500 dark:text-gray-400">${p.model || ''}</div>
+                <div class="font-bold text-base truncate" title="${escapeHtml(p.name)}">${escapeHtml(p.name)}</div>
+                <div class="text-xs text-gray-500 dark:text-gray-400">${escapeHtml(p.model)}</div>
               </div>
               <div class="flex flex-wrap gap-0.5 flex-shrink-0" title="AMS катушки">
                 ${squares || '<span class="text-xs text-gray-400">нет AMS</span>'}
@@ -425,12 +551,14 @@
     }
 
     function applyOrderFilters() {
+      const q = orderSearchQuery.toLowerCase();
       const filtered = allOrders.filter(o => {
-        const search = o.position.toLowerCase().includes(orderSearchQuery.toLowerCase()) || (o.customer && o.customer.toLowerCase().includes(orderSearchQuery.toLowerCase()));
+        const search = String(o.position || '').toLowerCase().includes(q) || (o.customer && String(o.customer).toLowerCase().includes(q));
+        const done = isDone(o);
         const status = currentOrderFilter === 'all' ? true :
-          currentOrderFilter === 'active' ? o.status.toLowerCase() !== 'да' :
-          currentOrderFilter === 'completed' ? o.status.toLowerCase() === 'да' :
-          currentOrderFilter === 'overdue' ? (new Date(o.deadline) < new Date() && o.status.toLowerCase() !== 'да') : true;
+          currentOrderFilter === 'active' ? !done :
+          currentOrderFilter === 'completed' ? done :
+          currentOrderFilter === 'overdue' ? (new Date(o.deadline) < new Date() && !done) : true;
         return search && status;
       });
       renderOrders(filtered);
@@ -450,44 +578,47 @@
     }
 
     function renderOrders(orders) {
+      updateOrderStats();
       const tbody = document.getElementById('orders-table-body');
       const cards = document.getElementById('orders-cards');
       const empty = document.getElementById('empty-state-orders');
       if (!orders.length) { tbody.innerHTML = ''; cards.innerHTML = ''; empty.classList.remove('hidden'); return; }
       empty.classList.add('hidden');
-      tbody.innerHTML = orders.map(o => `
+      tbody.innerHTML = orders.map(o => { const pr = Math.max(0, Math.min(100, num(o.progress))); const dl = escapeHtml(o.deadline); return `
         <tr class="hover:bg-gray-50 dark:hover:bg-gray-700 transition">
-          <td class="px-4 py-3 whitespace-nowrap text-sm font-medium">${o.id}</td>
-          <td class="px-4 py-3 text-sm table-cell-wrap break-word max-w-[150px]">${o.position}</td>
-          <td class="px-4 py-3 text-sm table-cell-wrap break-word max-w-[120px]">${o.customer || '-'}</td>
-          <td class="px-4 py-3 whitespace-nowrap text-sm">${o.ordered}</td>
-          <td class="px-4 py-3 whitespace-nowrap text-sm">${o.printed}</td>
-          <td class="px-4 py-3 whitespace-nowrap"><div class="w-24 bg-gray-200 dark:bg-gray-600 rounded-full h-2"><div class="bg-blue-600 h-2 rounded-full progress-bar" style="width:${o.progress}%"></div></div><span class="text-xs text-gray-500">${o.progress}%</span></td>
-          <td class="px-4 py-3 whitespace-nowrap text-sm ${getOverdueClass(o.deadline)}">${o.deadline}</td>
-          <td class="px-4 py-3 whitespace-nowrap text-sm">${getDaysLeft(o.deadline)}</td>
+          <td class="px-4 py-3 whitespace-nowrap text-sm font-medium">${escapeHtml(o.id)}</td>
+          <td class="px-4 py-3 text-sm table-cell-wrap break-word max-w-[150px]">${escapeHtml(o.position)}</td>
+          <td class="px-4 py-3 text-sm table-cell-wrap break-word max-w-[120px]">${escapeHtml(o.customer) || '-'}</td>
+          <td class="px-4 py-3 whitespace-nowrap text-sm">${escapeHtml(o.ordered)}</td>
+          <td class="px-4 py-3 whitespace-nowrap text-sm">${escapeHtml(o.printed)}</td>
+          <td class="px-4 py-3 whitespace-nowrap"><div class="w-24 bg-gray-200 dark:bg-gray-600 rounded-full h-2"><div class="bg-blue-600 h-2 rounded-full progress-bar" style="width:${pr}%"></div></div><span class="text-xs text-gray-500">${pr}%</span></td>
+          <td class="px-4 py-3 whitespace-nowrap text-sm ${isDone(o) ? '' : getOverdueClass(o.deadline)}">${dl}</td>
+          <td class="px-4 py-3 whitespace-nowrap text-sm">${isDone(o) ? '—' : getDaysLeft(o.deadline)}</td>
           <td class="px-4 py-3 whitespace-nowrap"><span class="px-2 py-1 text-xs font-semibold rounded-full ${getStatusClass(o.status)}">${getStatusText(o.status)}</span></td>
         </tr>
-      `).join('');
-      cards.innerHTML = orders.map(o => `
+      `; }).join('');
+      cards.innerHTML = orders.map(o => { const pr = Math.max(0, Math.min(100, num(o.progress))); return `
         <div class="bg-gray-50 dark:bg-gray-700 p-4 rounded-lg shadow card-hover transition">
           <div class="flex justify-between items-start">
-            <div class="flex-1 min-w-0"><div class="font-bold break-word">${o.position}</div><div class="text-sm text-gray-500 dark:text-gray-400">Заказ №${o.id} ${o.customer ? '👤 '+o.customer : ''}</div></div>
+            <div class="flex-1 min-w-0"><div class="font-bold break-word">${escapeHtml(o.position)}</div><div class="text-sm text-gray-500 dark:text-gray-400">Заказ №${escapeHtml(o.id)} ${o.customer ? '👤 ' + escapeHtml(o.customer) : ''}</div></div>
             <span class="px-2 py-1 text-xs font-semibold rounded-full ${getStatusClass(o.status)} flex-shrink-0">${getStatusText(o.status)}</span>
           </div>
           <div class="mt-2 grid grid-cols-2 gap-2 text-sm">
-            <div><span class="text-gray-500 dark:text-gray-400">Заказано:</span> ${o.ordered}</div>
-            <div><span class="text-gray-500 dark:text-gray-400">Напечатано:</span> ${o.printed}</div>
-            <div><span class="text-gray-500 dark:text-gray-400">Срок:</span> <span class="${getOverdueClass(o.deadline)}">${o.deadline}</span></div>
-            <div><span class="text-gray-500 dark:text-gray-400">Осталось:</span> ${getDaysLeft(o.deadline)}</div>
+            <div><span class="text-gray-500 dark:text-gray-400">Заказано:</span> ${escapeHtml(o.ordered)}</div>
+            <div><span class="text-gray-500 dark:text-gray-400">Напечатано:</span> ${escapeHtml(o.printed)}</div>
+            <div><span class="text-gray-500 dark:text-gray-400">Срок:</span> <span class="${isDone(o) ? '' : getOverdueClass(o.deadline)}">${escapeHtml(o.deadline)}</span></div>
+            <div><span class="text-gray-500 dark:text-gray-400">Осталось:</span> ${isDone(o) ? '—' : getDaysLeft(o.deadline)}</div>
           </div>
-          <div class="mt-2"><div class="w-full bg-gray-200 dark:bg-gray-600 rounded-full h-2"><div class="bg-blue-600 h-2 rounded-full progress-bar" style="width:${o.progress}%"></div></div><span class="text-xs text-gray-500">${o.progress}%</span></div>
+          <div class="mt-2"><div class="w-full bg-gray-200 dark:bg-gray-600 rounded-full h-2"><div class="bg-blue-600 h-2 rounded-full progress-bar" style="width:${pr}%"></div></div><span class="text-xs text-gray-500">${pr}%</span></div>
         </div>
-      `).join('');
-      updateOrderStats(orders);
+      `; }).join('');
     }
 
-    function updateOrderStats(orders) {
-      const total = allOrders.length, completed = allOrders.filter(o => o.status.toLowerCase() === 'да').length, active = allOrders.filter(o => o.status.toLowerCase() !== 'да').length, avg = total ? Math.round(allOrders.reduce((s,o)=>s+o.progress,0)/total) : 0;
+    // «Всего» — по всем заказам; «В работе» и средний прогресс — только по невыполненным
+    function updateOrderStats() {
+      const open = allOrders.filter(o => !isDone(o));
+      const total = allOrders.length, completed = total - open.length, active = open.length;
+      const avg = active ? Math.round(open.reduce((s,o)=>s+num(o.progress),0)/active) : 0;
       document.getElementById('total-orders').textContent = total;
       document.getElementById('completed-orders').textContent = completed;
       document.getElementById('active-orders').textContent = active;
@@ -495,8 +626,9 @@
     }
 
     function applyTaskFilters() {
+      const q = taskSearchQuery.toLowerCase();
       const filtered = allTasks.filter(t => {
-        const search = t.title.toLowerCase().includes(taskSearchQuery.toLowerCase()) || (t.assignee && t.assignee.toLowerCase().includes(taskSearchQuery.toLowerCase()));
+        const search = String(t.title || '').toLowerCase().includes(q) || (t.assignee && String(t.assignee).toLowerCase().includes(q));
         const status = currentTaskFilter === 'all' ? true :
           currentTaskFilter === 'active' ? t.status !== 'completed' :
           currentTaskFilter === 'completed' ? t.status === 'completed' :
@@ -526,9 +658,9 @@
       empty.classList.add('hidden');
       tbody.innerHTML = tasks.map(t => `
         <tr class="hover:bg-gray-50 dark:hover:bg-gray-700 transition">
-          <td class="px-4 py-3 text-sm table-cell-wrap break-word max-w-[150px]">${t.title}</td>
-          <td class="px-4 py-3 whitespace-nowrap text-sm">${t.assignee}</td>
-          <td class="px-4 py-3 whitespace-nowrap text-sm ${getOverdueClass(t.deadline)}">${t.deadline}</td>
+          <td class="px-4 py-3 text-sm table-cell-wrap break-word max-w-[150px]">${escapeHtml(t.title)}</td>
+          <td class="px-4 py-3 whitespace-nowrap text-sm">${escapeHtml(t.assignee)}</td>
+          <td class="px-4 py-3 whitespace-nowrap text-sm ${getOverdueClass(t.deadline)}">${escapeHtml(t.deadline)}</td>
           <td class="px-4 py-3 whitespace-nowrap text-sm">${getDaysLeft(t.deadline)}</td>
           <td class="px-4 py-3 whitespace-nowrap"><span class="px-2 py-1 text-xs font-semibold rounded-full ${t.status === 'completed' ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300' : 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300'}">${t.status === 'completed' ? '✅ Выполнена' : '⏳ Активна'}</span></td>
         </tr>
@@ -538,10 +670,14 @@
     let charts = {};
 
     async function loadInfographics() {
-      await Promise.all([loadOrders(), loadTasks(), loadPrinters()]);
+      const results = await Promise.all([loadOrders(), loadTasks(), loadPrinters()]);
+      if (!results.every(Boolean)) return false;
+      if (typeof Chart === 'undefined') { setLoadError('Графики', 'библиотека Chart.js не загрузилась'); return false; }
+      setLoadError('Графики', '');
 
+      const openOrders = allOrders.filter(o => !isDone(o));
       const totalOrders = allOrders.length;
-      const avgProgress = totalOrders ? Math.round(allOrders.reduce((s,o)=>s+o.progress,0)/totalOrders) : 0;
+      const avgProgress = openOrders.length ? Math.round(openOrders.reduce((s,o)=>s+num(o.progress),0)/openOrders.length) : 0;
       const activeTasks = allTasks.filter(t => t.status !== 'completed').length;
       const activePrinters = allPrinters.filter(p => (p.status || '').toUpperCase() === 'RUNNING').length;
 
@@ -553,9 +689,9 @@
       Object.values(charts).forEach(c => c.destroy());
       charts = {};
 
-      const orderActive = allOrders.filter(o => o.status.toLowerCase() !== 'да' && new Date(o.deadline) >= new Date()).length;
-      const orderCompleted = allOrders.filter(o => o.status.toLowerCase() === 'да').length;
-      const orderOverdue = allOrders.filter(o => o.status.toLowerCase() !== 'да' && new Date(o.deadline) < new Date()).length;
+      const orderActive = openOrders.filter(o => new Date(o.deadline) >= new Date()).length;
+      const orderCompleted = totalOrders - openOrders.length;
+      const orderOverdue = openOrders.filter(o => new Date(o.deadline) < new Date()).length;
       charts.orderStatus = new Chart(document.getElementById('chartOrderStatus'), {
         type: 'doughnut',
         data: { labels: ['В работе', 'Выполнены', 'Просрочены'], datasets: [{ data: [orderActive, orderCompleted, orderOverdue], backgroundColor: ['#3b82f6', '#22c55e', '#ef4444'] }] },
@@ -573,7 +709,7 @@
 
       charts.orderProgress = new Chart(document.getElementById('chartOrderProgress'), {
         type: 'bar',
-        data: { labels: allOrders.map(o => `№${o.id}`), datasets: [{ label: 'Прогресс (%)', data: allOrders.map(o => o.progress), backgroundColor: '#3b82f6' }] },
+        data: { labels: openOrders.map(o => `№${o.id}`), datasets: [{ label: 'Прогресс (%)', data: openOrders.map(o => num(o.progress)), backgroundColor: '#3b82f6' }] },
         options: { responsive: true, maintainAspectRatio: false, scales: { y: { beginAtZero: true, max: 100 } }, plugins: { legend: { display: false } } }
       });
 
@@ -586,7 +722,7 @@
       });
 
       const customerCounts = {};
-      allOrders.forEach(o => { const key = o.customer || 'Без заказчика'; customerCounts[key] = (customerCounts[key] || 0) + 1; });
+      openOrders.forEach(o => { const key = o.customer || 'Без заказчика'; customerCounts[key] = (customerCounts[key] || 0) + 1; });
       const sortedCustomers = Object.entries(customerCounts).sort((a, b) => b[1] - a[1]).slice(0, 5);
       charts.customers = new Chart(document.getElementById('chartCustomers'), {
         type: 'bar',
@@ -599,42 +735,69 @@
         type: 'bar',
         data: {
           labels: runningPrinters.length ? runningPrinters.map(p => p.name) : ['Нет активных'],
-          datasets: [{ label: 'Прогресс (%)', data: runningPrinters.length ? runningPrinters.map(p => p.progress || 0) : [0], backgroundColor: '#10b981' }]
+          datasets: [{ label: 'Прогресс (%)', data: runningPrinters.length ? runningPrinters.map(p => num(p.progress)) : [0], backgroundColor: '#10b981' }]
         },
         options: { responsive: true, maintainAspectRatio: false, scales: { y: { beginAtZero: true, max: 100 } }, plugins: { legend: { display: false } } }
       });
+      return true;
     }
 
-    function getStatusClass(status) { return status.toLowerCase() === 'да' ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300' : 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300'; }
-    function getStatusText(status) { return status.toLowerCase() === 'да' ? '✅ Выполнен' : '⏳ В работе'; }
+    function getStatusClass(status) { return String(status || '').toLowerCase() === 'да' ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300' : 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300'; }
+    function getStatusText(status) { return String(status || '').toLowerCase() === 'да' ? '✅ Выполнен' : '⏳ В работе'; }
     function getOverdueClass(deadline) { const diff = (new Date(deadline) - new Date())/(1000*60*60*24); if (diff<0) return 'text-red-600 dark:text-red-400 font-bold'; if (diff<1) return 'text-yellow-600 dark:text-yellow-400'; return 'text-green-600 dark:text-green-400'; }
-    function getDaysLeft(deadline) { const diff = Math.ceil((new Date(deadline) - new Date())/(1000*60*60*24)); if (diff<0) return '🔴 Просрочен'; if (diff===0) return 'Сегодня'; if (diff===1) return 'Завтра'; return `${diff} дн.`; }
+    function getDaysLeft(deadline) { const diff = Math.ceil((new Date(deadline) - new Date())/(1000*60*60*24)); if (isNaN(diff)) return '—'; if (diff<0) return '🔴 Просрочен'; if (diff===0) return 'Сегодня'; if (diff===1) return 'Завтра'; return `${diff} дн.`; }
 
+    function csvCell(v) {
+      if (v === null || v === undefined) v = '';
+      let s = String(v);
+      // защита от CSV-инъекции: формулоподобные значения префиксуем апострофом
+      if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
+      return '"' + s.replace(/"/g, '""') + '"';
+    }
     function exportCSV() {
       const rows = [['№','Позиция','Заказчик','Заказано','Напечатано','Прогресс%','Срок','Статус']];
       allOrders.forEach(o => rows.push([o.id, o.position, o.customer, o.ordered, o.printed, o.progress, o.deadline, o.status]));
-      const csv = rows.map(r => r.join(',')).join('\n');
-      const blob = new Blob([csv], {type:'text/csv'});
+      const csv = '﻿' + rows.map(r => r.map(csvCell).join(',')).join('\r\n');
+      const blob = new Blob([csv], {type:'text/csv;charset=utf-8'});
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
-      a.href = url; a.download = 'orders.csv'; a.click(); URL.revokeObjectURL(url);
+      a.href = url; a.download = 'orders.csv';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
     }
 
     document.getElementById('search-input-orders').addEventListener('input', function() { orderSearchQuery = this.value; applyOrderFilters(); });
     document.getElementById('search-input-tasks').addEventListener('input', function() { taskSearchQuery = this.value; applyTaskFilters(); });
 
-    function refreshAll() {
+    async function loadActiveTab() {
+      if (!getToken()) { showLogin(''); return; }
       const activeTab = document.querySelector('.tab-content.active').id;
-      if (activeTab === 'tab-printers') loadPrinters();
-      else if (activeTab === 'tab-orders') loadOrders();
-      else if (activeTab === 'tab-tasks') loadTasks();
-      else if (activeTab === 'tab-infographics') loadInfographics();
-      document.getElementById('last-update').textContent = 'Обновлено: '+new Date().toLocaleTimeString();
+      let ok;
+      if (activeTab === 'tab-printers') ok = await loadPrinters();
+      else if (activeTab === 'tab-orders') ok = await loadOrders();
+      else if (activeTab === 'tab-tasks') ok = await loadTasks();
+      else if (activeTab === 'tab-infographics') ok = await loadInfographics();
+      if (ok) markUpdated();
     }
+    function refreshAll() { return loadActiveTab(); }
+
+    let refreshTimer = null;
+    function startApp() {
+      loadActiveTab();
+      if (!refreshTimer) {
+        refreshTimer = setInterval(() => {
+          if (document.hidden || !getToken()) return;
+          loadActiveTab();
+        }, 30000);
+      }
+    }
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden && getToken()) loadActiveTab();
+    });
 
     document.addEventListener('DOMContentLoaded', function() {
-      loadPrinters();
-      setInterval(refreshAll, 30000);
+      if (getToken()) { hideLogin(); startApp(); }
+      else showLogin('');
     });
   </script>
 </body>

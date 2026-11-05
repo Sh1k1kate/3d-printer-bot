@@ -19,21 +19,7 @@
 
   <meta http-equiv="refresh" content="0;url=/price#item={{ item.row_index }}">
 
-  <script type="application/ld+json">
-  {
-    "@context": "https://schema.org",
-    "@type": "Product",
-    "name": "{{ item.name }}",
-    {% if item.photo %}"image": "{{ item.photo }}",{% endif %}
-    "description": "{{ item.description[:300] }}",
-    "offers": {
-      "@type": "Offer",
-      "price": "{{ item.retail or '0' }}",
-      "priceCurrency": "RUB",
-      "availability": "https://schema.org/InStock"
-    }
-  }
-  </script>
+  <script type="application/ld+json">{{ ld_json|safe }}</script>
 </head>
 <body>
   <p>Перенаправление на товар… <a href="/price#item={{ item.row_index }}">Открыть</a></p>

@@ -4,7 +4,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from keyboards import (
     main_menu, cancel_keyboard, calendar_keyboard, tasks_list_keyboard,
-    task_actions_keyboard, assignee_keyboard
+    task_actions_keyboard, assignee_keyboard, name_key, resolve_name
 )
 from states import CreateTask, CreateOrder
 from google_sheets import SheetManager
@@ -17,14 +17,44 @@ logger = logging.getLogger(__name__)
 router = Router()
 sheet = SheetManager()
 
+STALE_MSG = "Устарело, откройте список заново"
+
+
+def _safe_int(text, min_value=0, max_value=10**12):
+    """Безопасный разбор целого из строки (только ASCII-цифры). None при ошибке."""
+    text = (text or "").strip()
+    if not text or not text.isascii() or not text.isdigit():
+        return None
+    value = int(text)
+    return value if min_value <= value <= max_value else None
+
+
+def _last_int(data, min_value=0, max_value=10**12):
+    """Целое после последнего '_' в callback_data (или None)."""
+    return _safe_int((data or "").rsplit("_", 1)[-1], min_value, max_value)
+
+
+def _parse_year_month(data, idx=3):
+    """cal_*_prev_YYYY_M / cal_*_next_YYYY_M -> (year, month) или None."""
+    parts = (data or "").split("_")
+    if len(parts) <= idx + 1:
+        return None
+    year = _safe_int(parts[idx], 2000, 2100)
+    month = _safe_int(parts[idx + 1], 1, 12)
+    if year is None or month is None:
+        return None
+    return year, month
+
 
 @router.message(F.text == "📋 Задачи")
 async def tasks_menu(message: Message):
     await list_tasks(message)
 
 
-async def list_tasks(message: Message):
-    user_id = message.from_user.id
+async def list_tasks(message: Message, user_id: int = None):
+    # Для callback-ов message.from_user — это бот, поэтому user_id передаём явно
+    if user_id is None:
+        user_id = message.from_user.id
     tasks = sheet.get_active_tasks(user_id)
     await message.answer(
         "Ваши задачи:" if tasks else "У вас нет активных задач. Создайте новую:",
@@ -43,9 +73,12 @@ async def create_task_start(message: Message, state: FSMContext):
     await state.set_state(CreateTask.waiting_for_title)
 
 
-@router.message(CreateTask.waiting_for_title, F.text != "❌ Отмена")
+@router.message(CreateTask.waiting_for_title, F.text, F.text != "❌ Отмена")
 async def process_task_title(message: Message, state: FSMContext):
     title = message.text.strip()
+    if not title or len(title) > 200:
+        await message.answer("❌ Название обязательно (до 200 символов).")
+        return
     await state.update_data(task_title=title)
 
     models = sheet.get_all_models()
@@ -61,7 +94,7 @@ async def process_task_title(message: Message, state: FSMContext):
             f"🔍 Обнаружена модель *{escape_markdown(found_model)}* в названии задачи.\nХотите создать заказ?",
             parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="✅ Создать заказ", callback_data=f"auto_order_{found_model}")],
+                [InlineKeyboardButton(text="✅ Создать заказ", callback_data=f"auto_order_{name_key(found_model)}")],
                 [InlineKeyboardButton(text="❌ Нет, только задача", callback_data="skip_order")]
             ])
         )
@@ -78,7 +111,12 @@ async def process_task_title(message: Message, state: FSMContext):
 
 @router.callback_query(F.data.startswith("auto_order_"))
 async def auto_order(callback: CallbackQuery, state: FSMContext):
-    model_name = callback.data.split("_")[-1]
+    # Имена моделей могут содержать '_' и кириллицу, поэтому в callback_data лежит ключ
+    raw = callback.data[len("auto_order_"):]
+    model_name = resolve_name(raw, sheet.get_all_models())
+    if model_name is None:
+        await callback.answer(STALE_MSG, show_alert=True)
+        return
     await state.update_data(order_item=model_name, order_type="model")
     await safe_answer(
         callback.message,
@@ -104,8 +142,11 @@ async def skip_order(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data.startswith("cal_task_prev_"))
 async def calendar_task_prev(callback: CallbackQuery):
-    data = callback.data.split("_")
-    year, month = int(data[3]), int(data[4])
+    ym = _parse_year_month(callback.data)
+    if ym is None:
+        await callback.answer("Ошибка формата")
+        return
+    year, month = ym
     if month == 1:
         month, year = 12, year - 1
     else:
@@ -116,8 +157,11 @@ async def calendar_task_prev(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("cal_task_next_"))
 async def calendar_task_next(callback: CallbackQuery):
-    data = callback.data.split("_")
-    year, month = int(data[3]), int(data[4])
+    ym = _parse_year_month(callback.data)
+    if ym is None:
+        await callback.answer("Ошибка формата")
+        return
+    year, month = ym
     if month == 12:
         month, year = 1, year + 1
     else:
@@ -132,9 +176,15 @@ async def calendar_task_day(callback: CallbackQuery, state: FSMContext):
     if current_state != CreateTask.waiting_for_deadline:
         await callback.answer("Ошибка: неверное состояние", show_alert=True)
         return
-    data = callback.data.split("_")
-    year, month, day = int(data[2]), int(data[3]), int(data[4])
-    selected_date = datetime(year, month, day).strftime("%Y-%m-%d")
+    parts = callback.data.split("_")
+    try:
+        if len(parts) != 5:
+            raise ValueError
+        year, month, day = (_safe_int(parts[2], 2000, 2100), _safe_int(parts[3], 1, 12), _safe_int(parts[4], 1, 31))
+        selected_date = datetime(year, month, day).strftime("%Y-%m-%d")
+    except (TypeError, ValueError):
+        await callback.answer("Ошибка формата", show_alert=True)
+        return
     await state.update_data(task_deadline=selected_date)
     await safe_answer(
         callback.message,
@@ -150,10 +200,10 @@ async def calendar_task_day(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-@router.message(CreateTask.waiting_for_time, F.text != "❌ Отмена")
+@router.message(CreateTask.waiting_for_time, F.text, F.text != "❌ Отмена")
 async def process_task_time(message: Message, state: FSMContext):
     time_str = message.text.strip()
-    if not re.match(r'^\d{2}:\d{2}$', time_str):
+    if not re.fullmatch(r'[0-9]{2}:[0-9]{2}', time_str):
         await message.answer("❌ Неверный формат. Введите `ЧЧ:ММ`, например `19:00`.")
         return
     hours, minutes = time_str.split(':')
@@ -218,8 +268,8 @@ async def send_interactive_notification(bot, task_id, title, deadline, time_str,
 
 @router.callback_query(F.data.startswith("remind_task_"))
 async def remind_task(callback: CallbackQuery):
-    task_id = int(callback.data.split("_")[-1])
-    task = sheet.get_task_by_id(task_id)
+    task_id = _last_int(callback.data)
+    task = sheet.get_task_by_id(task_id) if task_id is not None else None
     if not task:
         await callback.answer("Задача не найдена", show_alert=True)
         return
@@ -228,7 +278,7 @@ async def remind_task(callback: CallbackQuery):
 
 @router.callback_query(F.data == "tasks_menu")
 async def tasks_menu_callback(callback: CallbackQuery):
-    await list_tasks(callback.message)
+    await list_tasks(callback.message, callback.from_user.id)
     await callback.answer()
 
 
@@ -251,13 +301,19 @@ async def select_assignee(callback: CallbackQuery, state: FSMContext):
         await callback.answer()
         return
     elif data.startswith("assignee_page_"):
-        page = int(data.split("_")[-1])
+        page = _last_int(data, 0, 10_000)
+        if page is None:
+            await callback.answer("Ошибка формата")
+            return
         subscribers = sheet.get_subscribers_with_names()
         await callback.message.edit_reply_markup(reply_markup=assignee_keyboard(subscribers, page))
         await callback.answer()
         return
     elif data.startswith("assignee_"):
-        user_id = int(data.split("_")[1])
+        user_id = _safe_int(data[len("assignee_"):], 1)
+        if user_id is None:
+            await callback.answer("Ошибка формата")
+            return
         assignee_user_id = user_id
         await callback.answer(f"Выбран пользователь {user_id}")
     else:
@@ -288,15 +344,16 @@ async def select_assignee(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-@router.message(CreateTask.waiting_for_assignee_manual, F.text != "❌ Отмена")
+@router.message(CreateTask.waiting_for_assignee_manual, F.text, F.text != "❌ Отмена")
 async def process_assignee_manual(message: Message, state: FSMContext):
     assignee_text = message.text.strip()
     if assignee_text.lower() == "общая" or assignee_text == "":
         assignee_user_id = None
-    elif assignee_text.isdigit():
+    elif _safe_int(assignee_text, 1) is not None:
         assignee_user_id = int(assignee_text)
     else:
-        assignee_user_id = assignee_text
+        await message.answer("❌ Введите `общая` или числовой Telegram ID.", parse_mode="Markdown")
+        return
 
     data = await state.get_data()
     title = data.get("task_title")
@@ -322,8 +379,8 @@ async def process_assignee_manual(message: Message, state: FSMContext):
 
 @router.callback_query(F.data.startswith("view_task_"))
 async def view_task(callback: CallbackQuery):
-    task_id = int(callback.data.split("_")[-1])
-    task = sheet.get_task_by_id(task_id)
+    task_id = _last_int(callback.data)
+    task = sheet.get_task_by_id(task_id) if task_id is not None else None
     if not task:
         await callback.answer("Задача не найдена", show_alert=True)
         return
@@ -340,9 +397,9 @@ async def view_task(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("take_task_"))
 async def take_task(callback: CallbackQuery):
-    task_id = int(callback.data.split("_")[-1])
+    task_id = _last_int(callback.data)
     user_id = callback.from_user.id
-    task = sheet.get_task_by_id(task_id)
+    task = sheet.get_task_by_id(task_id) if task_id is not None else None
     if not task or task['status'] != 'active':
         await callback.answer("Задача неактивна", show_alert=True)
         return
@@ -356,10 +413,11 @@ async def take_task(callback: CallbackQuery):
     await safe_edit(callback.message, text, parse_mode="Markdown", reply_markup=task_actions_keyboard(task_id))
 
 
-@router.callback_query(F.data.startswith("complete_task_"))
+# Регэксп вместо startswith: orders.py обрабатывает complete_<номер заказа>, а здесь complete_task_<id>
+@router.callback_query(F.data.regexp(r"^complete_task_[0-9]+$"))
 async def complete_task(callback: CallbackQuery):
-    task_id = int(callback.data.split("_")[-1])
-    task = sheet.get_task_by_id(task_id)
+    task_id = _last_int(callback.data)
+    task = sheet.get_task_by_id(task_id) if task_id is not None else None
     if not task:
         await callback.answer("Задача не найдена", show_alert=True)
         return
@@ -382,13 +440,16 @@ async def complete_task(callback: CallbackQuery):
 
 @router.callback_query(F.data == "back_to_tasks")
 async def back_to_tasks(callback: CallbackQuery):
-    await list_tasks(callback.message)
+    await list_tasks(callback.message, callback.from_user.id)
     await callback.answer()
 
 
 @router.callback_query(F.data.startswith("tasks_page_"))
 async def tasks_page(callback: CallbackQuery):
-    page = int(callback.data.split("_")[-1])
+    page = _last_int(callback.data, 0, 10_000)
+    if page is None:
+        await callback.answer("Ошибка формата")
+        return
     user_id = callback.from_user.id
     tasks = sheet.get_active_tasks(user_id)
     if not tasks:

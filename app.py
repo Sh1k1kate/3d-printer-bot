@@ -1,5 +1,10 @@
 import os
 import io
+import hmac
+import hashlib
+import html
+import re
+import threading
 import csv
 import json
 import base64
@@ -19,9 +24,9 @@ from aiogram import Bot, Dispatcher
 from aiogram.types import Update, ErrorEvent
 from aiogram.fsm.storage.memory import MemoryStorage
 from handlers import routers
-from handlers.common import AccessMiddleware
+from handlers.common import AccessMiddleware, ResetStateOnMenuMiddleware
 from handlers.client_bot import create_client_dispatcher, set_commands as set_client_commands
-from config import BOT_TOKEN, ADMIN_PASSWORD
+from config import BOT_TOKEN, ADMIN_PASSWORD, TOKEN_SECRET, WEBHOOK_SECRET, CRON_SECRET, ALLOWED_USERS
 from google_sheets import SheetManager, moscow_now
 from bambu_cloud import BambuCloudManager
 from production import build_production_rows, normalize_position, parse_shipment_text, match_name
@@ -53,6 +58,7 @@ except Exception as e:
 # ---------- Основной бот ----------
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
+dp.message.outer_middleware(ResetStateOnMenuMiddleware())
 dp.message.middleware(AccessMiddleware())
 dp.callback_query.middleware(AccessMiddleware())
 for router in routers:
@@ -114,12 +120,88 @@ async def generic_exception_handler(request: Request, exc: Exception):
 
 
 # ---------- АВТОРИЗАЦИЯ ----------
+ADMIN_TOKEN_TTL = 12 * 3600
+_TOKEN_KEY = (TOKEN_SECRET or ADMIN_PASSWORD or "").encode()
+
+
+def _sign(payload: str) -> str:
+    return hmac.new(_TOKEN_KEY, payload.encode(), hashlib.sha256).hexdigest()
+
+
+def make_admin_token(ttl: int = ADMIN_TOKEN_TTL) -> str:
+    exp = str(int(time.time()) + ttl)
+    return f"{exp}.{_sign('admin.' + exp)}"
+
+
+def check_admin_token(token) -> bool:
+    if not token or not _TOKEN_KEY or "." not in token:
+        return False
+    exp, sig = token.split(".", 1)
+    if not exp.isdigit() or int(exp) < time.time():
+        return False
+    return hmac.compare_digest(sig, _sign("admin." + exp))
+
+
 def verify_admin(x_admin_token: str = Header(None, alias="X-Admin-Token")):
     if not ADMIN_PASSWORD:
         raise HTTPException(status_code=500, detail="ADMIN_PASSWORD не задан на сервере")
-    if x_admin_token != ADMIN_PASSWORD:
-        raise HTTPException(status_code=401, detail="Неверный пароль администратора")
+    if not check_admin_token(x_admin_token):
+        raise HTTPException(status_code=401, detail="Требуется вход администратора")
     return True
+
+
+# --- простой rate limit в памяти (на процесс) ---
+_rl_lock = threading.Lock()
+_rl_hits = {}
+
+
+def _client_ip(request: Request) -> str:
+    fwd = request.headers.get("x-forwarded-for", "")
+    return (fwd.split(",")[0].strip() if fwd else (request.client.host if request.client else "?")) or "?"
+
+
+def rate_limit(request: Request, bucket: str, limit: int, window: int = 60):
+    """Бросает 429, если с одного IP больше `limit` обращений к `bucket` за `window` секунд."""
+    key = (bucket, _client_ip(request))
+    now = time.time()
+    with _rl_lock:
+        hits = [t for t in _rl_hits.get(key, []) if now - t < window]
+        if len(hits) >= limit:
+            _rl_hits[key] = hits
+            raise HTTPException(status_code=429, detail="Слишком много запросов, попробуйте позже")
+        hits.append(now)
+        _rl_hits[key] = hits
+        if len(_rl_hits) > 5000:   # не даём словарю расти бесконечно
+            for k in [k for k, v in _rl_hits.items() if not v or now - v[-1] > window]:
+                _rl_hits.pop(k, None)
+
+
+class AdminLoginIn(BaseModel):
+    password: str
+
+
+_login_fails = {}
+
+
+@app.post("/api/admin/login")
+async def admin_login(payload: AdminLoginIn, request: Request):
+    if not ADMIN_PASSWORD:
+        return JSONResponse({"detail": "ADMIN_PASSWORD не задан на сервере"}, status_code=500)
+    ip = _client_ip(request)
+    now = time.time()
+    with _rl_lock:
+        fails = [t for t in _login_fails.get(ip, []) if now - t < 900]
+        _login_fails[ip] = fails
+        if len(fails) >= 5:
+            return JSONResponse({"detail": "Слишком много попыток, подождите 15 минут"}, status_code=429)
+    ok = hmac.compare_digest(payload.password.encode(), ADMIN_PASSWORD.encode())
+    if not ok:
+        with _rl_lock:
+            _login_fails.setdefault(ip, []).append(now)
+        return JSONResponse({"detail": "Неверный пароль"}, status_code=401)
+    with _rl_lock:
+        _login_fails.pop(ip, None)
+    return {"token": make_admin_token(), "expires_in": ADMIN_TOKEN_TTL}
 
 
 class PriceItemIn(BaseModel):
@@ -143,6 +225,28 @@ class BulkRowsIn(BaseModel):
 class BulkCategoryIn(BaseModel):
     rows: list[int]
     category: str
+
+
+MAX_ORDER_LINES = 50
+MAX_ORDER_QTY = 9999
+
+
+def _parse_num(v):
+    try:
+        x = float(re.sub(r"[^\d.,]", "", str(v or "")).replace(",", "."))
+        return x if x > 0 else None
+    except ValueError:
+        return None
+
+
+def _unit_price(item, qty):
+    """Та же логика, что getUnitPrice на странице прайса: опт, если qty >= wholesale_from."""
+    retail = _parse_num(item.get("retail"))
+    wholesale = _parse_num(item.get("wholesale"))
+    whl_from = _parse_num(item.get("wholesale_from"))
+    if wholesale and whl_from and qty >= whl_from:
+        return wholesale, True
+    return retail or 0.0, False
 
 
 class OrderItemIn(BaseModel):
@@ -550,8 +654,18 @@ def get_days_left(deadline):
 
 
 # ---------- WEBHOOKS ----------
+def _check_webhook_secret(request: Request):
+    """Telegram присылает секрет в X-Telegram-Bot-Api-Secret-Token (set_webhook(secret_token=...))."""
+    if not WEBHOOK_SECRET:
+        return
+    got = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+    if not hmac.compare_digest(got.encode(), WEBHOOK_SECRET.encode()):
+        raise HTTPException(status_code=403, detail="forbidden")
+
+
 @app.post("/webhook")
 async def webhook(request: Request):
+    _check_webhook_secret(request)
     try:
         update = Update(**(await request.json()))
         await dp.feed_update(bot, update)
@@ -563,6 +677,7 @@ async def webhook(request: Request):
 
 @app.post("/webhook_client")
 async def webhook_client(request: Request):
+    _check_webhook_secret(request)
     if not client_bot or not client_dp:
         return JSONResponse({"error": "Client bot not configured"}, status_code=503)
     try:
@@ -595,6 +710,20 @@ async def production_page(request: Request):
     return templates.TemplateResponse("production.html", {"request": request})
 
 
+def _build_ld_json(it, base_url, row):
+    data = {"@context": "https://schema.org", "@type": "Product", "name": it.get("name", ""),
+            "description": it.get("description", "")}
+    if it.get("photo"):
+        data["image"] = it["photo"]
+    price = _parse_num(it.get("retail"))
+    if price:
+        data["offers"] = {"@type": "Offer", "price": f"{price:.0f}", "priceCurrency": "RUB",
+                          "url": f"{base_url}/share/{row}"}
+    # <, >, & заменяем на \uXXXX: данные из таблицы не смогут закрыть <script> или открыть новый
+    out = json.dumps(data, ensure_ascii=False)
+    return out.replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
+
+
 @app.get("/share/{row}", response_class=HTMLResponse)
 async def share_page(request: Request, row: int):
     if not sheet_manager:
@@ -606,6 +735,7 @@ async def share_page(request: Request, row: int):
         "request": request,
         "item": it,
         "public_url": _get_public_base_url(request),
+        "ld_json": _build_ld_json(it, _get_public_base_url(request), row),
     })
 
 
@@ -658,12 +788,12 @@ async def manifest():
 
 # ---------- API: ЗАКАЗЫ ----------
 @app.get("/api/orders")
-async def get_orders_api(customer: str = "", from_date: str = "", to_date: str = ""):
+async def get_orders_api(customer: str = "", from_date: str = "", to_date: str = "", _: bool = Depends(verify_admin)):
     if not sheet_manager:
         return JSONResponse({"error": "SheetManager не инициализирован"}, status_code=500)
     try:
         result = []
-        for order in sheet_manager.get_active_orders():
+        for order in sheet_manager.get_user_orders():
             if len(order) < 8:
                 continue
             order_customer = order[7] if order[7] else ""
@@ -692,7 +822,7 @@ async def get_orders_api(customer: str = "", from_date: str = "", to_date: str =
 
 # ---------- API: ДОПЕЧАТКА И ОТПРАВКИ ----------
 @app.get("/api/production")
-async def get_production_api():
+async def get_production_api(_: bool = Depends(verify_admin)):
     if not sheet_manager:
         return JSONResponse({"error": "SheetManager не инициализирован"}, status_code=500)
 
@@ -913,7 +1043,7 @@ async def close_position_api(payload: PositionRef, _: bool = Depends(verify_admi
 
 # ---------- API: ЗАДАЧИ ----------
 @app.get("/api/tasks")
-async def get_tasks_api():
+async def get_tasks_api(_: bool = Depends(verify_admin)):
     if not sheet_manager:
         return JSONResponse({"error": "SheetManager не инициализирован"}, status_code=500)
     try:
@@ -932,7 +1062,7 @@ async def get_tasks_api():
 
 # ---------- API: ПРИНТЕРЫ ----------
 @app.get("/api/printers")
-async def get_printers_api():
+async def get_printers_api(_: bool = Depends(verify_admin)):
     printers = await run_in_threadpool(bambu_cloud.get_printers)
     return JSONResponse({"printers": printers})
 
@@ -963,7 +1093,7 @@ async def get_price_admin_api(_: bool = Depends(verify_admin)):
     if not sheet_manager:
         return JSONResponse({"error": "SheetManager не инициализирован"}, status_code=500)
     try:
-        return JSONResponse({"items": sheet_manager.get_price_items()})
+        return JSONResponse({"items": sheet_manager.get_price_items(), "categories": sheet_manager.get_price_categories()})
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
@@ -988,16 +1118,15 @@ async def add_price_api(payload: PriceItemIn, _: bool = Depends(verify_admin)):
 async def update_price_api(row_index: int, payload: PriceItemIn, _: bool = Depends(verify_admin)):
     if not sheet_manager:
         return JSONResponse({"error": "SheetManager не инициализирован"}, status_code=500)
-    if not sheet_manager.get_price_item_by_row(row_index):
-        return JSONResponse({"error": "Товар не найден"}, status_code=404)
+    fields = {
+        "name": payload.name, "description": payload.description, "photo": payload.photo,
+        "retail": payload.retail, "wholesale": payload.wholesale,
+        "wholesale_from": payload.wholesale_from, "category": payload.category,
+    }
     try:
-        for field, value in [
-            ("name", payload.name), ("description", payload.description),
-            ("photo", payload.photo), ("retail", payload.retail),
-            ("wholesale", payload.wholesale), ("wholesale_from", payload.wholesale_from),
-            ("category", payload.category),
-        ]:
-            sheet_manager.update_price_item(row_index, field, value)
+        ok = await run_in_threadpool(sheet_manager.update_price_item_fields, row_index, fields)
+        if not ok:
+            return JSONResponse({"error": "Товар не найден или не удалось сохранить"}, status_code=404)
         return JSONResponse({"status": "ok"})
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -1105,10 +1234,11 @@ async def import_csv_api(file: UploadFile = File(...), _: bool = Depends(verify_
 
 # ---------- API: ПРОМОКОДЫ ----------
 @app.post("/api/price/validate_promo")
-async def validate_promo_api(payload: PromoIn):
+async def validate_promo_api(payload: PromoIn, request: Request):
+    rate_limit(request, "promo", 20)
     if not sheet_manager:
         return JSONResponse({"valid": False, "reason": "Сервис недоступен"}, status_code=500)
-    result = sheet_manager.validate_promo(payload.code)
+    result = await run_in_threadpool(sheet_manager.validate_promo, payload.code[:64])
     return JSONResponse(result)
 
 
@@ -1175,17 +1305,20 @@ async def reject_review_api(review_id: int, _: bool = Depends(verify_admin)):
 
 
 @app.post("/api/price/review")
-async def add_review_api(payload: ReviewIn):
+async def add_review_api(payload: ReviewIn, request: Request):
+    rate_limit(request, "review", 5, 300)
     if not sheet_manager:
         return JSONResponse({"error": "Сервис недоступен"}, status_code=500)
-    product = sheet_manager.get_price_item_by_row(payload.product_row)
+    product = await run_in_threadpool(sheet_manager.get_price_item_by_row, payload.product_row)
     if not product:
         return JSONResponse({"error": "Товар не найден"}, status_code=404)
     if payload.rating < 1 or payload.rating > 5:
         return JSONResponse({"error": "Оценка 1–5"}, status_code=400)
     if not payload.text.strip():
         return JSONResponse({"error": "Введите текст отзыва"}, status_code=400)
-    ok = sheet_manager.add_review(payload.product_row, payload.name, payload.rating, payload.text)
+    review_name = payload.name.strip()[:60]
+    review_text = payload.text.strip()[:2000]
+    ok = await run_in_threadpool(sheet_manager.add_review, payload.product_row, review_name, payload.rating, review_text)
     if not ok:
         return JSONResponse({"error": "Не удалось сохранить отзыв"}, status_code=500)
 
@@ -1207,10 +1340,10 @@ async def add_review_api(payload: ReviewIn):
         product_name = product.get("name", "—")
         msg = (
             f"📝 <b>Новый отзыв на модерации</b>\n\n"
-            f"Товар: {product_name}\n"
+            f"Товар: {html.escape(str(product_name))}\n"
             f"Оценка: {stars} ({payload.rating}/5)\n"
-            f"Имя: {payload.name or 'Аноним'}\n\n"
-            f"Текст:\n{payload.text[:300]}"
+            f"Имя: {html.escape(review_name or 'Аноним')}\n\n"
+            f"Текст:\n{html.escape(review_text[:300])}"
         )
         for rid in recipients:
             try:
@@ -1225,30 +1358,61 @@ async def add_review_api(payload: ReviewIn):
 
 # ---------- API: ЗАЯВКА С ПРАЙСА (опт + промокод) ----------
 @app.post("/api/price/order_request")
-async def price_order_request(payload: OrderRequestIn):
+async def price_order_request(payload: OrderRequestIn, request: Request):
+    rate_limit(request, "order", 5, 300)
+    if not sheet_manager:
+        return JSONResponse({"error": "Сервис недоступен"}, status_code=503)
     if not payload.items:
         return JSONResponse({"error": "Корзина пуста"}, status_code=400)
-    if not payload.contact.strip():
+    if len(payload.items) > MAX_ORDER_LINES:
+        return JSONResponse({"error": "Слишком много позиций в заявке"}, status_code=400)
+    contact = payload.contact.strip()[:100]
+    if not contact:
         return JSONResponse({"error": "Укажите контакт для связи"}, status_code=400)
 
-    customer_name = payload.name.strip() or "Клиент с прайса"
-    customer_full = f"{customer_name} ({payload.contact.strip()})"
+    # получатели проверяем ДО создания заказов — иначе при ошибке заказы остаются без уведомления
+    recipients = []
+    if PRICE_ORDER_CHAT_ID:
+        try:
+            recipients = [int(PRICE_ORDER_CHAT_ID)]
+        except ValueError:
+            recipients = []
+    if not recipients:
+        recipients = list(ALLOWED_USERS or [])
+    if not recipients:
+        return JSONResponse({"error": "Получатель не настроен (PRICE_ORDER_CHAT_ID)"}, status_code=500)
+
+    # Цены и названия берём из прайса, а не из запроса клиента
+    price_items = await run_in_threadpool(sheet_manager.get_price_items)
+    by_name = {}
+    for pi in price_items:
+        by_name.setdefault((pi.get("name") or "").strip().lower(), pi)
+    lines_in = []          # (name, qty, unit_price, line_total, is_wholesale)
+    merged = {}
+    for it in payload.items:
+        pi = by_name.get(it.name.strip().lower())
+        if not pi:
+            return JSONResponse({"error": f"Товара «{it.name[:50]}» нет в прайсе"}, status_code=400)
+        if it.qty < 1 or it.qty > MAX_ORDER_QTY:
+            return JSONResponse({"error": f"Количество должно быть от 1 до {MAX_ORDER_QTY}"}, status_code=400)
+        merged[pi["name"]] = (pi, merged.get(pi["name"], (pi, 0))[1] + it.qty)
+    for name, (pi, qty) in merged.items():
+        if qty > MAX_ORDER_QTY:
+            return JSONResponse({"error": f"Количество должно быть от 1 до {MAX_ORDER_QTY}"}, status_code=400)
+        unit, is_whl = _unit_price(pi, qty)
+        lines_in.append((name, qty, unit, unit * qty, is_whl))
+
+    customer_name = payload.name.strip()[:60] or "Клиент с прайса"
+    customer_full = f"{customer_name} ({contact})"
     deadline_str = (datetime.now() + timedelta(days=PRICE_ORDER_DEADLINE_DAYS)).strftime("%Y-%m-%d")
 
-    # ✅ Сервер сам считает подытог из line_total, не доверяем total_after_discount с клиента
-    grand_total = 0.0
-    for it in payload.items:
-        if it.line_total and it.line_total > 0:
-            grand_total += it.line_total
-        elif it.unit_price and it.unit_price > 0:
-            grand_total += it.unit_price * it.qty
+    grand_total = float(sum(l[3] for l in lines_in))
 
-    # Проверка промокода (серверная)
     promo_info = None
     discount = 0.0
-    promo_code = (payload.promo_code or "").strip()
-    if promo_code and sheet_manager:
-        promo_info = sheet_manager.validate_promo(promo_code)
+    promo_code = (payload.promo_code or "").strip()[:64]
+    if promo_code:
+        promo_info = await run_in_threadpool(sheet_manager.validate_promo, promo_code)
         if promo_info.get("valid"):
             discount = round(grand_total * promo_info["discount_percent"] / 100.0)
         else:
@@ -1256,27 +1420,25 @@ async def price_order_request(payload: OrderRequestIn):
             discount = 0.0
     final_total = max(0.0, grand_total - discount)
 
-    # Создаём заказы
     created_orders = []
-    if sheet_manager:
-        for it in payload.items:
-            try:
-                position = f"С прайса: {it.name}"
-                num = sheet_manager.add_order(position, it.qty, deadline_str, customer_full)
-                created_orders.append(num)
-            except Exception as e:
-                logger.error(f"Не удалось создать заказ для '{it.name}': {e}")
+    for name, qty, _u, _t, _w in lines_in:
+        try:
+            num = await run_in_threadpool(sheet_manager.add_order, f"С прайса: {name}", qty, deadline_str, customer_full)
+            created_orders.append(num)
+        except Exception as e:
+            logger.error(f"Не удалось создать заказ для '{name}': {e}")
 
     if promo_info:
-        sheet_manager.increment_promo_usage(promo_info["code"])
+        await run_in_threadpool(sheet_manager.increment_promo_usage, promo_info["code"])
 
-    # ✅ Сообщение менеджеру с разбивкой
+    esc = lambda v: html.escape(str(v))
+
     lines = ["🛒 <b>Новая заявка с прайса</b>", ""]
     if payload.name.strip():
-        lines.append(f"👤 Имя: {payload.name.strip()}")
-    lines.append(f"📞 Контакт: {payload.contact.strip()}")
+        lines.append(f"👤 Имя: {esc(customer_name)}")
+    lines.append(f"📞 Контакт: {esc(contact)}")
     if payload.comment.strip():
-        lines.append(f"💬 Комментарий: {payload.comment.strip()}")
+        lines.append(f"💬 Комментарий: {esc(payload.comment.strip()[:500])}")
 
     if created_orders:
         nums = ", ".join(f"№{n}" for n in created_orders)
@@ -1285,46 +1447,26 @@ async def price_order_request(payload: OrderRequestIn):
 
     lines.append("")
     lines.append("📋 Состав:")
-    for it in payload.items:
-        if it.unit_price and it.unit_price > 0:
-            line_price = it.line_total if it.line_total > 0 else it.unit_price * it.qty
-            tag = " <i>(опт)</i>" if it.is_wholesale else ""
-            lines.append(
-                f"• {it.name} — {it.qty} шт × {it.unit_price:.0f} ₽ "
-                f"= <b>{line_price:.0f} ₽</b>{tag}"
-            )
+    for name, qty, unit, line_price, is_whl in lines_in:
+        if unit > 0:
+            tag = " <i>(опт)</i>" if is_whl else ""
+            lines.append(f"• {esc(name)} — {qty} шт × {unit:.0f} ₽ = <b>{line_price:.0f} ₽</b>{tag}")
         else:
-            lines.append(f"• {it.name} — {it.qty} шт")
+            lines.append(f"• {esc(name)} — {qty} шт")
 
     if grand_total > 0:
         lines.append("")
         lines.append(f"💰 Подытог: {grand_total:.0f} ₽")
         if promo_info and discount > 0:
             lines.append(
-                f"🎁 Промокод <b>{promo_info['code']}</b> "
+                f"🎁 Промокод <b>{esc(promo_info['code'])}</b> "
                 f"(−{promo_info['discount_percent']}%): −{discount:.0f} ₽"
             )
         lines.append(f"💰 <b>Итого: {final_total:.0f} ₽</b>")
 
     lines.append("")
-    lines.append(f"Всего позиций: {len(payload.items)}")
+    lines.append(f"Всего позиций: {len(lines_in)}")
     text = "\n".join(lines)
-
-    recipients = []
-    if PRICE_ORDER_CHAT_ID:
-        try:
-            recipients = [int(PRICE_ORDER_CHAT_ID)]
-        except ValueError:
-            recipients = []
-    if not recipients:
-        try:
-            from config import ALLOWED_USERS
-            recipients = list(ALLOWED_USERS or [])
-        except Exception:
-            recipients = []
-
-    if not recipients:
-        return JSONResponse({"error": "Получатель не настроен (PRICE_ORDER_CHAT_ID)"}, status_code=500)
 
     sent = 0
     for rid in recipients:
@@ -1348,7 +1490,11 @@ async def price_order_request(payload: OrderRequestIn):
 
 # ---------- CRON ----------
 @app.get("/check_tasks")
-async def check_tasks():
+async def check_tasks(request: Request):
+    if CRON_SECRET:
+        got = request.headers.get("X-Cron-Secret", "") or request.query_params.get("secret", "")
+        if not hmac.compare_digest(got.encode(), CRON_SECRET.encode()):
+            raise HTTPException(status_code=403, detail="forbidden")
     if not sheet_manager:
         return JSONResponse({"error": "SheetManager не инициализирован"}, status_code=500)
     try:

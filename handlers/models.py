@@ -5,7 +5,7 @@ from aiogram.types import Message, CallbackQuery
 from keyboards import (
     main_menu, cancel_keyboard, add_model_action_keyboard, detail_param_keyboard,
     model_action_keyboard, edit_part_keyboard, edit_param_keyboard,
-    items_inline_keyboard
+    items_inline_keyboard, resolve_name
 )
 from states import AddModel, EditModel, CreateOrder
 from google_sheets import SheetManager
@@ -15,6 +15,33 @@ import logging
 logger = logging.getLogger(__name__)
 router = Router()
 sheet = SheetManager()
+
+STALE_MSG = "Устарело, откройте список заново"
+MAX_NAME_LEN = 100
+MAX_INT_VALUE = 1_000_000
+
+
+def _parse_int(text, min_value=0, max_value=MAX_INT_VALUE):
+    """Безопасный разбор целого: только ASCII-цифры, в пределах [min_value, max_value]. None при ошибке."""
+    text = (text or "").strip()
+    if not text or not text.isascii() or not text.isdigit():
+        return None
+    value = int(text)
+    if value < min_value or value > max_value:
+        return None
+    return value
+
+
+def _resolve_model(raw):
+    try:
+        return resolve_name(raw, sheet.get_all_models())
+    except Exception as e:
+        logger.warning(f"Не удалось получить список моделей: {e}")
+        return None
+
+
+async def _stale(callback: CallbackQuery):
+    await callback.answer(STALE_MSG, show_alert=True)
 
 
 # ---------- Список моделей и наборов (кнопка главного меню) ----------
@@ -39,9 +66,15 @@ async def add_model_start(message: Message, state: FSMContext):
     await state.set_state(AddModel.waiting_for_model_name)
 
 
-@router.message(AddModel.waiting_for_model_name, F.text != "❌ Отмена")
+@router.message(AddModel.waiting_for_model_name, F.text, F.text != "❌ Отмена")
 async def process_model_name(message: Message, state: FSMContext):
     model_name = message.text.strip()
+    if not model_name or len(model_name) > MAX_NAME_LEN:
+        await message.answer(f"❌ Название обязательно (до {MAX_NAME_LEN} символов).")
+        return
+    if model_name.lower() in {m.lower() for m in sheet.get_all_models()}:
+        await message.answer("❌ Модель с таким названием уже существует. Введите другое название:")
+        return
     await state.update_data(model_name=model_name, details_list=[])
     await safe_answer(
         message,
@@ -60,14 +93,17 @@ async def add_detail_start(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-@router.message(AddModel.waiting_for_detail_name, F.text != "❌ Отмена")
+@router.message(AddModel.waiting_for_detail_name, F.text, F.text != "❌ Отмена")
 async def process_detail_name(message: Message, state: FSMContext):
     name = message.text.strip()
-    if not name:
-        await message.answer("❌ Название детали обязательно.")
+    if not name or len(name) > MAX_NAME_LEN:
+        await message.answer(f"❌ Название детали обязательно (до {MAX_NAME_LEN} символов).")
         return
     data = await state.get_data()
     details_list = data.get("details_list", [])
+    if name.lower() in {d[0].lower() for d in details_list}:
+        await message.answer("❌ Деталь с таким названием уже есть в этой модели. Введите другое название:")
+        return
     details_list.append([name, "", "", "", ""])
     await state.update_data(details_list=details_list, current_index=len(details_list)-1)
     detail_index = len(details_list) - 1
@@ -82,9 +118,13 @@ async def process_detail_name(message: Message, state: FSMContext):
 
 @router.callback_query(AddModel.choosing_param, F.data.startswith("set_"))
 async def set_param_start(callback: CallbackQuery, state: FSMContext):
-    data = callback.data.split("_")
-    param_type = data[1]
-    detail_index = int(data[2])
+    # формат: set_<param>_<index>, где param может содержать '_' (on_pallet, per_unit)
+    body = callback.data[len("set_"):]
+    param_type, _, idx_str = body.rpartition("_")
+    detail_index = _parse_int(idx_str, 0, 1000)
+    if param_type not in ("on_pallet", "per_unit", "time", "grams") or detail_index is None:
+        await callback.answer("Ошибка формата", show_alert=True)
+        return
     await state.update_data(current_param=param_type, current_index=detail_index)
     prompts = {
         "on_pallet": "Введите *количество на палете* (целое число) или 'нет' для пропуска:",
@@ -104,27 +144,27 @@ async def set_param_start(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-@router.message(AddModel.waiting_for_on_pallet, F.text != "❌ Отмена")
+@router.message(AddModel.waiting_for_on_pallet, F.text, F.text != "❌ Отмена")
 async def process_on_pallet(message: Message, state: FSMContext):
     text = message.text.strip()
-    value = "" if text.lower() in ("", "нет", "-", "0") else (text if text.isdigit() else None)
+    value = "" if text.lower() in ("", "нет", "-", "0") else (text if (text.isascii() and text.isdigit() and len(text) <= 7) else None)
     if value is None and text.lower() not in ("", "нет", "-", "0"):
         await message.answer("❌ Введите целое число или 'нет'.")
         return
     await save_param_value(message, state, "on_pallet", value)
 
 
-@router.message(AddModel.waiting_for_per_unit, F.text != "❌ Отмена")
+@router.message(AddModel.waiting_for_per_unit, F.text, F.text != "❌ Отмена")
 async def process_per_unit(message: Message, state: FSMContext):
     text = message.text.strip()
-    value = "" if text.lower() in ("", "нет", "-", "0") else (text if text.isdigit() else None)
+    value = "" if text.lower() in ("", "нет", "-", "0") else (text if (text.isascii() and text.isdigit() and len(text) <= 7) else None)
     if value is None and text.lower() not in ("", "нет", "-", "0"):
         await message.answer("❌ Введите целое число или 'нет'.")
         return
     await save_param_value(message, state, "per_unit", value)
 
 
-@router.message(AddModel.waiting_for_time, F.text != "❌ Отмена")
+@router.message(AddModel.waiting_for_time, F.text, F.text != "❌ Отмена")
 async def process_time(message: Message, state: FSMContext):
     text = message.text.strip()
     value = ""
@@ -136,20 +176,22 @@ async def process_time(message: Message, state: FSMContext):
             await message.answer("❌ Введите два числа: часы и минуты, или 'нет'.")
             return
         try:
+            if not all(x.isascii() and x.isdigit() for x in parts):
+                raise ValueError
             hours = int(parts[0]); minutes = int(parts[1])
-            if hours < 0 or minutes < 0 or minutes >= 60:
+            if hours < 0 or minutes < 0 or minutes >= 60 or hours > 9999:
                 raise ValueError
             value = str(hours * 60 + minutes)
-        except:
+        except ValueError:
             await message.answer("❌ Неверный формат. Введите два числа (часы и минуты) или 'нет'.")
             return
     await save_param_value(message, state, "time", value)
 
 
-@router.message(AddModel.waiting_for_grams, F.text != "❌ Отмена")
+@router.message(AddModel.waiting_for_grams, F.text, F.text != "❌ Отмена")
 async def process_grams(message: Message, state: FSMContext):
     text = message.text.strip()
-    value = "" if text.lower() in ("", "нет", "-", "0") else (text if text.isdigit() else None)
+    value = "" if text.lower() in ("", "нет", "-", "0") else (text if (text.isascii() and text.isdigit() and len(text) <= 7) else None)
     if value is None and text.lower() not in ("", "нет", "-", "0"):
         await message.answer("❌ Введите целое число или 'нет'.")
         return
@@ -186,10 +228,10 @@ async def save_param_value(message: Message, state: FSMContext, param_type: str,
 
 @router.callback_query(AddModel.choosing_param, F.data.startswith("save_detail_"))
 async def save_detail(callback: CallbackQuery, state: FSMContext):
-    index = int(callback.data.split("_")[-1])
+    index = _parse_int(callback.data.rsplit("_", 1)[-1], 0, 1000)
     data = await state.get_data()
     details_list = data.get("details_list", [])
-    if index >= len(details_list):
+    if index is None or index >= len(details_list):
         await callback.answer("Ошибка", show_alert=True)
         return
     await safe_answer(callback.message, "Деталь сохранена. Добавьте ещё или завершите.", reply_markup=add_model_action_keyboard())
@@ -204,6 +246,10 @@ async def finish_model(callback: CallbackQuery, state: FSMContext):
     details_list = data.get("details_list", [])
     if not details_list:
         await callback.answer("Нельзя создать модель без деталей.", show_alert=True)
+        return
+    if not model_name or model_name.lower() in {m.lower() for m in sheet.get_all_models()}:
+        await callback.answer("Модель с таким названием уже существует.", show_alert=True)
+        await state.clear()
         return
     sheet.add_model(model_name, details_list)
     await safe_answer(
@@ -225,7 +271,10 @@ async def cancel_add_model(message: Message, state: FSMContext):
 # ---------- Редактирование модели ----------
 @router.callback_query(F.data.startswith("edit_model_"))
 async def edit_model_start(callback: CallbackQuery, state: FSMContext):
-    model_name = callback.data[len("edit_model_"):]
+    model_name = _resolve_model(callback.data[len("edit_model_"):])
+    if model_name is None:
+        await _stale(callback)
+        return
     details_with_rows = sheet.get_model_details_with_rows(model_name)
     if not details_with_rows:
         await callback.answer("Нет деталей для редактирования", show_alert=True)
@@ -247,42 +296,46 @@ async def edit_part_selected(callback: CallbackQuery, state: FSMContext):
     if '|' not in raw:
         await callback.answer("Ошибка формата")
         return
-    model_name, part_index_str = raw.split('|', 1)
-    try:
-        part_index = int(part_index_str)
-    except ValueError:
-        await callback.answer("Ошибка формата")
+    raw_model, raw_part = raw.split('|', 1)
+    model_name = _resolve_model(raw_model)
+    if model_name is None:
+        await _stale(callback)
         return
-    data_state = await state.get_data()
-    rows = data_state.get("edit_rows", [])
-    if part_index >= len(rows):
-        await callback.answer("Ошибка", show_alert=True)
+    parts = [d[1] for d in sheet.get_model_details_with_rows(model_name)]
+    det_name = resolve_name(raw_part, parts)
+    if det_name is None:
+        await _stale(callback)
         return
-    det_name = rows[part_index][1]
     await safe_edit(
         callback.message,
         f"Редактирование детали *{escape_markdown(det_name)}* (модель *{escape_markdown(model_name)}*)",
         parse_mode="Markdown",
         reply_markup=edit_param_keyboard(model_name, det_name)
     )
-    await state.update_data(edit_det_name=det_name, edit_det_index=part_index)
+    await state.update_data(edit_model_name=model_name, edit_det_name=det_name)
     await callback.answer()
 
 
 @router.callback_query(F.data.startswith("edit_param_"))
 async def edit_param_selected(callback: CallbackQuery, state: FSMContext):
     raw = callback.data[len("edit_param_"):]
-    if '|' not in raw:
-        await callback.answer("Ошибка формата")
-        return
     parts = raw.split('|')
     if len(parts) != 3:
         await callback.answer("Ошибка формата")
         return
-    model_name, det_name, param = parts
+    raw_model, raw_part, param = parts
+    model_name = _resolve_model(raw_model)
+    if model_name is None:
+        await _stale(callback)
+        return
+    part_names = [d[1] for d in sheet.get_model_details_with_rows(model_name)]
+    det_name = resolve_name(raw_part, part_names)
+    if det_name is None:
+        await _stale(callback)
+        return
     part_info = sheet.get_part_row_and_data(model_name, det_name)
     if not part_info:
-        await callback.answer("Деталь не найдена", show_alert=True)
+        await _stale(callback)
         return
     row_idx, on_pallet, per_unit, time_pp, grams_pp = part_info
     prompt = ""
@@ -303,11 +356,15 @@ async def edit_param_selected(callback: CallbackQuery, state: FSMContext):
         current = f"{grams_pp} г"
         prompt = "Введите новую *граммовку* (целое число):"
     elif param == "delete":
+        # row_idx только что прочитан заново и сопоставлен с именем детали
         if sheet.delete_part(model_name, det_name):
             await callback.answer("Деталь удалена!", show_alert=True)
             details = sheet.get_model_details(model_name)
-            text = format_model_info(model_name, details)
-            await safe_edit(callback.message, text, parse_mode="Markdown", reply_markup=model_action_keyboard(model_name))
+            if details:
+                text = format_model_info(model_name, details)
+                await safe_edit(callback.message, text, parse_mode="Markdown", reply_markup=model_action_keyboard(model_name))
+            else:
+                await safe_edit(callback.message, "Деталь удалена. В модели больше нет деталей.")
         else:
             await callback.answer("Ошибка удаления", show_alert=True)
         return
@@ -331,7 +388,7 @@ async def edit_param_selected(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-@router.message(EditModel.waiting_for_new_value, F.text != "❌ Отмена")
+@router.message(EditModel.waiting_for_new_value, F.text, F.text != "❌ Отмена")
 async def process_edit_value(message: Message, state: FSMContext):
     data = await state.get_data()
     row_idx = data.get("edit_row_idx")
@@ -343,26 +400,35 @@ async def process_edit_value(message: Message, state: FSMContext):
         await state.clear()
         return
     new_text = message.text.strip()
+    # Перечитываем строку: за время диалога таблица могла измениться (вставка/удаление строк)
+    fresh = sheet.get_part_row_and_data(model_name, det_name)
+    if not fresh or fresh[0] != row_idx:
+        await message.answer("⚠️ Данные изменились. Откройте модель заново через список.", reply_markup=main_menu)
+        await state.clear()
+        return
     try:
         if param == "name":
+            if not new_text or len(new_text) > MAX_NAME_LEN:
+                await message.answer(f"❌ Название обязательно (до {MAX_NAME_LEN} символов).")
+                return
             existing = sheet.get_model_details_with_rows(model_name)
             for (_, dname, _, _, _, _) in existing:
-                if dname == new_text:
+                if dname.lower() == new_text.lower() and dname != det_name:
                     await message.answer("❌ Деталь с таким именем уже существует.")
                     return
             sheet.update_part_field(row_idx, 'name', new_text)
-            await message.answer(f"✅ Название детали изменено на *{escape_markdown(new_text)}*", parse_mode="Markdown")
+            await safe_answer(message, f"✅ Название детали изменено на *{escape_markdown(new_text)}*", parse_mode="Markdown")
         elif param == "on_pallet":
-            new_int = int(new_text)
-            if new_int <= 0:
-                await message.answer("❌ Количество должно быть положительным.")
+            new_int = _parse_int(new_text, 1)
+            if new_int is None:
+                await message.answer("❌ Введите целое положительное число.")
                 return
             sheet.update_part_field(row_idx, 'on_pallet', new_int)
             await message.answer(f"✅ Количество на палете: *{new_int}* шт.", parse_mode="Markdown")
         elif param == "per_unit":
-            new_int = int(new_text)
-            if new_int <= 0:
-                await message.answer("❌ Количество должно быть положительным.")
+            new_int = _parse_int(new_text, 1)
+            if new_int is None:
+                await message.answer("❌ Введите целое положительное число.")
                 return
             sheet.update_part_field(row_idx, 'per_unit', new_int)
             await message.answer(f"✅ Количество на единицу: *{new_int}* шт.", parse_mode="Markdown")
@@ -371,17 +437,17 @@ async def process_edit_value(message: Message, state: FSMContext):
             if len(parts) != 2:
                 await message.answer("❌ Введите два числа: часы и минуты.")
                 return
-            hours = int(parts[0]); minutes = int(parts[1])
-            if hours < 0 or minutes < 0 or minutes >= 60:
-                await message.answer("❌ Часы >=0, минуты 0-59.")
+            hours = _parse_int(parts[0], 0, 9999); minutes = _parse_int(parts[1], 0, 59)
+            if hours is None or minutes is None:
+                await message.answer("❌ Часы >=0, минуты 0-59 (целые числа).")
                 return
             new_minutes = hours * 60 + minutes
             sheet.update_part_field(row_idx, 'time', new_minutes)
             await message.answer(f"✅ Время печати: *{format_time(new_minutes)}*", parse_mode="Markdown")
         elif param == "grams":
-            new_int = int(new_text)
-            if new_int < 0:
-                await message.answer("❌ Граммовка не может быть отрицательной.")
+            new_int = _parse_int(new_text, 0)
+            if new_int is None:
+                await message.answer("❌ Введите целое неотрицательное число.")
                 return
             sheet.update_part_field(row_idx, 'grams', new_int)
             await message.answer(f"✅ Граммовка: *{new_int}* г", parse_mode="Markdown")
@@ -393,7 +459,8 @@ async def process_edit_value(message: Message, state: FSMContext):
         await message.answer("❌ Введите корректное числовое значение.")
         return
     except Exception as e:
-        await message.answer(f"❌ Ошибка: {e}")
+        logger.exception("Ошибка редактирования детали")
+        await message.answer("❌ Ошибка при сохранении. Попробуйте ещё раз.")
         await state.clear()
         return
     await state.clear()
@@ -412,10 +479,13 @@ async def cancel_edit_model(message: Message, state: FSMContext):
 # ---------- Просмотр модели ----------
 @router.callback_query(F.data.startswith("model_"))
 async def show_model_details(callback: CallbackQuery):
-    model_name = callback.data[6:]
+    model_name = _resolve_model(callback.data[6:])
+    if model_name is None:
+        await _stale(callback)
+        return
     details = sheet.get_model_details(model_name)
     if not details:
-        await callback.answer("Модель не найдена", show_alert=True)
+        await _stale(callback)
         return
     text = format_model_info(model_name, details)
     await safe_edit(callback.message, text, parse_mode="Markdown", reply_markup=model_action_keyboard(model_name))
@@ -435,7 +505,10 @@ async def back_to_items(callback: CallbackQuery):
 # ---------- Расчёт ----------
 @router.callback_query(F.data.startswith("calc_"))
 async def start_calculation(callback: CallbackQuery, state: FSMContext):
-    model_name = callback.data[5:]
+    model_name = _resolve_model(callback.data[5:])
+    if model_name is None:
+        await _stale(callback)
+        return
     await state.update_data(calc_model=model_name)
     await safe_answer(
         callback.message,
@@ -447,17 +520,18 @@ async def start_calculation(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-@router.message(StateFilter("waiting_for_quantity"), F.text != "❌ Отмена")
+@router.message(StateFilter("waiting_for_quantity"), F.text, F.text != "❌ Отмена")
 async def process_quantity(message: Message, state: FSMContext):
-    if not message.text.isdigit():
-        await message.answer("Введите целое положительное число:")
-        return
-    quantity = int(message.text)
-    if quantity <= 0:
-        await message.answer("Количество должно быть больше 0.")
+    quantity = _parse_int(message.text, 1, 1_000_000)
+    if quantity is None:
+        await message.answer("Введите целое положительное число (до 1 000 000):")
         return
     data = await state.get_data()
-    model_name = data["calc_model"]
+    model_name = data.get("calc_model")
+    if not model_name:
+        await message.answer("Ошибка: модель не выбрана.", reply_markup=main_menu)
+        await state.clear()
+        return
     details = sheet.get_model_details(model_name)
     if not details:
         await message.answer("Ошибка: данные о модели не найдены.")
@@ -493,10 +567,9 @@ async def process_quantity(message: Message, state: FSMContext):
 @router.callback_query(F.data.startswith("order_model_"))
 async def order_model_from_card(callback: CallbackQuery, state: FSMContext):
     """Кнопка «🛒 Заказать эту модель» в карточке модели."""
-    model_name = callback.data[len("order_model_"):]
-    models = sheet.get_all_models()
-    if model_name not in models:
-        await callback.answer("Модель не найдена", show_alert=True)
+    model_name = _resolve_model(callback.data[len("order_model_"):])
+    if model_name is None:
+        await _stale(callback)
         return
     await state.clear()
     await state.update_data(order_item=model_name, order_type="model")
