@@ -677,6 +677,9 @@ class SheetManager:
     # При первой миграции ID = текущий номер строки, поэтому старые ссылки остаются рабочими.
     def _migrate_price_ids(self):
         with _WRITE_LOCK:
+            # у уже существующего листа всего 7 колонок — без расширения запись в столбец H падает
+            if getattr(self.sheet_price, "col_count", PRICE_ID_COL) < PRICE_ID_COL:
+                self.sheet_price.resize(cols=PRICE_ID_COL)
             records = self.sheet_price.get_all_values()
             if not records:
                 self.sheet_price.append_row(PRICE_COLUMNS)
@@ -715,9 +718,14 @@ class SheetManager:
         return nxt
 
     def _price_row_map(self):
-        """{id: номер строки} по свежим данным листа (одна читающая операция)."""
-        col = self.sheet_price.col_values(PRICE_ID_COL)
-        return {int(v): i for i, v in enumerate(col, start=1) if i > 1 and str(v).strip().isdigit()}
+        """{id: номер строки} по свежим данным листа; у строк без ID — номер строки (как в _fetch_price_items)."""
+        result = {}
+        for i, row in enumerate(self.sheet_price.get_all_values(), start=1):
+            if i == 1 or not any((c or "").strip() for c in row[:7]):
+                continue
+            raw = str(row[PRICE_ID_COL - 1]).strip() if len(row) >= PRICE_ID_COL else ""
+            result[int(raw) if raw.isdigit() else i] = i
+        return result
 
     @staticmethod
     def _price_dict(row, price_id, sheet_row):
@@ -739,9 +747,8 @@ class SheetManager:
             if not any((cell or "").strip() for cell in row[:7]):
                 continue
             raw_id = str(row[PRICE_ID_COL - 1]).strip() if len(row) >= PRICE_ID_COL else ""
-            if not raw_id.isdigit():
-                continue   # ещё не прошёл миграцию — появится после следующего запуска
-            items.append(self._price_dict(row, int(raw_id), idx))
+            # нет ID (миграция не прошла) — временно используем номер строки, прайс не должен пропадать
+            items.append(self._price_dict(row, int(raw_id) if raw_id.isdigit() else idx, idx))
         return items
 
     def get_price_items(self):

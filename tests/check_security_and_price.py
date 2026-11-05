@@ -123,3 +123,13 @@ assert sm.set_category_for_rows([3, 5, 999], "Новая") == 2 and sm.get_price
 assert sm.delete_price_items([3, 5, 999]) == 2 and [i["name"] for i in sm.get_price_items()] == ["D"]
 assert sm.add_price_item("E") and sm.get_price_item_by_row(7)["name"] == "E"     # ID 6 (D), 7 — не переиспользуются
 print("security & price OK")
+
+# ---- регресс: лист на 7 колонок без ID — прайс не пропадает, миграция расширяет лист ----
+old = PriceWS([H8, ["A", "", "", "1", "", "", "К"], ["B", "", "", "2", "", "", "К"]])
+old.col_count = 7
+old.resize = lambda cols: setattr(old, "col_count", cols)
+sm2 = object.__new__(Real); sm2._initialized = True; sm2._cache = {}; sm2.sheet_price = old; sm2.sheet_log = WS([])
+assert [i["name"] for i in sm2.get_price_items()] == ["A", "B"]          # до миграции
+assert sm2.get_price_item_by_row(3)["name"] == "B"
+sm2._migrate_price_ids(); assert old.col_count == 8 and old.rows[1][7] == "2"
+print("legacy sheet OK")
