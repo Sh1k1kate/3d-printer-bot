@@ -28,7 +28,6 @@ from handlers.common import AccessMiddleware, ResetStateOnMenuMiddleware
 from handlers.client_bot import create_client_dispatcher, set_commands as set_client_commands
 from config import BOT_TOKEN, ADMIN_PASSWORD, TOKEN_SECRET, WEBHOOK_SECRET, CRON_SECRET, ALLOWED_USERS
 from google_sheets import SheetManager, moscow_now
-from bambu_cloud import BambuCloudManager
 from production import build_production_rows, normalize_position, parse_shipment_text, match_name
 
 from docx import Document
@@ -79,7 +78,6 @@ client_dp = create_client_dispatcher() if client_bot else None
 
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
-bambu_cloud = BambuCloudManager()
 
 PRICE_LOGO_URL = os.getenv("PRICE_LOGO_URL", "")
 PUBLIC_URL = os.getenv("PUBLIC_URL", "")
@@ -1058,13 +1056,6 @@ async def get_tasks_api(_: bool = Depends(verify_admin)):
     except Exception as e:
         logger.error(f"API tasks error: {e}")
         return JSONResponse({"error": str(e)}, status_code=500)
-
-
-# ---------- API: ПРИНТЕРЫ ----------
-@app.get("/api/printers")
-async def get_printers_api(_: bool = Depends(verify_admin)):
-    printers = await run_in_threadpool(bambu_cloud.get_printers)
-    return JSONResponse({"printers": printers})
 
 
 # ---------- API: ПРАЙС ----------

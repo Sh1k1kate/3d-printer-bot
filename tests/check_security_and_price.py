@@ -15,7 +15,7 @@ assert not appmod.check_admin_token("secret")                       # сырой
 assert not appmod.check_admin_token(tok[:-1] + ("0" if tok[-1] != "0" else "1"))
 assert not appmod.check_admin_token(f"{int(time.time()) - 5}." + tok.split(".")[1])   # подпись от другого exp
 assert not appmod.check_admin_token(appmod.make_admin_token(ttl=-10))                 # истёк
-for url in ["/api/orders", "/api/tasks", "/api/printers", "/api/production", "/api/price/admin"]:
+for url in ["/api/orders", "/api/tasks", "/api/production", "/api/price/admin"]:
     assert c.get(url).status_code == 401, url
     assert c.get(url, headers={"X-Admin-Token": "secret"}).status_code == 401, url
 assert c.get("/api/orders", headers=H).status_code == 200

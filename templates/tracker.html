@@ -22,23 +22,6 @@
     @media (max-width: 768px) { .table-cell-wrap { max-width: 140px; } }
     .kpi-card { transition: transform 0.2s; }
     .kpi-card:hover { transform: translateY(-3px); }
-    .filament-dot {
-      display: inline-block;
-      width: 14px;
-      height: 14px;
-      border-radius: 50%;
-      border: 1px solid rgba(0,0,0,0.3);
-      margin-right: 3px;
-    }
-    .temp-badge {
-      display: inline-block;
-      font-size: 11px;
-      padding: 2px 6px;
-      border-radius: 6px;
-      background: rgba(0,0,0,0.05);
-      margin-right: 4px;
-    }
-    .dark .temp-badge { background: rgba(255,255,255,0.1); }
     [hidden] { display: none !important; }
   </style>
 </head>
@@ -79,19 +62,12 @@
     <div id="load-error" hidden role="alert" class="mb-4 px-4 py-3 rounded-lg bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200 text-sm"></div>
 
     <div class="flex border-b border-gray-200 dark:border-gray-700 mb-6 overflow-x-auto">
-      <button class="tab-btn px-4 py-2 text-sm font-medium border-b-2 border-blue-500 text-blue-600 dark:text-blue-400 whitespace-nowrap" data-tab="printers">🖨️ Принтеры</button>
-      <button class="tab-btn px-4 py-2 text-sm font-medium border-b-2 border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 whitespace-nowrap" data-tab="orders">📋 Заказы</button>
+      <button class="tab-btn px-4 py-2 text-sm font-medium border-b-2 border-blue-500 text-blue-600 dark:text-blue-400 whitespace-nowrap" data-tab="orders">📋 Заказы</button>
       <button class="tab-btn px-4 py-2 text-sm font-medium border-b-2 border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 whitespace-nowrap" data-tab="tasks">📌 Задачи</button>
       <button class="tab-btn px-4 py-2 text-sm font-medium border-b-2 border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 whitespace-nowrap" data-tab="infographics">📊 Инфографика</button>
     </div>
 
-    <div id="tab-printers" class="tab-content active">
-      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4" id="printers-grid">
-        <p class="text-gray-500 dark:text-gray-400">Загрузка данных о принтерах...</p>
-      </div>
-    </div>
-
-    <div id="tab-orders" class="tab-content">
+    <div id="tab-orders" class="tab-content active">
       <div class="flex flex-wrap items-center gap-4 mb-6 bg-white dark:bg-gray-800 p-4 rounded-lg shadow">
         <div class="flex-1 min-w-[150px]">
           <input type="text" id="search-input-orders" placeholder="🔍 Поиск по позиции" class="w-full px-3 py-2 border rounded-lg bg-white dark:bg-gray-700">
@@ -204,10 +180,6 @@
           <div class="text-3xl font-bold text-yellow-600 dark:text-yellow-400" id="kpi-tasks">0</div>
           <div class="text-xs uppercase text-gray-500 dark:text-gray-400 mt-1">Активных задач</div>
         </div>
-        <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-4 text-center kpi-card">
-          <div class="text-3xl font-bold text-purple-600 dark:text-purple-400" id="kpi-printers">0</div>
-          <div class="text-xs uppercase text-gray-500 dark:text-gray-400 mt-1">Активных принтеров</div>
-        </div>
       </div>
 
       <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
@@ -237,10 +209,6 @@
           <h2 class="text-lg font-semibold mb-3">🏆 Топ заказчиков</h2>
           <div class="h-64"><canvas id="chartCustomers"></canvas></div>
         </div>
-        <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-4">
-          <h2 class="text-lg font-semibold mb-3">🖨️ Прогресс принтеров</h2>
-          <div class="h-64"><canvas id="chartPrinters"></canvas></div>
-        </div>
       </div>
     </div>
   </div>
@@ -265,8 +233,8 @@
     class AuthError extends Error {}
 
     function showLogin(msg) {
-      allOrders = []; allTasks = []; allPrinters = [];
-      renderPrintersGrid(); applyOrderFilters(); applyTaskFilters();
+      allOrders = []; allTasks = [];
+      applyOrderFilters(); applyTaskFilters();
       document.getElementById('login-overlay').hidden = false;
       const err = document.getElementById('login-error');
       err.textContent = msg || '';
@@ -374,7 +342,7 @@
       });
     });
 
-    let allOrders = [], allTasks = [], allPrinters = [];
+    let allOrders = [], allTasks = [];
     let currentOrderFilter = 'all', orderSearchQuery = '', customerFilter = '', dateFrom = '', dateTo = '';
     let currentTaskFilter = 'all', taskSearchQuery = '';
 
@@ -408,118 +376,6 @@
         if (!(e instanceof AuthError)) setLoadError('Задачи', e.message);
         return false;
       }
-    }
-
-    async function loadPrinters() {
-      try {
-        const data = await apiGet('/api/printers');
-        allPrinters = Array.isArray(data.printers) ? data.printers : [];
-        setLoadError('Принтеры', '');
-        renderPrintersGrid();
-        return true;
-      } catch (e) {
-        if (!(e instanceof AuthError)) setLoadError('Принтеры', e.message);
-        return false;
-      }
-    }
-
-    function getStatusColor(status) {
-      const s = (status || '').toUpperCase();
-      if (s === 'RUNNING') return 'border-green-400';
-      if (s === 'ACTIVE' || s === 'IDLE') return 'border-yellow-400';
-      if (s === 'SUCCESS' || s === 'FINISH') return 'border-blue-400';
-      if (s === 'FAIL' || s === 'FAILED') return 'border-red-400';
-      return 'border-gray-400';
-    }
-
-    function getStatusLabel(status) {
-      const s = String(status || '').toUpperCase();
-      if (s === 'RUNNING') return '🖨️ Печатает';
-      if (s === 'ACTIVE' || s === 'IDLE') return '⏸️ Ожидает';
-      if (s === 'SUCCESS' || s === 'FINISH') return '✅ Готово';
-      if (s === 'FAIL' || s === 'FAILED') return '❌ Ошибка';
-      return escapeHtml(s) || '—';
-    }
-
-    function renderPrintersGrid() {
-      const grid = document.getElementById('printers-grid');
-      if (!allPrinters.length) {
-        grid.innerHTML = '<p class="text-gray-500 dark:text-gray-400">Нет данных о принтерах.</p>';
-        return;
-      }
-
-      const statusOrder = { 'RUNNING': 1, 'ACTIVE': 2, 'IDLE': 2, 'SUCCESS': 3, 'FINISH': 3, 'FAIL': 4 };
-      const sorted = [...allPrinters].sort((a, b) => {
-        const sa = statusOrder[(a.status || '').toUpperCase()] || 99;
-        const sb = statusOrder[(b.status || '').toUpperCase()] || 99;
-        return sa - sb;
-      });
-
-      grid.innerHTML = sorted.map(p => {
-        const trays = (p.ams && Array.isArray(p.ams.trays)) ? p.ams.trays : [];
-        const squares = trays.map(tray => {
-          let color = '#cccccc';
-          if (typeof tray.color === 'string' && /^[0-9a-fA-F]{6}/.test(tray.color)) {
-            color = '#' + tray.color.substring(0, 6);
-          }
-          const remain = tray.remaining ? `${tray.remaining}мм` : '';
-          const type = tray.type || '—';
-          const isExternal = tray.tray_id === 254;
-          const label = isExternal ? 'Внешняя' : type;
-          return `<span class="filament-dot" style="background:${color};" title="${escapeHtml(label)} • ${escapeHtml(remain)}"></span>`;
-        }).join('');
-
-        const progress = Math.max(0, Math.min(100, num(p.progress)));
-        const isRunning = (p.status || '').toUpperCase() === 'RUNNING';
-        const progressBar = isRunning && progress > 0
-          ? `<div class="w-full bg-gray-200 dark:bg-gray-600 rounded-full h-1.5 mt-2"><div class="bg-green-500 h-1.5 rounded-full progress-bar" style="width:${progress}%"></div></div><span class="text-xs text-gray-500">${progress}%</span>`
-          : '';
-
-        let remaining = '';
-        if (p.remaining_time && num(p.remaining_time) > 0) {
-          const mins = Math.round(num(p.remaining_time));
-          const hours = Math.floor(mins / 60);
-          const m = mins % 60;
-          remaining = `<span class="text-xs text-gray-500 dark:text-gray-400">⏱ ${hours > 0 ? hours + 'ч ' : ''}${m}мин</span>`;
-        }
-
-        const taskName = p.subtask_name
-          ? `<div class="text-xs text-gray-500 dark:text-gray-400 truncate mt-1" title="${escapeHtml(p.subtask_name)}">${escapeHtml(p.subtask_name)}</div>`
-          : '';
-
-        let temps = '';
-        if (p.nozzle_temper !== null && p.nozzle_temper !== undefined) {
-          const nt = Math.round(num(p.nozzle_temper));
-          const ntt = p.nozzle_target_temper ? Math.round(num(p.nozzle_target_temper)) : null;
-          temps += `<span class="temp-badge">🌡 ${nt}°${ntt ? '/' + ntt + '°' : ''}</span>`;
-        }
-        if (p.bed_temper !== null && p.bed_temper !== undefined) {
-          const bt = Math.round(num(p.bed_temper));
-          const btt = p.bed_target_temper ? Math.round(num(p.bed_target_temper)) : null;
-          temps += `<span class="temp-badge">🔥 ${bt}°${btt ? '/' + btt + '°' : ''}</span>`;
-        }
-
-        return `
-          <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-4 card-hover transition border-l-4 ${getStatusColor(p.status)}">
-            <div class="flex items-start justify-between gap-2">
-              <div class="flex-1 min-w-0">
-                <div class="font-bold text-base truncate" title="${escapeHtml(p.name)}">${escapeHtml(p.name)}</div>
-                <div class="text-xs text-gray-500 dark:text-gray-400">${escapeHtml(p.model)}</div>
-              </div>
-              <div class="flex flex-wrap gap-0.5 flex-shrink-0" title="AMS катушки">
-                ${squares || '<span class="text-xs text-gray-400">нет AMS</span>'}
-              </div>
-            </div>
-            <div class="mt-2 flex items-center justify-between">
-              <span class="text-xs font-semibold">${getStatusLabel(p.status)}</span>
-              ${remaining}
-            </div>
-            ${taskName}
-            ${temps ? `<div class="mt-2">${temps}</div>` : ''}
-            ${progressBar}
-          </div>
-        `;
-      }).join('');
     }
 
     function populateCustomerFilter() {
@@ -670,7 +526,7 @@
     let charts = {};
 
     async function loadInfographics() {
-      const results = await Promise.all([loadOrders(), loadTasks(), loadPrinters()]);
+      const results = await Promise.all([loadOrders(), loadTasks()]);
       if (!results.every(Boolean)) return false;
       if (typeof Chart === 'undefined') { setLoadError('Графики', 'библиотека Chart.js не загрузилась'); return false; }
       setLoadError('Графики', '');
@@ -679,12 +535,10 @@
       const totalOrders = allOrders.length;
       const avgProgress = openOrders.length ? Math.round(openOrders.reduce((s,o)=>s+num(o.progress),0)/openOrders.length) : 0;
       const activeTasks = allTasks.filter(t => t.status !== 'completed').length;
-      const activePrinters = allPrinters.filter(p => (p.status || '').toUpperCase() === 'RUNNING').length;
 
       document.getElementById('kpi-orders').textContent = totalOrders;
       document.getElementById('kpi-progress').textContent = avgProgress + '%';
       document.getElementById('kpi-tasks').textContent = activeTasks;
-      document.getElementById('kpi-printers').textContent = activePrinters;
 
       Object.values(charts).forEach(c => c.destroy());
       charts = {};
@@ -730,15 +584,6 @@
         options: { responsive: true, maintainAspectRatio: false, scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } } }, plugins: { legend: { display: false } } }
       });
 
-      const runningPrinters = allPrinters.filter(p => (p.status || '').toUpperCase() === 'RUNNING');
-      charts.printers = new Chart(document.getElementById('chartPrinters'), {
-        type: 'bar',
-        data: {
-          labels: runningPrinters.length ? runningPrinters.map(p => p.name) : ['Нет активных'],
-          datasets: [{ label: 'Прогресс (%)', data: runningPrinters.length ? runningPrinters.map(p => num(p.progress)) : [0], backgroundColor: '#10b981' }]
-        },
-        options: { responsive: true, maintainAspectRatio: false, scales: { y: { beginAtZero: true, max: 100 } }, plugins: { legend: { display: false } } }
-      });
       return true;
     }
 
@@ -773,8 +618,7 @@
       if (!getToken()) { showLogin(''); return; }
       const activeTab = document.querySelector('.tab-content.active').id;
       let ok;
-      if (activeTab === 'tab-printers') ok = await loadPrinters();
-      else if (activeTab === 'tab-orders') ok = await loadOrders();
+      if (activeTab === 'tab-orders') ok = await loadOrders();
       else if (activeTab === 'tab-tasks') ok = await loadTasks();
       else if (activeTab === 'tab-infographics') ok = await loadInfographics();
       if (ok) markUpdated();

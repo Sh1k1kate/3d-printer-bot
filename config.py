@@ -18,12 +18,6 @@ if allowed_env:
 else:
     ALLOWED_USERS = [398362790,763201845,7858131385]  # замените на ваш Telegram ID для локальных тестов
 
-# Bambu Lab Cloud API (опционально, если используется)
-BAMBU_EMAIL = os.getenv("BAMBU_EMAIL", "")
-BAMBU_PASSWORD = os.getenv("BAMBU_PASSWORD", "")
-BAMBU_TOKEN = os.getenv("BAMBU_TOKEN", "")  # готовый токен (можно получить через CLI)
-BAMBU_REGION = os.getenv("BAMBU_REGION", "global")  # "global" или "china"
-
 # Секрет для подписи админ-токенов и (опционально) защиты вебхуков/крона
 TOKEN_SECRET = os.getenv("TOKEN_SECRET", "")
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "")
