@@ -518,7 +518,7 @@
       const empty = document.getElementById('empty-state-orders');
       if (!orders.length) { tbody.innerHTML = ''; cards.innerHTML = ''; empty.classList.remove('hidden'); return; }
       empty.classList.add('hidden');
-      const rowHtml = (o) => o => { const pr = Math.max(0, Math.min(100, num(o.progress))); const dl = escapeHtml(o.deadline); return `
+      const rowHtml = (o) => { const pr = Math.max(0, Math.min(100, num(o.progress))); const dl = escapeHtml(o.deadline); return `
         <tr class="hover:bg-gray-50 dark:hover:bg-gray-700 transition">
           <td class="px-4 py-3 whitespace-nowrap text-sm font-medium">${escapeHtml(o.id)}</td>
           <td class="px-4 py-3 text-sm table-cell-wrap break-word max-w-[150px]">${escapeHtml(o.position)}</td>
@@ -531,7 +531,7 @@
           <td class="px-4 py-3 whitespace-nowrap"><span class="px-2 py-1 text-xs font-semibold rounded-full ${getStatusClass(o.status)}">${getStatusText(o.status)}</span></td>
         </tr>
       `; };
-      const cardHtml = (o) => o => { const pr = Math.max(0, Math.min(100, num(o.progress))); return `
+      const cardHtml = (o) => { const pr = Math.max(0, Math.min(100, num(o.progress))); return `
         <div class="bg-gray-50 dark:bg-gray-700 p-4 rounded-lg shadow card-hover transition">
           <div class="flex justify-between items-start">
             <div class="flex-1 min-w-0"><div class="font-bold break-word">${escapeHtml(o.position)}</div><div class="text-sm text-gray-500 dark:text-gray-400">Заказ №${escapeHtml(o.id)} ${o.customer ? '👤 ' + escapeHtml(o.customer) : ''}</div></div>
