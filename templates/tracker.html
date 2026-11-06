@@ -75,6 +75,12 @@
         <select id="customer-filter" class="px-3 py-2 border rounded-lg bg-white dark:bg-gray-700">
           <option value="">Все заказчики</option>
         </select>
+        <select id="group-by" class="px-3 py-2 border rounded-lg bg-white dark:bg-gray-700" title="Группировка">
+          <option value="none">Без группировки</option>
+          <option value="customer">Группировать: по заказчику</option>
+          <option value="deadline">Группировать: по сроку</option>
+          <option value="customer_deadline">Группировать: заказчик → срок</option>
+        </select>
         <input type="date" id="date-from" class="px-3 py-2 border rounded-lg bg-white dark:bg-gray-700">
         <input type="date" id="date-to" class="px-3 py-2 border rounded-lg bg-white dark:bg-gray-700">
         <button onclick="applyFilters()" class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg">Применить</button>
@@ -433,6 +439,68 @@
       applyOrderFilters();
     }
 
+    // ---------- группировка ----------
+    let groupMode = 'none';
+    try { groupMode = localStorage.getItem('trackerGroupBy') || 'none'; } catch (e) {}
+
+    const DEADLINE_BUCKETS = ['Просрочено', 'Сегодня', 'Завтра', 'На этой неделе', 'Позже', 'Без срока', 'Выполнено'];
+    function deadlineBucket(o) {
+      if (isDone(o)) return 'Выполнено';
+      const d = new Date(o.deadline);
+      if (!o.deadline || isNaN(d)) return 'Без срока';
+      const today = new Date(); today.setHours(0, 0, 0, 0);
+      const diff = Math.round((new Date(d.getFullYear(), d.getMonth(), d.getDate()) - today) / 86400000);
+      if (diff < 0) return 'Просрочено';
+      if (diff === 0) return 'Сегодня';
+      if (diff === 1) return 'Завтра';
+      if (diff <= 7) return 'На этой неделе';
+      return 'Позже';
+    }
+    function byDeadline(a, b) { return String(a.deadline || '9999').localeCompare(String(b.deadline || '9999')) || num(a.id) - num(b.id); }
+
+    // уровни: [{label(o), order(a,b)}]; возвращает дерево групп [{title, items|children, ...}]
+    function buildGroups(orders, levels) {
+      if (!levels.length) return [{ title: null, orders: [...orders].sort(byDeadline) }];
+      const [lv, ...rest] = levels;
+      const map = new Map();
+      orders.forEach(o => { const k = lv.label(o); if (!map.has(k)) map.set(k, []); map.get(k).push(o); });
+      return [...map.keys()].sort(lv.order).map(k => {
+        const items = map.get(k);
+        return { title: k, level: levels.length, orders: items, children: rest.length ? buildGroups(items, rest) : null };
+      });
+    }
+    const LEVELS = {
+      customer: { label: o => String(o.customer || '').trim() || 'Без заказчика',
+                  order: (a, b) => (a === 'Без заказчика') - (b === 'Без заказчика') || a.localeCompare(b, 'ru') },
+      deadline: { label: deadlineBucket, order: (a, b) => DEADLINE_BUCKETS.indexOf(a) - DEADLINE_BUCKETS.indexOf(b) },
+    };
+    function groupStats(items) {
+      const ordered = items.reduce((s, o) => s + num(o.ordered), 0);
+      const printed = items.reduce((s, o) => s + num(o.printed), 0);
+      const left = items.filter(o => !isDone(o)).reduce((s, o) => s + Math.max(0, num(o.ordered) - num(o.printed)), 0);
+      return { n: items.length, ordered, printed, left, pct: ordered ? Math.round(printed / ordered * 100) : 0 };
+    }
+    function groupHeaderHtml(g, colspan, asCard) {
+      const st = groupStats(g.orders);
+      const tone = g.title === 'Просрочено' ? 'text-red-600 dark:text-red-400' : '';
+      const sub = `${st.n} зак. · напечатано ${st.printed}/${st.ordered} (${st.pct}%)` + (st.left ? ` · допечатать ${st.left}` : '');
+      const pad = g.level >= 2 ? '' : '';
+      if (asCard) return `<div class="mt-2 px-1 font-bold ${tone} ${g.level >= 2 ? '' : 'text-lg'}">${escapeHtml(g.title)} <span class="text-xs font-normal text-gray-500 dark:text-gray-400">${escapeHtml(sub)}</span></div>`;
+      return `<tr class="${g.level >= 2 ? 'bg-gray-100 dark:bg-gray-700' : 'bg-blue-50 dark:bg-gray-600'}"><td colspan="${colspan}" class="px-4 py-2 text-sm font-bold ${tone}">${g.level < 2 && groupMode === 'customer_deadline' ? '👤 ' : ''}${escapeHtml(g.title)} <span class="font-normal text-xs text-gray-500 dark:text-gray-300">${escapeHtml(sub)}</span></td></tr>`;
+    }
+    function renderTree(groups, rowFn, colspan, asCard) {
+      return groups.map(g => {
+        if (g.title === null) return g.orders.map(rowFn).join('');
+        const inner = g.children ? renderTree(g.children, rowFn, colspan, asCard) : [...g.orders].sort(byDeadline).map(rowFn).join('');
+        return groupHeaderHtml(g, colspan, asCard) + inner;
+      }).join('');
+    }
+    function setGroupMode(v) {
+      groupMode = ['none', 'customer', 'deadline', 'customer_deadline'].includes(v) ? v : 'none';
+      try { localStorage.setItem('trackerGroupBy', groupMode); } catch (e) {}
+      applyOrderFilters();
+    }
+
     function renderOrders(orders) {
       updateOrderStats();
       const tbody = document.getElementById('orders-table-body');
@@ -440,7 +508,7 @@
       const empty = document.getElementById('empty-state-orders');
       if (!orders.length) { tbody.innerHTML = ''; cards.innerHTML = ''; empty.classList.remove('hidden'); return; }
       empty.classList.add('hidden');
-      tbody.innerHTML = orders.map(o => { const pr = Math.max(0, Math.min(100, num(o.progress))); const dl = escapeHtml(o.deadline); return `
+      const rowHtml = (o) => o => { const pr = Math.max(0, Math.min(100, num(o.progress))); const dl = escapeHtml(o.deadline); return `
         <tr class="hover:bg-gray-50 dark:hover:bg-gray-700 transition">
           <td class="px-4 py-3 whitespace-nowrap text-sm font-medium">${escapeHtml(o.id)}</td>
           <td class="px-4 py-3 text-sm table-cell-wrap break-word max-w-[150px]">${escapeHtml(o.position)}</td>
@@ -452,8 +520,8 @@
           <td class="px-4 py-3 whitespace-nowrap text-sm">${isDone(o) ? '—' : getDaysLeft(o.deadline)}</td>
           <td class="px-4 py-3 whitespace-nowrap"><span class="px-2 py-1 text-xs font-semibold rounded-full ${getStatusClass(o.status)}">${getStatusText(o.status)}</span></td>
         </tr>
-      `; }).join('');
-      cards.innerHTML = orders.map(o => { const pr = Math.max(0, Math.min(100, num(o.progress))); return `
+      `; };
+      const cardHtml = (o) => o => { const pr = Math.max(0, Math.min(100, num(o.progress))); return `
         <div class="bg-gray-50 dark:bg-gray-700 p-4 rounded-lg shadow card-hover transition">
           <div class="flex justify-between items-start">
             <div class="flex-1 min-w-0"><div class="font-bold break-word">${escapeHtml(o.position)}</div><div class="text-sm text-gray-500 dark:text-gray-400">Заказ №${escapeHtml(o.id)} ${o.customer ? '👤 ' + escapeHtml(o.customer) : ''}</div></div>
@@ -467,7 +535,14 @@
           </div>
           <div class="mt-2"><div class="w-full bg-gray-200 dark:bg-gray-600 rounded-full h-2"><div class="bg-blue-600 h-2 rounded-full progress-bar" style="width:${pr}%"></div></div><span class="text-xs text-gray-500">${pr}%</span></div>
         </div>
-      `; }).join('');
+      `; };
+      const levels = groupMode === 'customer' ? [LEVELS.customer] : groupMode === 'deadline' ? [LEVELS.deadline]
+                   : groupMode === 'customer_deadline' ? [LEVELS.customer, LEVELS.deadline] : [];
+      const tree = buildGroups(orders, levels);
+      // без группировки сохраняем прежний порядок из API
+      const plain = !levels.length;
+      tbody.innerHTML = plain ? orders.map(rowHtml).join('') : renderTree(tree, rowHtml, 9, false);
+      cards.innerHTML = plain ? orders.map(cardHtml).join('') : renderTree(tree, cardHtml, 9, true);
     }
 
     // «Всего» — по всем заказам; «В работе» и средний прогресс — только по невыполненным
@@ -611,6 +686,7 @@
       setTimeout(() => URL.revokeObjectURL(url), 1000);
     }
 
+    (function () { const g = document.getElementById('group-by'); g.value = groupMode; g.addEventListener('change', () => setGroupMode(g.value)); })();
     document.getElementById('search-input-orders').addEventListener('input', function() { orderSearchQuery = this.value; applyOrderFilters(); });
     document.getElementById('search-input-tasks').addEventListener('input', function() { taskSearchQuery = this.value; applyTaskFilters(); });
 
