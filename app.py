@@ -28,7 +28,7 @@ from handlers.common import AccessMiddleware, ResetStateOnMenuMiddleware
 from handlers.client_bot import create_client_dispatcher, set_commands as set_client_commands
 from config import BOT_TOKEN, ADMIN_PASSWORD, TOKEN_SECRET, WEBHOOK_SECRET, CRON_SECRET, ALLOWED_USERS
 from google_sheets import SheetManager, moscow_now
-from production import build_production_rows, normalize_position, parse_shipment_text, match_name
+from production import group_orders, build_production_rows, normalize_position, parse_shipment_text, match_name
 
 from docx import Document
 from docx.shared import Pt, Cm, RGBColor
@@ -834,7 +834,8 @@ async def get_production_api(_: bool = Depends(verify_admin)):
 
     try:
         rows = await run_in_threadpool(_build)
-        return JSONResponse({"locations": SHIPMENT_LOCATIONS, "rows": rows})
+        orders = await run_in_threadpool(lambda: group_orders(sheet_manager.get_active_orders()))
+        return JSONResponse({"locations": SHIPMENT_LOCATIONS, "rows": rows, "orders": orders})
     except Exception as e:
         logger.error(f"API production error: {e}", exc_info=e)
         return JSONResponse({"error": str(e)}, status_code=500)

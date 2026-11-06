@@ -76,6 +76,7 @@
           <option value="">Все заказчики</option>
         </select>
         <select id="group-by" class="px-3 py-2 border rounded-lg bg-white dark:bg-gray-700" title="Группировка">
+          <option value="order">Заказ → позиции</option>
           <option value="none">Без группировки</option>
           <option value="customer">Группировать: по заказчику</option>
           <option value="deadline">Группировать: по сроку</option>
@@ -440,8 +441,8 @@
     }
 
     // ---------- группировка ----------
-    let groupMode = 'none';
-    try { groupMode = localStorage.getItem('trackerGroupBy') || 'none'; } catch (e) {}
+    let groupMode = 'order';
+    try { groupMode = localStorage.getItem('trackerGroupBy') || 'order'; } catch (e) {}
 
     const DEADLINE_BUCKETS = ['Просрочено', 'Сегодня', 'Завтра', 'На этой неделе', 'Позже', 'Без срока', 'Выполнено'];
     function deadlineBucket(o) {
@@ -464,12 +465,21 @@
       const [lv, ...rest] = levels;
       const map = new Map();
       orders.forEach(o => { const k = lv.label(o); if (!map.has(k)) map.set(k, []); map.get(k).push(o); });
-      return [...map.keys()].sort(lv.order).map(k => {
+      return [...map.keys()].sort((a, b) => lv.order(a, b, map)).map(k => {
         const items = map.get(k);
-        return { title: k, level: levels.length, orders: items, children: rest.length ? buildGroups(items, rest) : null };
+        return { title: lv.title ? lv.title(k, items) : k, level: levels.length, orders: items, children: rest.length ? buildGroups(items, rest) : null };
       });
     }
     const LEVELS = {
+      // «заказ» = все строки одного заказчика с одним сроком (общего номера заказа в таблице нет)
+      order: { label: o => (o.deadline || '9999-99-99') + '\u0001' + String(o.customer || '').trim().toLowerCase(),
+               title: (k, items) => {
+                 const c = String(items[0].customer || '').trim() || 'Без заказчика';
+                 const dl = items[0].deadline ? ' · срок ' + items[0].deadline : ' · без срока';
+                 const ids = items.map(o => '№' + o.id).join(', ');
+                 return '📦 ' + c + dl + ' · ' + ids + (items.every(isDone) ? ' · ✅ выполнен' : '');
+               },
+               order: (a, b, map) => (map.get(a).every(isDone) - map.get(b).every(isDone)) || a.localeCompare(b, 'ru') },
       customer: { label: o => String(o.customer || '').trim() || 'Без заказчика',
                   order: (a, b) => (a === 'Без заказчика') - (b === 'Без заказчика') || a.localeCompare(b, 'ru') },
       deadline: { label: deadlineBucket, order: (a, b) => DEADLINE_BUCKETS.indexOf(a) - DEADLINE_BUCKETS.indexOf(b) },
@@ -483,7 +493,7 @@
     function groupHeaderHtml(g, colspan, asCard) {
       const st = groupStats(g.orders);
       const tone = g.title === 'Просрочено' ? 'text-red-600 dark:text-red-400' : '';
-      const sub = `${st.n} зак. · напечатано ${st.printed}/${st.ordered} (${st.pct}%)` + (st.left ? ` · допечатать ${st.left}` : '');
+      const sub = `${st.n} ${groupMode === 'order' ? 'поз.' : 'зак.'} · напечатано ${st.printed}/${st.ordered} (${st.pct}%)` + (st.left ? ` · допечатать ${st.left}` : '');
       const pad = g.level >= 2 ? '' : '';
       if (asCard) return `<div class="mt-2 px-1 font-bold ${tone} ${g.level >= 2 ? '' : 'text-lg'}">${escapeHtml(g.title)} <span class="text-xs font-normal text-gray-500 dark:text-gray-400">${escapeHtml(sub)}</span></div>`;
       return `<tr class="${g.level >= 2 ? 'bg-gray-100 dark:bg-gray-700' : 'bg-blue-50 dark:bg-gray-600'}"><td colspan="${colspan}" class="px-4 py-2 text-sm font-bold ${tone}">${g.level < 2 && groupMode === 'customer_deadline' ? '👤 ' : ''}${escapeHtml(g.title)} <span class="font-normal text-xs text-gray-500 dark:text-gray-300">${escapeHtml(sub)}</span></td></tr>`;
@@ -496,7 +506,7 @@
       }).join('');
     }
     function setGroupMode(v) {
-      groupMode = ['none', 'customer', 'deadline', 'customer_deadline'].includes(v) ? v : 'none';
+      groupMode = ['order', 'none', 'customer', 'deadline', 'customer_deadline'].includes(v) ? v : 'order';
       try { localStorage.setItem('trackerGroupBy', groupMode); } catch (e) {}
       applyOrderFilters();
     }
@@ -536,7 +546,7 @@
           <div class="mt-2"><div class="w-full bg-gray-200 dark:bg-gray-600 rounded-full h-2"><div class="bg-blue-600 h-2 rounded-full progress-bar" style="width:${pr}%"></div></div><span class="text-xs text-gray-500">${pr}%</span></div>
         </div>
       `; };
-      const levels = groupMode === 'customer' ? [LEVELS.customer] : groupMode === 'deadline' ? [LEVELS.deadline]
+      const levels = groupMode === 'order' ? [LEVELS.order] : groupMode === 'customer' ? [LEVELS.customer] : groupMode === 'deadline' ? [LEVELS.deadline]
                    : groupMode === 'customer_deadline' ? [LEVELS.customer, LEVELS.deadline] : [];
       const tree = buildGroups(orders, levels);
       // без группировки сохраняем прежний порядок из API
