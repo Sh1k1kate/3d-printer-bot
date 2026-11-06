@@ -488,6 +488,24 @@ class SheetManager:
             return True
         return False
 
+    @_locked
+    def mark_orders_completed(self, order_nums):
+        """Закрывает несколько заказов одним запросом (вместо 3 запросов на каждый — квота 60/мин)."""
+        wanted = {str(n) for n in order_nums}
+        if not wanted:
+            return 0
+        now_str = moscow_now().strftime("%Y-%m-%d %H:%M:%S")
+        updates, done = [], 0
+        for i, row in enumerate(self.sheet_orders.get_all_values(), start=1):
+            if i > 1 and row and str(row[0]).strip() in wanted:
+                updates.append({"range": f"F{i}:G{i}", "values": [[now_str, "Да"]]})
+                done += 1
+        if updates:
+            self.sheet_orders.batch_update(updates, value_input_option="RAW")
+            self._invalidate_cache("orders")
+            self.log_action("system", "Заказы выполнены", ", ".join(sorted(wanted, key=lambda x: (len(x), x))))
+        return done
+
     def get_order_by_number(self, order_num):
         for order in self.get_user_orders():
             if order[0] == str(order_num):

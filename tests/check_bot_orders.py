@@ -14,7 +14,7 @@ ORDERS = [["1", "Дракон", "3", "1", "2026-11-10", "", "Нет", "Ян"], [
 class Fake:
     def __init__(s): s.completed = []
     def get_active_orders(s): return [o for o in ORDERS if o[0] not in s.completed]
-    def mark_order_completed(s, n): s.completed.append(str(n)); return True
+    def mark_orders_completed(s, ns): s.completed.extend(str(n) for n in ns); return len(list(ns))
 ho.sheet = Fake()
 
 markup = kb.my_orders_inline_keyboard(ho.sheet.get_active_orders())
