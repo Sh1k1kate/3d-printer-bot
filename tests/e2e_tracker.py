@@ -20,6 +20,15 @@ with sync_playwright() as pw:
     p.fill("#login-password", "secret") if p.locator("#login-password").count() else p.fill("input[type=password]", "secret")
     p.keyboard.press("Enter"); p.wait_for_selector("#tab-orders.active tbody tr", state="attached", timeout=5000)
     assert p.locator("[data-tab=printers]").count() == 0 and p.locator("#tab-printers").count() == 0
+    # содержимое ячеек: в каждой группировке видны реальные данные, а не исходный код функции
+    for mode in ("order", "none", "customer", "deadline", "customer_deadline"):
+        p.select_option("#group-by", mode)
+        txt = p.inner_text("#orders-table-body") if p.is_visible("#orders-table-body") else p.locator("#orders-table-body").text_content()
+        cards = p.locator("#orders-cards").text_content()
+        for t in (txt, cards):
+            assert "=>" not in t and "escapeHtml" not in t and "${" not in t, (mode, t[:200])
+            assert "Дракон" in t and "Лис" in t and "Кот" in t, (mode, t[:200])
+    p.select_option("#group-by", "order")
     # группировка
     def headers(): return [t.strip().split("\n")[0][:40] for t in p.locator("#orders-table-body tr.bg-blue-50, #orders-table-body tr.bg-gray-100").all_inner_texts()]
     h = headers(); assert len(h) == 2 and h[0].startswith("📦") and "№1, №3" in " ".join(h), h   # по умолчанию: заказ → позиции
