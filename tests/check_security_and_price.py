@@ -153,3 +153,6 @@ sm3.sheet_log = WS([])
 assert sm3.mark_orders_completed([1, "3", 99]) == 2
 assert [r[6] for r in sm3.sheet_orders.rows[1:]] == ["Да", "Нет", "Да"] and sm3.mark_orders_completed([]) == 0
 print("batch complete OK")
+
+assert c.head("/").status_code == 200 and c.get("/").status_code == 200   # health-check Render (HEAD /)
+print("head OK")
