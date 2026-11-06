@@ -190,12 +190,17 @@ async def admin_login(payload: AdminLoginIn, request: Request):
     with _rl_lock:
         fails = [t for t in _login_fails.get(ip, []) if now - t < 900]
         _login_fails[ip] = fails
-        if len(fails) >= 5:
+        # общий предел по всем IP: X-Forwarded-For может подделываться, и тогда лимит «на IP» обходится
+        total = sum(1 for v in _login_fails.values() for t in v if now - t < 900)
+        if len(fails) >= 5 or total >= 30:
             return JSONResponse({"detail": "Слишком много попыток, подождите 15 минут"}, status_code=429)
     ok = hmac.compare_digest(payload.password.encode(), ADMIN_PASSWORD.encode())
     if not ok:
         with _rl_lock:
             _login_fails.setdefault(ip, []).append(now)
+        if len(_login_fails) > 2000:
+            for k in [k for k, v in _login_fails.items() if not v or now - v[-1] > 900]:
+                _login_fails.pop(k, None)
         return JSONResponse({"detail": "Неверный пароль"}, status_code=401)
     with _rl_lock:
         _login_fails.pop(ip, None)

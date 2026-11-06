@@ -249,10 +249,7 @@ async def complete_order_group(callback: CallbackQuery):
     if not g:
         await callback.answer("Заказ уже закрыт или изменился — откройте список заново", show_alert=True)
         return
-    done = 0
-    for p in g["positions"]:
-        if not p["done"] and sheet.mark_order_completed(p["id"]):
-            done += 1
+    done = sheet.mark_orders_completed([p["id"] for p in g["positions"] if not p["done"]])
     await callback.answer(f"Заказ выполнен ({done} поз.)", show_alert=True)
     orders = sheet.get_active_orders()
     if orders:

@@ -133,3 +133,23 @@ assert [i["name"] for i in sm2.get_price_items()] == ["A", "B"]          # до 
 assert sm2.get_price_item_by_row(3)["name"] == "B"
 sm2._migrate_price_ids(); assert old.col_count == 8 and old.rows[1][7] == "2"
 print("legacy sheet OK")
+
+# ---- подмена X-Forwarded-For не даёт обойти лимит входа ----
+appmod._login_fails.clear()
+codes = [c.post("/api/admin/login", json={"password": "x"}, headers={"X-Forwarded-For": f"10.0.{i // 250}.{i % 250}"}).status_code for i in range(40)]
+assert codes[:30] == [401] * 30 and set(codes[30:]) == {429}, codes
+appmod._login_fails.clear()
+print("brute-force cap OK")
+
+# ---- пакетное закрытие заказов ----
+class OrdWS(PriceWS):
+    def batch_update(s, data, **kw):
+        for d in data:
+            r = int("".join(ch for ch in d["range"].split(":")[0] if ch.isdigit()))
+            s.rows[r - 1][5:7] = d["values"][0]
+sm3 = object.__new__(Real); sm3._initialized = True; sm3._cache = {}
+sm3.sheet_orders = OrdWS([["№", "Позиция", "З", "П", "Срок", "Изм", "Вып", "Кл"], ["1", "A", "1", "0", "d", "", "Нет", "x"], ["2", "B", "1", "0", "d", "", "Нет", "x"], ["3", "C", "1", "0", "d", "", "Нет", "x"]])
+sm3.sheet_log = WS([])
+assert sm3.mark_orders_completed([1, "3", 99]) == 2
+assert [r[6] for r in sm3.sheet_orders.rows[1:]] == ["Да", "Нет", "Да"] and sm3.mark_orders_completed([]) == 0
+print("batch complete OK")
