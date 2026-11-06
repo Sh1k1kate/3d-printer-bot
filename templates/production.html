@@ -56,6 +56,10 @@
 
     <div class="flex flex-wrap items-center gap-3 mb-4 bg-white dark:bg-gray-800 p-3 rounded-lg shadow">
       <input id="search" type="text" placeholder="🔍 Поиск по названию" class="flex-1 min-w-[180px] px-3 py-2 border rounded-lg bg-white dark:bg-gray-700 dark:border-gray-600">
+      <div class="flex gap-1 rounded-lg bg-gray-200 dark:bg-gray-700 p-1" id="view-toggle">
+        <button data-v="items" class="v-btn px-3 py-1 rounded-md text-sm">🧸 Позиции</button>
+        <button data-v="orders" class="v-btn px-3 py-1 rounded-md text-sm">📦 Заказы</button>
+      </div>
       <div class="flex gap-2 flex-wrap" id="filters">
         <button data-f="all" class="f-btn px-3 py-1 rounded-full text-sm">Все</button>
         <button data-f="todo" class="f-btn px-3 py-1 rounded-full text-sm">🖨️ Допечатать</button>
@@ -66,7 +70,9 @@
       <span id="last-update" class="text-xs text-gray-500 dark:text-gray-400"></span>
     </div>
 
-    <div class="bg-white dark:bg-gray-800 rounded-lg shadow overflow-x-auto">
+    <div id="orders-view" class="hidden space-y-3"></div>
+
+    <div id="items-view" class="bg-white dark:bg-gray-800 rounded-lg shadow overflow-x-auto">
       <table class="min-w-full text-sm">
         <thead id="thead" class="bg-gray-50 dark:bg-gray-700 text-xs uppercase tracking-wider"></thead>
         <tbody id="tbody" class="divide-y divide-gray-200 dark:divide-gray-700"></tbody>
@@ -175,7 +181,8 @@
 
   <script>
     const API = '/api/production';
-    let locations = [], rows = [], filter = 'all', query = '', saving = 0;
+    let locations = [], rows = [], orderGroups = [], view = 'items', filter = 'all', query = '', saving = 0;
+    try { view = localStorage.getItem('productionView') === 'orders' ? 'orders' : 'items'; } catch (e) {}
     let adminToken = '';
     try { adminToken = localStorage.getItem('adminToken') || ''; localStorage.removeItem('priceAdminToken'); } catch (e) {}
     const $ = id => document.getElementById(id);
@@ -236,7 +243,7 @@
     function logout(msg) {
       adminToken = '';
       try { localStorage.removeItem('adminToken'); } catch (e) {}
-      rows = [];
+      rows = []; orderGroups = [];
       updateAuthBtn();
       showLogin(msg || '');
     }
@@ -264,6 +271,7 @@
         if (d.error) throw new Error(d.error);
         locations = d.locations || [];
         rows = d.rows || [];
+        orderGroups = d.orders || [];
         $('last-update').textContent = 'Обновлено: ' + new Date().toLocaleTimeString('ru-RU');
         render();
       } catch (e) {
@@ -322,8 +330,54 @@
         : `<span class="text-green-600 dark:text-green-400 font-bold">✓</span>`;
     }
 
+    function visibleOrders() {
+      const q = query.trim().toLowerCase();
+      return orderGroups.filter(g => {
+        if (q && !(g.customer.toLowerCase().includes(q) || g.positions.some(p => p.position.toLowerCase().includes(q)))) return false;
+        if (filter === 'todo') return g.remaining > 0;
+        if (filter === 'done') return g.remaining === 0;
+        return true;
+      });
+    }
+    function renderOrdersView() {
+      const list = visibleOrders();
+      $('orders-view').innerHTML = list.map(g => {
+        const ready = g.remaining === 0;
+        const pos = g.positions.map(p => `<tr class="${p.done ? 'opacity-60' : ''}">
+          <td class="px-3 py-1.5">${esc(p.position)}</td>
+          <td class="px-3 py-1.5 text-center">${p.ordered}</td>
+          <td class="px-3 py-1.5 text-center">${p.printed}</td>
+          <td class="px-3 py-1.5 text-center">${p.done ? '✅' : (p.remaining > 0 ? `<span class="font-semibold text-red-600 dark:text-red-400">${p.remaining}</span>` : '✓')}</td></tr>`).join('');
+        return `<div class="bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden">
+          <div class="px-4 py-2 flex flex-wrap items-center gap-x-4 gap-y-1 ${ready ? 'bg-green-50 dark:bg-green-900/30' : 'bg-gray-50 dark:bg-gray-700'}">
+            <span class="font-bold">📦 ${esc(g.customer || 'Без заказчика')}</span>
+            <span class="text-xs text-gray-500 dark:text-gray-300">${g.deadline ? 'срок ' + esc(g.deadline) : 'без срока'} · ${esc(g.ids.map(x => '№' + x).join(', '))}</span>
+            <span class="ml-auto text-sm">${ready ? '✅ всё напечатано' : `напечатано ${g.printed}/${g.ordered} · <b class="text-red-600 dark:text-red-400">допечатать ${g.remaining}</b>`}</span>
+          </div>
+          <table class="min-w-full text-sm"><thead class="text-xs uppercase text-gray-500 dark:text-gray-400"><tr>
+            <th class="px-3 py-1 text-left">Позиция</th><th class="px-3 py-1">Заказано</th><th class="px-3 py-1">Напечатано</th><th class="px-3 py-1">Осталось</th></tr></thead>
+            <tbody class="divide-y divide-gray-100 dark:divide-gray-700">${pos}</tbody></table></div>`;
+      }).join('');
+      $('empty').textContent = orderGroups.length ? '🔍 Ничего не найдено' : '📭 Нет активных заказов';
+      $('empty').classList.toggle('hidden', list.length > 0);
+    }
+    function setView(v) {
+      view = v === 'orders' ? 'orders' : 'items';
+      try { localStorage.setItem('productionView', view); } catch (e) {}
+      render();
+    }
+
     function render() {
       updateAuthBtn();
+      document.querySelectorAll('.v-btn').forEach(b => {
+        const on = b.dataset.v === view;
+        b.classList.toggle('bg-white', on); b.classList.toggle('dark:bg-gray-800', on); b.classList.toggle('shadow', on);
+      });
+      $('items-view').classList.toggle('hidden', view === 'orders');
+      $('orders-view').classList.toggle('hidden', view !== 'orders');
+      $('paste-btn').classList.toggle('hidden', view === 'orders' || !adminToken);
+      $('add-pos-btn').classList.toggle('hidden', view === 'orders' || !adminToken);
+      if (view === 'orders') { renderOrdersView(); updateSummary(); return; }
       renderHead();
       const list = visible();
       $('empty').textContent = rows.length ? '🔍 Ничего не найдено' : '📭 Нет активных заказов';
@@ -387,6 +441,7 @@
           (on ? 'bg-blue-500 text-white' : 'bg-gray-200 dark:bg-gray-700');
       });
     }
+    $('view-toggle').addEventListener('click', e => { const b = e.target.closest('.v-btn'); if (b) setView(b.dataset.v); });
     $('filters').addEventListener('click', e => {
       const b = e.target.closest('.f-btn');
       if (!b) return;

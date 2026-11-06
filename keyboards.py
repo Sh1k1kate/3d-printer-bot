@@ -167,14 +167,33 @@ def show_current_items_keyboard(items):
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
+def _short_date(deadline):
+    parts = str(deadline or "").split("-")
+    return f"{parts[2]}.{parts[1]}" if len(parts) == 3 else (str(deadline) or "без срока")
+
+
 def my_orders_inline_keyboard(orders):
+    """Заказы (заказчик + срок) с позициями внутри; по кнопке открывается состав заказа."""
+    from production import group_orders
     buttons = []
-    for order in orders:
-        if len(order) >= 4:
-            order_num = order[0]
-            model = order[1]
-            buttons.append([InlineKeyboardButton(text=_btn_text(f"Заказ №{order_num} - {model}"), callback_data=f"view_order_{order_num}")])
+    for g in group_orders(orders):
+        who = g["customer"] or "Без заказчика"
+        left = f" · ещё {g['remaining']}" if g["remaining"] else ""
+        text = f"📦 {who} · до {_short_date(g['deadline'])} · {len(g['positions'])} поз.{left}"
+        buttons.append([InlineKeyboardButton(text=_btn_text(text), callback_data=f"og_{g['key']}")])
     buttons.append([InlineKeyboardButton(text="🔙 Главное меню", callback_data="main_menu")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def order_group_keyboard(group):
+    buttons = []
+    for p in group["positions"]:
+        mark = "✅" if p["done"] else "🖨️"
+        text = f"{mark} №{p['id']} {p['position']} ({p['printed']}/{p['ordered']})"
+        buttons.append([InlineKeyboardButton(text=_btn_text(text), callback_data=f"view_order_{p['id']}")])
+    if not group["done"]:
+        buttons.append([InlineKeyboardButton(text="✅ Отметить весь заказ выполненным", callback_data=f"ogdone_{group['key']}")])
+    buttons.append([InlineKeyboardButton(text="🔙 К заказам", callback_data="back_to_orders")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 

@@ -224,3 +224,56 @@ def plan_set_ordered(orders, new_total):
             changes.append({"id": o["id"], "row": o["row"], "ordered": new, "close": new == 0})
             left -= take
     return changes
+
+
+# ---------------------------------------------------------------------------
+# Заказ → позиции. Общего номера заказа в таблице нет, поэтому заказом считаем все строки
+# с одним заказчиком и одним сроком (так создаётся и заявка с прайса, и ручной заказ в боте).
+# ---------------------------------------------------------------------------
+import hashlib
+
+
+def order_group_key(customer, deadline):
+    """Короткий стабильный ключ группы (для callback_data бота и якорей на сайте)."""
+    raw = f"{(customer or '').strip().lower()}|{(deadline or '').strip()}"
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:8]
+
+
+def group_orders(orders):
+    """Склеивает строки листа «Заказы» в заказы с позициями.
+
+    orders — строки [№, позиция, заказано, напечатано, срок, изменён, выполнен, заказчик].
+    Возвращает список заказов, отсортированный: сначала невыполненные по сроку, потом выполненные:
+    {key, customer, deadline, ids, positions:[{id, position, ordered, printed, remaining, done}],
+     ordered, printed, remaining, done (все позиции выполнены), progress}.
+    """
+    groups = {}
+    for o in orders:
+        if len(o) < 5:
+            continue
+        o = list(o) + [""] * (8 - len(o))
+        customer = (o[7] or "").strip()
+        deadline = (o[4] or "").strip()
+        key = order_group_key(customer, deadline)
+        g = groups.get(key)
+        if g is None:
+            g = groups[key] = {"key": key, "customer": customer, "deadline": deadline, "ids": [], "positions": []}
+        ordered, printed = _to_int(o[2]), _to_int(o[3])
+        done = str(o[6]).strip().lower() == "да"
+        g["ids"].append(str(o[0]))
+        g["positions"].append({
+            "id": str(o[0]), "position": normalize_position(o[1]) or str(o[1]),
+            "ordered": ordered, "printed": printed,
+            "remaining": 0 if done else max(0, ordered - printed), "done": done,
+        })
+    result = []
+    for g in groups.values():
+        g["ordered"] = sum(p["ordered"] for p in g["positions"])
+        g["printed"] = sum(p["printed"] for p in g["positions"])
+        g["remaining"] = sum(p["remaining"] for p in g["positions"])
+        g["done"] = all(p["done"] for p in g["positions"])
+        g["progress"] = round(g["printed"] / g["ordered"] * 100) if g["ordered"] else 0
+        g["positions"].sort(key=lambda p: _to_int(p["id"]))
+        result.append(g)
+    result.sort(key=lambda g: (g["done"], g["deadline"] or "9999-99-99", (g["customer"] or "~").lower(), _to_int(g["ids"][0])))
+    return result

@@ -3,12 +3,13 @@ from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery, ReplyKeyboardMarkup, KeyboardButton
 from keyboards import (
-    main_menu, cancel_keyboard, calendar_keyboard, my_orders_inline_keyboard, edit_order_keyboard
+    main_menu, cancel_keyboard, calendar_keyboard, my_orders_inline_keyboard, edit_order_keyboard, order_group_keyboard
 )
 from states import CreateOrder, EditOrder
 from google_sheets import SheetManager
 from .common import escape_markdown, safe_answer, safe_edit
 from datetime import datetime
+from production import group_orders
 import logging
 
 logger = logging.getLogger(__name__)
@@ -219,6 +220,45 @@ async def show_my_orders(message: Message):
         await message.answer("📭 У вас нет активных заказов.")
         return
     await message.answer("Выберите заказ:", reply_markup=my_orders_inline_keyboard(orders))
+
+
+def _find_group(key):
+    """Группа активных заказов по ключу из callback (ключ считается заново — состояния в боте нет)."""
+    return next((g for g in group_orders(sheet.get_active_orders()) if g["key"] == key), None)
+
+
+@router.callback_query(F.data.regexp(r"^og_[0-9a-f]{8}$"))
+async def view_order_group(callback: CallbackQuery):
+    g = _find_group(callback.data[3:])
+    if not g:
+        await callback.answer("Заказ уже закрыт или изменился — откройте список заново", show_alert=True)
+        return
+    who = escape_markdown(g["customer"]) if g["customer"] else "без заказчика"
+    text = f"📦 *Заказ:* {who}\n📅 Срок: {g['deadline'] or 'не указан'}\n"
+    text += f"Напечатано {g['printed']} из {g['ordered']}, осталось {g['remaining']}\n\n"
+    for p in g["positions"]:
+        mark = "✅" if p["done"] else ("🖨️" if p["remaining"] else "📦")
+        text += f"{mark} №{p['id']} {escape_markdown(p['position'])} — {p['printed']}/{p['ordered']}\n"
+    await safe_edit(callback.message, text, parse_mode="Markdown", reply_markup=order_group_keyboard(g))
+    await callback.answer()
+
+
+@router.callback_query(F.data.regexp(r"^ogdone_[0-9a-f]{8}$"))
+async def complete_order_group(callback: CallbackQuery):
+    g = _find_group(callback.data[7:])
+    if not g:
+        await callback.answer("Заказ уже закрыт или изменился — откройте список заново", show_alert=True)
+        return
+    done = 0
+    for p in g["positions"]:
+        if not p["done"] and sheet.mark_order_completed(p["id"]):
+            done += 1
+    await callback.answer(f"Заказ выполнен ({done} поз.)", show_alert=True)
+    orders = sheet.get_active_orders()
+    if orders:
+        await safe_edit(callback.message, "Выберите заказ:", reply_markup=my_orders_inline_keyboard(orders))
+    else:
+        await safe_edit(callback.message, "Нет активных заказов. 🎉")
 
 
 @router.callback_query(F.data.startswith("view_order_"))
