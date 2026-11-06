@@ -277,3 +277,56 @@ def group_orders(orders):
         result.append(g)
     result.sort(key=lambda g: (g["done"], g["deadline"] or "9999-99-99", (g["customer"] or "~").lower(), _to_int(g["ids"][0])))
     return result
+
+
+# ---------------------------------------------------------------------------
+# Вставка состава заказа: «• Паста — 4 шт × 1000 ₽ = 4000 ₽»
+# ---------------------------------------------------------------------------
+_ORDER_LINE_RE = re.compile(
+    r"^(?P<name>\S.*?)\s+[—–-]\s+"              # название; тире с пробелами (дефис в «Волан-Де-Морт» не разделитель)
+    r"(?P<qty>\d+)\s*(?:шт\.?|штук[аи]?)?"
+    r"(?:\s*[×xх*]\s*(?P<price>\d[\d\s]*?)\s*(?:₽|р\.?|руб\.?)?)?"
+    r"(?:\s*=\s*(?P<total>\d[\d\s]*?)\s*(?:₽|р\.?|руб\.?)?)?\s*$",
+    re.IGNORECASE,
+)
+
+
+def _money(s):
+    return int(re.sub(r"\s+", "", s)) if s else None
+
+
+def parse_order_text(text, known_names=()):
+    """Разбирает состав заказа. Возвращает (позиции, пропущенные строки, предупреждения).
+
+    Позиция: {name, qty, price, total, matched, line}. Одинаковые названия суммируются.
+    known_names — названия из прайса: точное/почти точное совпадение заменяется каноническим названием.
+    """
+    merged, order, skipped, warnings = {}, [], [], []
+    for raw in (text or "").splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        line_body = re.sub(r"^(?:[•·*\-–—]+\s*|\d+[.)]\s+)+", "", line)      # маркер списка / номер
+        m = _ORDER_LINE_RE.match(line_body)
+        if not m or not name_key(m.group("name")):
+            skipped.append(line)
+            continue
+        name = re.sub(r"\s+", " ", m.group("name").strip())
+        qty, price, total = int(m.group("qty")), _money(m.group("price")), _money(m.group("total"))
+        if price is not None and total is not None and qty * price != total:
+            warnings.append(f"«{name}»: {qty} × {price} = {qty * price}, а в списке {total}")
+        matched = False
+        if known_names:
+            best, conf, _top = match_name(name, list(known_names))
+            if best and conf in ("exact", "near"):
+                name, matched = best, True
+        k = name_key(name)
+        if k in merged:
+            e = merged[k]
+            e["qty"] += qty
+            e["total"] = None            # сумма по объединённой позиции из текста уже не сверяется
+            warnings.append(f"«{name}» встречается несколько раз — количества сложены")
+        else:
+            merged[k] = {"name": name, "qty": qty, "price": price, "total": total, "matched": matched, "line": line}
+            order.append(k)
+    return [merged[k] for k in order], skipped, warnings
