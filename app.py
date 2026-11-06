@@ -693,8 +693,8 @@ async def webhook_client(request: Request):
 
 
 # ---------- СТРАНИЦЫ ----------
-@app.get("/")
-async def root():
+@app.api_route("/", methods=["GET", "HEAD"])
+async def root():   # Render проверяет здоровье через HEAD /
     return {"status": "3D Printer Bot is running"}
 
 
