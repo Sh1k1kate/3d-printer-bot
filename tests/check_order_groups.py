@@ -17,3 +17,10 @@ assert G[3]["done"] and G[3]["customer"] == "" and G[3]["remaining"] == 0
 assert group_orders([]) == [] and group_orders([["1"]]) == []
 assert order_group_key("A ", "d") == order_group_key("a", "d ") and len(order_group_key("a", "b")) == 8
 print("order groups OK")
+
+# ---- парсер состава заказа на реальном списке (55 позиций) ----
+from production import parse_order_text
+items, skipped, warn = parse_order_text(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "order_sample.txt"), encoding="utf-8").read())
+assert (len(items), sum(i["qty"] for i in items), sum(i["qty"] * i["price"] for i in items)) == (55, 216, 337500) and not skipped and not warn
+assert {i["name"] for i in items} >= {'Волан-Де-Морт', 'Лола "Острые Козырьки"', "Кот Сильвестр 51 см"}
+print("order text parser OK")

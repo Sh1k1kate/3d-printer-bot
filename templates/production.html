@@ -65,6 +65,7 @@
         <button data-f="todo" class="f-btn px-3 py-1 rounded-full text-sm">🖨️ Допечатать</button>
         <button data-f="done" class="f-btn px-3 py-1 rounded-full text-sm">✅ Напечатано</button>
       </div>
+      <button id="replace-btn" onclick="openReplace()" class="hidden px-3 py-1.5 rounded-lg text-sm bg-rose-500 hover:bg-rose-600 text-white shadow">🔄 Заменить заказ</button>
       <button id="paste-btn" onclick="openPaste()" class="hidden px-3 py-1.5 rounded-lg text-sm bg-amber-500 hover:bg-amber-600 text-white shadow">📋 Вставить список</button>
       <button id="add-pos-btn" onclick="openAddPos()" class="hidden px-3 py-1.5 rounded-lg text-sm bg-blue-500 hover:bg-blue-600 text-white shadow">＋ Позиция</button>
       <span id="last-update" class="text-xs text-gray-500 dark:text-gray-400"></span>
@@ -84,6 +85,46 @@
     <p class="text-xs text-gray-500 dark:text-gray-400 mt-3">
       «Напечатано» берётся из заказов (его меняют в боте). «Отправлено» в точки вводится здесь — нужен вход администратора.
     </p>
+  </div>
+
+  <!-- Замена заказа: состав текстом -> проверка -> архив старых + новый заказ -->
+  <div id="replace-modal" class="hidden fixed inset-0 z-50 bg-black/50 flex items-start justify-center overflow-y-auto p-3 sm:p-8">
+    <div class="bg-white dark:bg-gray-800 rounded-xl shadow-2xl w-full max-w-4xl p-4 sm:p-6">
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="text-lg font-bold">🔄 Заменить заказ</h2>
+        <button onclick="closeReplace()" class="text-2xl leading-none text-gray-500 hover:text-gray-800 dark:hover:text-white" aria-label="Закрыть">×</button>
+      </div>
+      <div id="rep-step1">
+        <p class="text-sm text-gray-600 dark:text-gray-300 mb-2">
+          Вставьте состав («• Паста — 4 шт × 1000 ₽ = 4000 ₽»). Все <b>активные</b> заказы будут перенесены в лист «Заказы (архив)»,
+          а вместо них создан новый заказ. Выполненные заказы не трогаются.
+        </p>
+        <textarea id="rep-text" rows="10" class="w-full px-3 py-2 border rounded-lg font-mono text-sm bg-white dark:bg-gray-700 dark:border-gray-600"></textarea>
+        <div class="grid sm:grid-cols-2 gap-3 mt-3">
+          <label class="text-sm">Заказчик
+            <input id="rep-customer" maxlength="100" class="mt-1 w-full px-3 py-2 border rounded-lg bg-white dark:bg-gray-700 dark:border-gray-600"></label>
+          <label class="text-sm">Срок
+            <input id="rep-deadline" type="date" class="mt-1 w-full px-3 py-2 border rounded-lg bg-white dark:bg-gray-700 dark:border-gray-600"></label>
+        </div>
+        <label class="flex items-center gap-2 text-sm mt-3"><input id="rep-clear-ship" type="checkbox"> Также убрать старые отправки (они тоже уйдут в архив)</label>
+        <div class="flex mt-3"><button id="rep-parse-btn" onclick="parseReplace()" class="ml-auto px-4 py-2 rounded-lg bg-blue-500 hover:bg-blue-600 text-white">Проверить →</button></div>
+      </div>
+      <div id="rep-step2" class="hidden">
+        <div id="rep-summary" class="text-sm mb-2"></div>
+        <div id="rep-warn" class="text-sm mb-2"></div>
+        <div class="overflow-x-auto border rounded-lg dark:border-gray-600 max-h-[50vh] overflow-y-auto">
+          <table class="min-w-full text-sm">
+            <thead class="bg-gray-50 dark:bg-gray-700 text-xs uppercase sticky top-0"><tr>
+              <th class="px-2 py-2 text-left">Позиция</th><th class="px-2 py-2 text-center">Шт</th><th class="px-2 py-2 text-center">Цена</th><th class="px-2 py-2 text-left">В прайсе</th></tr></thead>
+            <tbody id="rep-rows" class="divide-y divide-gray-200 dark:divide-gray-700"></tbody>
+          </table>
+        </div>
+        <div class="flex gap-2 mt-3">
+          <button onclick="repStep(1)" class="px-4 py-2 rounded-lg bg-gray-200 dark:bg-gray-700">← Назад</button>
+          <button id="rep-apply-btn" onclick="applyReplace()" class="ml-auto px-4 py-2 rounded-lg bg-rose-500 hover:bg-rose-600 text-white">Заменить заказ</button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- Вставка списка: текст -> предпросмотр -> запись -->
@@ -376,6 +417,7 @@
       $('items-view').classList.toggle('hidden', view === 'orders');
       $('orders-view').classList.toggle('hidden', view !== 'orders');
       $('paste-btn').classList.toggle('hidden', view === 'orders' || !adminToken);
+      $('replace-btn').classList.toggle('hidden', !adminToken);
       $('add-pos-btn').classList.toggle('hidden', view === 'orders' || !adminToken);
       if (view === 'orders') { renderOrdersView(); updateSummary(); return; }
       renderHead();
@@ -508,12 +550,67 @@
       });
       let d = {};
       try { d = await r.json(); } catch (e) {}
-      if (r.status === 401) { logout('Сессия истекла — войдите снова'); closePaste(); render(); throw new Error('Сессия истекла — войдите снова'); }
+      if (r.status === 401) { logout('Сессия истекла — войдите снова'); closePaste(); closeReplace(); render(); throw new Error('Сессия истекла — войдите снова'); }
       if (!r.ok) {
         const extra = Array.isArray(d.details) ? '\n' + d.details.join('\n') : '';
         throw new Error((d.error || d.detail || ('HTTP ' + r.status)) + extra);
       }
       return d;
+    }
+
+    // ---------- замена заказа ----------
+    let repItems = [];
+    function openReplace() {
+      if (!$('rep-deadline').value) {
+        const d = new Date(); d.setDate(d.getDate() + 14);
+        $('rep-deadline').value = d.toISOString().slice(0, 10);
+      }
+      repStep(1);
+      $('replace-modal').classList.remove('hidden');
+      $('rep-text').focus();
+    }
+    function closeReplace() { $('replace-modal').classList.add('hidden'); }
+    function repStep(n) { $('rep-step1').classList.toggle('hidden', n !== 1); $('rep-step2').classList.toggle('hidden', n !== 2); }
+    const fmtRub = n => Number(n).toLocaleString('ru-RU') + ' ₽';
+    async function parseReplace() {
+      const text = $('rep-text').value;
+      if (!text.trim()) { toast('Вставьте состав заказа', true); return; }
+      if (!$('rep-customer').value.trim()) { toast('Укажите заказчика', true); return; }
+      const btn = $('rep-parse-btn'); btn.disabled = true;
+      try {
+        const d = await adminFetch(API + '/order/preview', { text });
+        if (!d.items.length) { toast('Не нашёл ни одной позиции вида «Название — 2 шт»', true); return; }
+        repItems = d.items;
+        $('rep-summary').innerHTML = `<b>${d.items.length}</b> позиций, <b>${d.total_qty}</b> шт` +
+          (d.total_sum ? `, сумма по ценам из списка <b>${fmtRub(d.total_sum)}</b>` : '') +
+          `.<br><span class="text-rose-600 dark:text-rose-400">Будет перенесено в архив: ${d.will_archive_orders} заказ(ов), ${d.will_archive_rows} строк.</span>`;
+        const notes = [];
+        if (d.warnings.length) notes.push('⚠️ ' + d.warnings.map(esc).join('<br>⚠️ '));
+        if (d.skipped.length) notes.push('Пропущены строки без количества: ' + d.skipped.map(x => '«' + esc(x) + '»').join(', '));
+        $('rep-warn').innerHTML = notes.join('<br>');
+        $('rep-rows').innerHTML = d.items.map(i => `<tr>
+          <td class="px-2 py-1.5">${esc(i.name)}</td><td class="px-2 py-1.5 text-center">${i.qty}</td>
+          <td class="px-2 py-1.5 text-center">${i.price ? fmtRub(i.price) : '—'}</td>
+          <td class="px-2 py-1.5">${i.matched ? '✓' : '<span class="px-1 rounded bg-amber-100 dark:bg-amber-900 text-amber-800 dark:text-amber-200">нет в прайсе</span>'}</td></tr>`).join('');
+        repStep(2);
+      } catch (e) { toast(e.message, true); }
+      finally { btn.disabled = false; }
+    }
+    async function applyReplace() {
+      const customer = $('rep-customer').value.trim(), deadline = $('rep-deadline').value;
+      if (!customer || !deadline) { toast('Укажите заказчика и срок', true); return; }
+      if (!confirm('Все активные заказы уйдут в архив, а вместо них будет создан новый заказ (' + repItems.length + ' поз.). Продолжить?')) return;
+      const btn = $('rep-apply-btn'); btn.disabled = true;
+      try {
+        const d = await adminFetch(API + '/order/replace', {
+          customer, deadline, confirm: true, clear_shipments: $('rep-clear-ship').checked,
+          items: repItems.map(i => ({ position: i.name, qty: i.qty }))
+        });
+        closeReplace(); $('rep-text').value = '';
+        toast(`Готово: в архиве ${d.archived} строк, создано ${d.positions} поз. (${d.total_qty} шт)`);
+        await load();
+      } catch (e) { toast(e.message, true); }
+      finally { btn.disabled = false; }
     }
 
     function openPaste() {
@@ -528,7 +625,7 @@
       $('paste-step1').classList.toggle('hidden', n !== 1);
       $('paste-step2').classList.toggle('hidden', n !== 2);
     }
-    document.addEventListener('keydown', e => { if (e.key === 'Escape') closePaste(); });
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') { closePaste(); closeReplace(); } });
 
     async function parsePaste() {
       const text = $('paste-text').value;

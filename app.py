@@ -28,7 +28,7 @@ from handlers.common import AccessMiddleware, ResetStateOnMenuMiddleware
 from handlers.client_bot import create_client_dispatcher, set_commands as set_client_commands
 from config import BOT_TOKEN, ADMIN_PASSWORD, TOKEN_SECRET, WEBHOOK_SECRET, CRON_SECRET, ALLOWED_USERS
 from google_sheets import SheetManager, moscow_now
-from production import group_orders, build_production_rows, normalize_position, parse_shipment_text, match_name
+from production import group_orders, parse_order_text, build_production_rows, normalize_position, parse_shipment_text, match_name
 
 from docx import Document
 from docx.shared import Pt, Cm, RGBColor
@@ -1043,6 +1043,82 @@ async def close_position_api(payload: PositionRef, _: bool = Depends(verify_admi
         logger.error(f"close_position: {e}", exc_info=e)
         return JSONResponse({"error": f"Ошибка записи: {e}"}, status_code=500)
     return JSONResponse({"status": "ok", "closed": closed, "name": pos})
+
+
+class OrderTextIn(BaseModel):
+    text: str
+
+
+class OrderItemTextIn(BaseModel):
+    position: str
+    qty: int
+
+
+class OrderReplaceIn(BaseModel):
+    customer: str = ""
+    deadline: str
+    items: list[OrderItemTextIn]
+    clear_shipments: bool = False
+    confirm: bool = False
+
+
+@app.post("/api/production/order/preview")
+async def order_preview_api(payload: OrderTextIn, _: bool = Depends(verify_admin)):
+    """Разбирает вставленный состав заказа и показывает, что будет заменено (ничего не пишет)."""
+    if not sheet_manager:
+        return JSONResponse({"error": "SheetManager не инициализирован"}, status_code=500)
+    if len(payload.text) > 20000:
+        return JSONResponse({"error": "Слишком длинный текст"}, status_code=400)
+
+    def _work():
+        price_names = [i["name"] for i in sheet_manager.get_price_items() if i.get("name")]
+        items, skipped, warnings = parse_order_text(payload.text, price_names)
+        active = sheet_manager.get_active_orders()
+        return items, skipped, warnings, len(active), len({g["key"] for g in group_orders(active)})
+    items, skipped, warnings, n_rows, n_orders = await run_in_threadpool(_work)
+    sum_total = sum((i["price"] or 0) * i["qty"] for i in items)
+    return JSONResponse({
+        "items": items, "skipped": skipped, "warnings": warnings,
+        "total_qty": sum(i["qty"] for i in items), "total_sum": sum_total,
+        "will_archive_rows": n_rows, "will_archive_orders": n_orders,
+        "not_in_price": [i["name"] for i in items if not i["matched"]],
+    })
+
+
+@app.post("/api/production/order/replace")
+async def order_replace_api(payload: OrderReplaceIn, _: bool = Depends(verify_admin)):
+    """Архивирует активные заказы и создаёт новый (одна позиция = одна строка листа «Заказы»)."""
+    if not sheet_manager:
+        return JSONResponse({"error": "SheetManager не инициализирован"}, status_code=500)
+    if not payload.confirm:
+        return JSONResponse({"error": "Нужно подтверждение (confirm)"}, status_code=400)
+    customer = payload.customer.strip()[:MAX_POSITION_NAME]
+    if not customer:
+        return JSONResponse({"error": "Укажите заказчика"}, status_code=400)
+    try:
+        datetime.strptime(payload.deadline, "%Y-%m-%d")
+    except ValueError:
+        return JSONResponse({"error": "Срок должен быть датой ГГГГ-ММ-ДД"}, status_code=400)
+    if not payload.items or len(payload.items) > 200:
+        return JSONResponse({"error": "В заказе должно быть от 1 до 200 позиций"}, status_code=400)
+    items, seen = [], set()
+    for it in payload.items:
+        name = normalize_position(it.position).strip()
+        if not name or len(name) > MAX_POSITION_NAME:
+            return JSONResponse({"error": f"Некорректное название: «{it.position[:40]}»"}, status_code=400)
+        if not 1 <= it.qty <= MAX_ORDERED_QTY:
+            return JSONResponse({"error": f"«{name}»: количество должно быть от 1 до {MAX_ORDERED_QTY}"}, status_code=400)
+        if name.lower() in seen:
+            return JSONResponse({"error": f"«{name}» указана дважды"}, status_code=400)
+        seen.add(name.lower())
+        items.append((name, it.qty))
+    try:
+        result = await run_in_threadpool(
+            sheet_manager.replace_active_orders, items, payload.deadline, customer, payload.clear_shipments)
+    except Exception as e:
+        logger.error(f"order_replace: {e}", exc_info=e)
+        return JSONResponse({"error": f"Ошибка записи: {e}. Проверьте лист «Заказы» и «Заказы (архив)» перед повтором."}, status_code=500)
+    return JSONResponse({"status": "ok", **result, "positions": len(items), "total_qty": sum(q for _, q in items)})
 
 
 # ---------- API: ЗАДАЧИ ----------

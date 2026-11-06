@@ -1251,6 +1251,57 @@ class SheetManager:
                         ", ".join(f"№{n} {r[1]} x{r[2]}" for n, r in zip(nums, rows)))
         return nums
 
+    def _archive_rows(self, title, header, rows):
+        """Дописывает строки в лист-архив (создаёт его при необходимости) с отметкой времени."""
+        if not rows:
+            return
+        ws = self._ensure_worksheet(title, rows=1000, cols=len(header) + 1, header=header + ["Архивировано"])
+        now_str = moscow_now().strftime("%Y-%m-%d %H:%M:%S")
+        ws.append_rows([list(r) + [""] * (len(header) - len(r)) + [now_str] for r in rows], value_input_option="RAW")
+
+    @_locked
+    def replace_active_orders(self, items, deadline, customer, clear_shipments=False):
+        """Заменяет все активные заказы новым. Старые строки сначала уходят в лист «Заказы (архив)».
+
+        Порядок рассчитан на сбои: архив → новые заказы → удаление старых. Если что-то упало
+        посередине, данные не теряются (в худшем случае старые и новые заказы лежат рядом).
+        items — [(позиция, заказано)]. Возвращает {"archived": n, "created": [номера], "shipments_cleared": n}.
+        """
+        header = ["Номер заказа", "Позиция", "Кол-во заказано", "Кол-во напечатано",
+                  "Срок заказа", "Дата последнего изменения", "Выполнен", "Заказчик"]
+        records = self.sheet_orders.get_all_values()
+        old = [r for r in records[1:]
+               if r and str(r[0]).strip() and (len(r) < 7 or str(r[6]).strip().lower() != "да")]
+        old_ids = {str(r[0]).strip() for r in old}
+        self._archive_rows("Заказы (архив)", header, old)
+
+        nums = self.add_orders_batch([(pos, qty, 0, deadline, customer) for pos, qty in items])
+
+        keep = {str(n) for n in nums}
+        requests = []
+        for i, r in enumerate(self.sheet_orders.get_all_values(), start=1):
+            if i > 1 and r and str(r[0]).strip() in old_ids and str(r[0]).strip() not in keep:
+                requests.append({"deleteDimension": {"range": {
+                    "sheetId": self.sheet_orders.id, "dimension": "ROWS", "startIndex": i - 1, "endIndex": i}}})
+        if requests:
+            self.sheet.batch_update({"requests": list(reversed(requests))})
+        self._invalidate_cache("orders")
+
+        cleared = 0
+        if clear_shipments:
+            ship = self.sheet_shipments.get_all_values()
+            ship_rows = [r for r in ship[1:] if any((c or "").strip() for c in r)]
+            if ship_rows:
+                self._archive_rows("Отправки (архив)", SHIPMENT_COLUMNS, ship_rows)
+                self.sheet.batch_update({"requests": [{"deleteDimension": {"range": {
+                    "sheetId": self.sheet_shipments.id, "dimension": "ROWS",
+                    "startIndex": 1, "endIndex": len(ship)}}}]})
+                cleared = len(ship_rows)
+            self._invalidate_cache("shipments")
+        self.log_action("system", "Замена активных заказов",
+                        f"архивировано {len(old)}, создано {len(nums)}, клиент: {customer}, срок: {deadline}")
+        return {"archived": len(old), "created": nums, "shipments_cleared": cleared}
+
     @_locked
     def close_position_orders(self, position_lower):
         """Помечает выполненными все активные заказы позиции. Возвращает, сколько закрыто."""
