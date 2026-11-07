@@ -56,3 +56,12 @@ class AddPrice(StatesGroup):
 # ✅ Новое: редактирование товара
 class EditPrice(StatesGroup):
     waiting_for_value = State()   # ввод нового значения любого поля
+
+
+class PrintMore(StatesGroup):
+    waiting_for_qty = State()
+
+
+class ShipmentText(StatesGroup):
+    waiting_for_text = State()
+    confirming = State()

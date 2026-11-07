@@ -28,6 +28,7 @@ from handlers.common import AccessMiddleware, ResetStateOnMenuMiddleware
 from handlers.client_bot import create_client_dispatcher, set_commands as set_client_commands
 from config import BOT_TOKEN, ADMIN_PASSWORD, TOKEN_SECRET, WEBHOOK_SECRET, CRON_SECRET, ALLOWED_USERS
 from google_sheets import SheetManager, moscow_now
+from production_service import apply_shipments, ShipmentError, NO_ORDER_CUSTOMER, SHIPMENT_LOCATIONS, MAX_POSITION_NAME
 from production import group_orders, parse_order_text, build_production_rows, normalize_position, parse_shipment_text, match_name
 
 from docx import Document
@@ -84,15 +85,8 @@ PUBLIC_URL = os.getenv("PUBLIC_URL", "")
 PRICE_ORDER_CHAT_ID = os.getenv("PRICE_ORDER_CHAT_ID", "")
 PRICE_ORDER_DEADLINE_DAYS = int(os.getenv("PRICE_ORDER_DEADLINE_DAYS", "7"))
 
-NO_ORDER_CUSTOMER = "Без заказа"   # заказчик у заказов, созданных со страницы /production
-MAX_POSITION_NAME = 100
 MAX_ORDERED_QTY = 10000
 
-# Точки, куда отправляем готовую печать (столбцы страницы /production).
-# Можно поменять без правки кода: SHIPMENT_LOCATIONS="ВДНХ,Остров,Аэропорт,Новая точка"
-SHIPMENT_LOCATIONS = [
-    s.strip() for s in os.getenv("SHIPMENT_LOCATIONS", "ВДНХ,Остров,Аэропорт").split(",") if s.strip()
-] or ["ВДНХ", "Остров", "Аэропорт"]
 
 
 # ---------- EXCEPTION HANDLERS ----------
@@ -913,60 +907,12 @@ async def apply_shipments_api(payload: ShipmentApplyIn, _: bool = Depends(verify
     """Прибавляет количества к «отправлено» точки и (по галочке) к «напечатано» заказов."""
     if not sheet_manager:
         return JSONResponse({"error": "SheetManager не инициализирован"}, status_code=500)
+    items = [{"position": it.position, "location": it.location, "qty": it.qty, "create": it.create}
+             for it in payload.items]
     try:
-        rows = await run_in_threadpool(_production_rows)
-    except Exception as e:
-        logger.error(f"apply_shipments rows: {e}", exc_info=e)
-        return JSONResponse({"error": str(e)}, status_code=500)
-    known = {r["name"].lower(): r["name"] for r in rows}
-
-    items, errors = [], []
-    to_create = {}          # название_lower -> {"name", "qty"}: позиции, которых нет в заказах
-    for it in payload.items:
-        loc = _canonical_location(it.location)
-        name = normalize_position(it.position)
-        pos = known.get(name.lower())
-        if not loc:
-            errors.append(f"«{it.position}»: неизвестная точка «{it.location}»")
-        elif it.qty <= 0:
-            errors.append(f"«{it.position}»: количество должно быть больше 0")
-        elif pos:
-            items.append((pos, loc, it.qty))
-        elif it.create and name and len(name) <= MAX_POSITION_NAME:
-            c = to_create.setdefault(name.lower(), {"name": name, "qty": 0})
-            c["qty"] += it.qty
-            items.append((c["name"], loc, it.qty))
-        else:
-            errors.append(f"«{it.position}»: нет среди активных заказов")
-    if errors:
-        return JSONResponse({"error": "Есть ошибки, ничего не записано", "details": errors}, status_code=400)
-    if not items:
-        return JSONResponse({"error": "Нечего записывать"}, status_code=400)
-
-    result = {"status": "ok", "shipped": sum(q for _, _, q in items), "printed_added": 0,
-              "leftover": {}, "created": []}
-    try:
-        if to_create:
-            # для позиции без заказа создаём заказ на отправленное количество
-            today = moscow_now().strftime("%Y-%m-%d")
-            await run_in_threadpool(sheet_manager.add_orders_batch, [
-                (c["name"], c["qty"], c["qty"] if payload.add_printed else 0, today, NO_ORDER_CUSTOMER)
-                for c in to_create.values()
-            ])
-            result["created"] = [c["name"] for c in to_create.values()]
-            if payload.add_printed:
-                result["printed_added"] += sum(c["qty"] for c in to_create.values())
-        if payload.add_printed:
-            qty_by_pos = {}
-            for pos, _loc, qty in items:
-                if pos.lower() in to_create:      # у новых заказов напечатанное уже проставлено
-                    continue
-                qty_by_pos[pos.lower()] = qty_by_pos.get(pos.lower(), 0) + qty
-            if qty_by_pos:
-                printed = await run_in_threadpool(sheet_manager.add_printed_batch, qty_by_pos)
-                result["printed_added"] += sum(printed["added"].values())
-                result["leftover"] = {known[k]: v for k, v in printed["leftover"].items()}
-        await run_in_threadpool(sheet_manager.add_shipments_batch, items)
+        result = await run_in_threadpool(apply_shipments, sheet_manager, items, payload.add_printed, SHIPMENT_LOCATIONS)
+    except ShipmentError as e:
+        return JSONResponse({"error": str(e), "details": e.details}, status_code=400)
     except Exception as e:
         logger.error(f"apply_shipments write: {e}", exc_info=e)
         return JSONResponse({"error": f"Ошибка записи: {e}. Проверьте таблицу перед повтором — часть данных могла записаться."},

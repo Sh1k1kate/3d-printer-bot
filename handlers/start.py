@@ -22,6 +22,8 @@ async def set_commands(bot):
         BotCommand(command="help", description="Показать справку"),
         BotCommand(command="new_order", description="Создать новый заказ"),
         BotCommand(command="my_orders", description="Мои заказы"),
+        BotCommand(command="toprint", description="Допечатка: что осталось напечатать"),
+        BotCommand(command="ship", description="Отправка: вставить список по точкам"),
         BotCommand(command="items", description="Список моделей и наборов"),
         BotCommand(command="tasks", description="Список задач"),
         BotCommand(command="new_task", description="Создать новую задачу"),
@@ -73,6 +75,8 @@ HELP_TEXT = (
     "/items – список моделей и наборов\n"
     "/new_order – создать новый заказ\n"
     "/my_orders – мои заказы\n"
+    "/toprint – допечатка: что осталось напечатать (+N напечатано)\n"
+    "/ship – отправка: вставить список по точкам (ВДНХ, Остров, Аэропорт)\n"
     "/tasks – список задач\n"
     "/new_task – создать задачу\n"
     "/price – прайс-лист товаров\n"

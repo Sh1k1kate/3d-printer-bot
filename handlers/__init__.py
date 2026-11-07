@@ -5,6 +5,7 @@ from .kits import router as kits_router
 from .orders import router as orders_router
 from .tasks import router as tasks_router
 from .price import router as price_router
+from .production import router as production_router
 
 from .common import router as common_router
 
@@ -16,5 +17,6 @@ routers = [
     orders_router,
     tasks_router,
     price_router,
+    production_router,
     common_router,
 ]
