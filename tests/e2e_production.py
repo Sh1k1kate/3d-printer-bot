@@ -12,6 +12,7 @@ class Fake:
     def get_price_items(s): return []
     def get_shipments(s): return s.ship
     def replace_active_orders(s, items, dl, cust, clr): s.replaced = (items, dl, cust, clr); return {'archived': 1, 'created': [2], 'shipments_cleared': 0}
+    def add_printed_batch(s, q): return {'added': dict(q), 'leftover': {}}
     def set_shipment(s, p, l, q): s.ship[(p.lower(), l.lower())] = q; return True
 appmod.sheet_manager = Fake()
 srv = uvicorn.Server(uvicorn.Config(appmod.app, host="127.0.0.1", port=8766, log_level="error"))

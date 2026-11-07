@@ -192,7 +192,8 @@ async def start_shipment(message: Message, state: FSMContext):
     await message.answer(
         "Пришлите список отправки одним сообщением: строка с названием точки "
         f"({', '.join(SHIPMENT_LOCATIONS)}), ниже позиции вида «1. Медведь милашка 2 шт». "
-        "Без количества считаю 1 шт. Точек в тексте может быть несколько.",
+        "Без количества считаю 1 шт. Точек в тексте может быть несколько. "
+        "Отправленное автоматически считается напечатанным.",
         reply_markup=cancel_keyboard)
 
 
@@ -253,11 +254,9 @@ async def got_shipment_text(message: Message, state: FSMContext):
 
     kb = []
     if items:
-        kb.append([InlineKeyboardButton(text="✅ Записать отправку", callback_data="shipok_0_0")])
-        kb.append([InlineKeyboardButton(text="✅ Записать + добавить в «напечатано»", callback_data="shipok_1_0")])
+        kb.append([InlineKeyboardButton(text="✅ Записать отправку", callback_data="shipok_0")])
     if extra:
-        kb.append([InlineKeyboardButton(text=f"➕ Всё, и создать заказы ({len(extra)} нов. поз.)", callback_data="shipok_0_1")])
-        kb.append([InlineKeyboardButton(text="➕ То же + «напечатано»", callback_data="shipok_1_1")])
+        kb.append([InlineKeyboardButton(text=f"➕ Всё, и создать заказы ({len(extra)} нов. поз.)", callback_data="shipok_1")])
     kb.append([InlineKeyboardButton(text="❌ Отмена", callback_data="shipcancel")])
     await safe_answer(message, "\n".join(lines), reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
 
@@ -270,9 +269,9 @@ async def ship_cancel(callback: CallbackQuery, state: FSMContext):
     await callback.message.answer("Главное меню", reply_markup=main_menu)
 
 
-@router.callback_query(StateFilter(ShipmentText.confirming), F.data.regexp(r"^shipok_[01]_[01]$"))
+@router.callback_query(StateFilter(ShipmentText.confirming), F.data.regexp(r"^shipok_[01]$"))
 async def ship_confirm(callback: CallbackQuery, state: FSMContext):
-    _, printed, create = callback.data.split("_")
+    create = callback.data.split("_")[1]
     data = await state.get_data()
     items = list(data.get("items") or [])
     if create == "1":
@@ -282,7 +281,7 @@ async def ship_confirm(callback: CallbackQuery, state: FSMContext):
         return
     await state.clear()          # сразу: повторное нажатие не запишет отправку второй раз
     try:
-        res = apply_shipments(sheet, items, add_printed=printed == "1")
+        res = apply_shipments(sheet, items)
     except ShipmentError as e:
         await safe_edit(callback.message, "❌ " + str(e) + "\n" + "\n".join(e.details))
         await callback.answer()
@@ -293,8 +292,8 @@ async def ship_confirm(callback: CallbackQuery, state: FSMContext):
         await callback.answer()
         return
     text = f"✅ Записано: отправлено {res['shipped']} шт"
-    if printed == "1":
-        text += f", напечатано +{res['printed_added']}"
+    if res["printed_added"]:
+        text += f" (отправленное считаю напечатанным: напечатано +{res['printed_added']})"
     if res["created"]:
         text += "\n➕ Созданы заказы «Без заказа»: " + ", ".join(res["created"])
     if res["leftover"]:

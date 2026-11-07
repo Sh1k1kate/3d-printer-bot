@@ -28,7 +28,7 @@ from handlers.common import AccessMiddleware, ResetStateOnMenuMiddleware
 from handlers.client_bot import create_client_dispatcher, set_commands as set_client_commands
 from config import BOT_TOKEN, ADMIN_PASSWORD, TOKEN_SECRET, WEBHOOK_SECRET, CRON_SECRET, ALLOWED_USERS
 from google_sheets import SheetManager, moscow_now
-from production_service import apply_shipments, ShipmentError, NO_ORDER_CUSTOMER, SHIPMENT_LOCATIONS, MAX_POSITION_NAME
+from production_service import apply_shipments, ensure_printed, ShipmentError, NO_ORDER_CUSTOMER, SHIPMENT_LOCATIONS, MAX_POSITION_NAME
 from production import group_orders, parse_order_text, build_production_rows, normalize_position, parse_shipment_text, match_name
 
 from docx import Document
@@ -857,7 +857,10 @@ async def set_shipment_api(payload: ShipmentIn, _: bool = Depends(verify_admin))
     ok = await run_in_threadpool(sheet_manager.set_shipment, position, location, payload.qty)
     if not ok:
         return JSONResponse({"error": "Не удалось сохранить"}, status_code=500)
-    return JSONResponse({"status": "ok"})
+    # отправлено = напечатано: если отправили больше, чем напечатано, подтягиваем «напечатано»
+    printed = await run_in_threadpool(ensure_printed, sheet_manager, {position.lower()}, SHIPMENT_LOCATIONS)
+    return JSONResponse({"status": "ok", "printed_added": sum(printed["added"].values()),
+                         "leftover": sum(printed["leftover"].values())})
 
 
 def _production_rows():
