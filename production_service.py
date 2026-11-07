@@ -32,8 +32,26 @@ def canonical_location(value, locations=None):
     return next((loc for loc in (locations or SHIPMENT_LOCATIONS) if loc.lower() == v), None)
 
 
-def apply_shipments(sm, items, add_printed=False, locations=None):
-    """Прибавляет количества к «отправлено» точки и (по флагу) к «напечатано» заказов.
+def ensure_printed(sm, only=None, locations=None):
+    """Отправленное = напечатанное: подтягивает «напечатано» до «отправлено», если оно меньше.
+
+    Считаем по позиции в целом (сумма по активным заказам), поэтому уже учтённое напечатанное
+    повторно не прибавляется. only — множество названий в нижнем регистре; None — все позиции.
+    Возвращает {"added": {...}, "leftover": {...}} как add_printed_batch; leftover — отправлено больше заказанного.
+    """
+    need = {}
+    for r in production_rows(sm, locations):
+        key = r["name"].lower()
+        if (only is None or key in only) and r["shipped_total"] > r["printed"]:
+            need[key] = r["shipped_total"] - r["printed"]
+    if not need:
+        return {"added": {}, "leftover": {}}
+    return sm.add_printed_batch(need)
+
+
+def apply_shipments(sm, items, add_printed=True, locations=None):
+    """Прибавляет количества к «отправлено» точки; отправленное считается напечатанным (ensure_printed).
+    add_printed оставлен для совместимости со старыми клиентами и игнорируется.
 
     items — [{"position", "location", "qty", "create"}]; create=True создаёт заказ «Без заказа» для
     позиции, которой нет среди активных. При ошибках в данных ничего не пишет и бросает ShipmentError.
@@ -68,21 +86,14 @@ def apply_shipments(sm, items, add_printed=False, locations=None):
     if to_create:
         today = moscow_now().strftime("%Y-%m-%d")
         sm.add_orders_batch([
-            (c["name"], c["qty"], c["qty"] if add_printed else 0, today, NO_ORDER_CUSTOMER)
+            (c["name"], c["qty"], c["qty"], today, NO_ORDER_CUSTOMER)
             for c in to_create.values()
         ])
         result["created"] = [c["name"] for c in to_create.values()]
-        if add_printed:
-            result["printed_added"] += sum(c["qty"] for c in to_create.values())
-    if add_printed:
-        qty_by_pos = {}
-        for pos, _loc, qty in out:
-            if pos.lower() in to_create:      # у новых заказов напечатанное уже проставлено
-                continue
-            qty_by_pos[pos.lower()] = qty_by_pos.get(pos.lower(), 0) + qty
-        if qty_by_pos:
-            printed = sm.add_printed_batch(qty_by_pos)
-            result["printed_added"] += sum(printed["added"].values())
-            result["leftover"] = {known[k]: v for k, v in printed["leftover"].items()}
     sm.add_shipments_batch(out)
+    # позиции из созданных заказов уже напечатаны целиком; остальным «напечатано» подтягиваем до «отправлено»
+    names = dict(known, **{k: c["name"] for k, c in to_create.items()})
+    printed = ensure_printed(sm, only={pos.lower() for pos, _l, _q in out}, locations=locations)
+    result["printed_added"] = sum(printed["added"].values()) + sum(c["qty"] for c in to_create.values())
+    result["leftover"] = {names.get(k, k): v for k, v in printed["leftover"].items()}
     return result

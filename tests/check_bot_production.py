@@ -79,16 +79,20 @@ async def run():
     await hp.got_shipment_text(Msg(txt), state)
     t, mk = out[-1][1], out[-1][2]
     assert "✅ Медведь милашка — 2" in t and "✅ Дракон — 1" in t and "Какой-то зверь" in t and await state.get_state() == ShipmentText.confirming.state
-    d = cbdata(mk); assert {"shipok_0_0", "shipok_1_0", "shipok_0_1", "shipok_1_1", "shipcancel"} <= set(d)
-    cb = CB("shipok_1_0"); await hp.ship_confirm(cb, state)
+    d = cbdata(mk); assert {"shipok_0", "shipok_1", "shipcancel"} <= set(d)
+    cb = CB("shipok_0"); await hp.ship_confirm(cb, state)
     assert fs.ship[("медведь милашка", "вднх")] == 2 and fs.ship[("дракон", "вднх")] == 1 and not any(k[1] == "остров" for k in fs.ship)   # неизвестное не записано
-    assert fs.orders[3][3] == "6" and "отправлено 3" in out[-2][1] and await state.get_state() is None
-    cb = CB("shipok_1_0"); await hp.ship_confirm(cb, state); assert fs.ship[("дракон", "вднх")] == 1           # повторное нажатие ничего не пишет
+    assert fs.orders[3][3] == "4" and "отправлено 3" in out[-2][1] and "напечатано +" not in out[-2][1] and await state.get_state() is None   # уже напечатано 4 ≥ отправлено 2 — не считаем дважды
+    cb = CB("shipok_0"); await hp.ship_confirm(cb, state); assert fs.ship[("дракон", "вднх")] == 1           # повторное нажатие ничего не пишет
+    # отправлено больше, чем напечатано -> «напечатано» подтягивается (4 напечатано, отправлено 2+3=5)
+    await hp.start_shipment(Msg("/ship"), state); await hp.got_shipment_text(Msg("Аэропорт\nМедведь милашка 3"), state)
+    await hp.ship_confirm(CB("shipok_0"), state)
+    assert fs.orders[3][3] == "5" and "напечатано +1" in out[-2][1], (fs.orders[3], out[-2][1])
     # с созданием заказа для нераспознанного
     await hp.start_shipment(Msg("/ship"), state)
     await hp.got_shipment_text(Msg("Остров\nЗверь-новичок 3 шт"), state)
-    assert "shipok_0_1" in cbdata(out[-1][2]) and "shipok_0_0" not in cbdata(out[-1][2])
-    await hp.ship_confirm(CB("shipok_0_1"), state)
+    assert "shipok_1" in cbdata(out[-1][2]) and "shipok_0" not in cbdata(out[-1][2])
+    await hp.ship_confirm(CB("shipok_1"), state)
     assert fs.created == ["Зверь-новичок"] and fs.ship[("зверь-новичок", "остров")] == 3 and "Созданы заказы" in out[-2][1]
     # только нераспознанное и мусор
     await hp.start_shipment(Msg("/ship"), state); await hp.got_shipment_text(Msg("ВДНХ\n!!!"), state)

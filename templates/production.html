@@ -163,11 +163,7 @@
             <tbody id="paste-rows" class="divide-y divide-gray-200 dark:divide-gray-700"></tbody>
           </table>
         </div>
-        <label class="flex items-start gap-2 mt-3 text-sm">
-          <input type="checkbox" id="paste-add-printed" checked class="mt-1">
-          <span>Добавить эти штуки ещё и к <b>«напечатано»</b> в заказах (сначала закрываются заказы с ближайшим сроком).
-            Уберите галочку, если напечатанное уже внесено и нужно записать только отправку.</span>
-        </label>
+        <p class="mt-3 text-xs text-gray-500 dark:text-gray-400">Отправленное считается напечатанным: если «напечатано» меньше «отправлено», оно подтянется автоматически (сначала закрываются заказы с ближайшим сроком).</p>
         <div class="flex flex-wrap items-center gap-3 mt-3">
           <span id="paste-summary" class="text-sm text-gray-600 dark:text-gray-300"></span>
           <button onclick="backToPaste()" class="ml-auto px-4 py-2 rounded-lg bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600">← Назад</button>
@@ -504,6 +500,7 @@
       if (qty === prev) { inp.value = qty; return; }
 
       inp.disabled = true; saving++;
+      let reloadAfter = false;
       try {
         const r = await fetch(API + '/shipment', {
           method: 'POST',
@@ -515,6 +512,8 @@
           const d = await r.json().catch(() => ({}));
           throw new Error(d.error || d.detail || ('HTTP ' + r.status));
         }
+        const resp = await r.json().catch(() => ({}));
+        reloadAfter = !!resp.printed_added;
         row.shipped[loc] = qty;
         row.shipped_total = Object.values(row.shipped).reduce((a, b) => a + b, 0);
         inp.value = qty;
@@ -529,6 +528,7 @@
       } finally {
         saving--; inp.disabled = false;
       }
+      if (reloadAfter) await load();      // «напечатано» подтянулось до «отправлено»
     });
 
     // автообновление, но не мешаем, пока человек вводит число или идёт сохранение
@@ -699,7 +699,7 @@
       const btn = $('paste-apply-btn'); btn.disabled = true; btn.textContent = 'Записываю…';
       saving++;
       try {
-        const d = await adminFetch(API + '/apply', { items, add_printed: $('paste-add-printed').checked });
+        const d = await adminFetch(API + '/apply', { items });
         closePaste();
         $('paste-text').value = '';
         let msg = `Записано: отправлено ${d.shipped} шт` + (d.printed_added ? `, напечатано +${d.printed_added}` : '') +

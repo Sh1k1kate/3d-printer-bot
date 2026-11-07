@@ -24,9 +24,9 @@ rows = {x["name"]: x for x in c.get("/api/production", headers=appmod_H()).json(
 d = rows["Дельфинчик"]; assert (d["ordered"], d["printed"], d["shipped_total"], d["remaining"]) == (3, 3, 3, 0)
 print("create-from-shipment OK:", new)
 
-# без галочки «напечатано»: заказ создаётся, но печать 0
+# позиция без заказа: создаётся заказ, отправленное считается напечатанным
 r = c.post("/api/production/apply", json={"items": [{"position": "Осьминог", "location": "Аэропорт", "qty": 3, "create": True}], "add_printed": False}, headers=H).json()
-assert r["created"] == ["Осьминог"] and r["printed_added"] == 0 and orders.rows[-1][1:4] == ["Осьминог", "3", "0"], (r, orders.rows[-1])
+assert r["created"] == ["Осьминог"] and r["printed_added"] == 3 and orders.rows[-1][1:4] == ["Осьминог", "3", "3"], (r, orders.rows[-1])
 # create для уже существующей позиции не плодит дубль заказа
 cnt = len(orders.rows)
 r = c.post("/api/production/apply", json={"items": [{"position": "осьминог", "location": "ВДНХ", "qty": 1, "create": True}], "add_printed": False}, headers=H).json()
