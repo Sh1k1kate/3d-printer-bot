@@ -48,6 +48,7 @@ main_menu = ReplyKeyboardMarkup(
         [KeyboardButton(text="🛒 Создать заказ")],
         [KeyboardButton(text="📋 Задачи")],
         [KeyboardButton(text="📦 Мои заказы")],
+        [KeyboardButton(text="🖨️ Допечатка"), KeyboardButton(text="📤 Отправка")],
         [KeyboardButton(text="💰 Прайс")],          # ✅ НОВАЯ
         [KeyboardButton(text="❓ Помощь")]
     ],
