@@ -7,7 +7,7 @@ os.environ.setdefault("BOT_TOKEN", "123:abc")
 class _Sheet:
     def __init__(self, *a, **k): pass
     def __getattr__(self, n): return lambda *a, **k: []
-gs = types.ModuleType("google_sheets"); gs.SheetManager = _Sheet
+gs = types.ModuleType("google_sheets"); gs.SheetManager = _Sheet; gs.moscow_now = __import__("datetime").datetime.now
 sys.modules["google_sheets"] = gs
 # stub config if it needs env/credentials
 try:
